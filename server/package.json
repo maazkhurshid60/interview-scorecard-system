@@ -4,6 +4,9 @@
   "description": "Express + MongoDB backend for the Structured Interview & Scorecard System.",
   "private": true,
   "main": "index.js",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
