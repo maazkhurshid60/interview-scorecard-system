@@ -1,0 +1,19 @@
+{
+  "name": "interview-scorecard-system",
+  "version": "1.0.0",
+  "description": "Internal AI-assisted, stage-gated interview scorecard system for Red Star Technologies HR.",
+  "private": true,
+  "scripts": {
+    "server": "cd server && node index.js",
+    "server:dev": "cd server && nodemon index.js",
+    "client": "cd client && npm run dev",
+    "client:build": "cd client && npm run build",
+    "dev": "concurrently \"npm run server:dev\" \"npm run client\"",
+    "start": "npm run server",
+    "seed": "cd server && node seeds/seedDefaults.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.7"
+  }
+}

@@ -1,0 +1,30 @@
+.env
+.env.development
+.env.production
+.env.local
+
+node_modules/
+server/node_modules/
+client/node_modules/
+
+server/uploads/*
+!server/uploads/.gitkeep
+
+*.log
+server/logs/*
+!server/logs/.gitkeep
+
+client/dist/
+client/build/
+
+.DS_Store
+Thumbs.db
+
+# Local Claude Code tool state (not project-relevant)
+.claude/
+
+# Internal documentation (not for repo)
+DESIGN.md
+GAPS.md
+HANDOVER.md
+INSTRUCTIONS.md

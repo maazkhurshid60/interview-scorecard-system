@@ -1,0 +1,56 @@
+# Nginx reverse-proxy template for deploying the Interview Scorecard System
+# (e.g. on an AWS EC2 instance). Not used for local development — in dev,
+# Vite's own dev-server proxy (client/vite.config.js) handles this instead.
+#
+# Why this shape: the frontend code always calls relative paths like
+# `/api/auth/login` (see client/src/hooks/useApi.js, baseURL: '/api') —
+# it never hardcodes a backend host. That means the SAME frontend build
+# works unmodified in both dev and prod: in dev, Vite forwards /api to
+# localhost:5000; in prod, nginx does the same job below. The browser
+# always requests /api from the page's own origin either way, so there is
+# no cross-origin request for CORS to ever block — no env var needed to
+# tell the frontend "where the backend is."
+#
+# --- Before using this in real production, you MUST customize: ---
+#   1. server_name         -> your real domain (or the EC2 public DNS/IP)
+#   2. root                -> the absolute path to client/dist on that server
+#      (build it there first: cd client && npm run build)
+#   3. proxy_pass           -> if the Node backend runs on a different host/
+#      port than localhost:5000 on that same box, update this
+#   4. Add HTTPS.  This system handles JWTs and candidate PII (transcripts,
+#      scores) — do not run it on real candidate data over plain HTTP.
+#      Easiest path on EC2: point the domain at the instance, then run
+#      `certbot --nginx` (Let's Encrypt) to get this rewritten with a
+#      443 server block + auto-redirect from 80. Don't skip this step.
+
+server {
+    listen 80;
+    server_name your-domain-or-ec2-public-dns.example.com;  # CHANGE THIS
+
+    # Serve the built React app.
+    root /path/to/interview-scorecard-system/client/dist;   # CHANGE THIS
+    index index.html;
+
+    # SPA fallback: React Router handles routing client-side, so any path
+    # that isn't a real static file (e.g. /requisitions, /settings) must
+    # still resolve to index.html, not a 404 from nginx.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Reverse-proxy API requests to the Express backend — mirrors exactly
+    # what vite.config.js's dev proxy does locally.
+    location /api {
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Matches the 20MB multer upload limit (server/middleware/upload.js) —
+    # without this, nginx rejects large résumé/transcript uploads before
+    # they even reach the backend.
+    client_max_body_size 20M;
+}
