@@ -1,4 +1,3 @@
-const fs = require('fs');
 const path = require('path');
 const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
@@ -10,18 +9,19 @@ const SUPPORTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
  * deliverable) so it can be scored the same way a transcript is — via
  * interview.transcriptText. Supports .txt/.md (read directly), .pdf
  * (pdf-parse), and .docx (mammoth).
- * @param {string} absoluteFilePath
+ * @param {Buffer} buffer
+ * @param {string} originalFilename
  * @returns {Promise<string>}
  * @throws {Error} on an unsupported extension or a corrupt/unreadable file.
  */
-async function extractArtifactText(absoluteFilePath) {
-  const ext = path.extname(absoluteFilePath).toLowerCase();
+async function extractArtifactText(buffer, originalFilename) {
+  const ext = path.extname(originalFilename).toLowerCase();
 
   if (ext === '.txt' || ext === '.md') {
-    return fs.readFileSync(absoluteFilePath, 'utf8');
+    return buffer.toString('utf8');
   }
   if (ext === '.pdf') {
-    const parser = new PDFParse({ data: fs.readFileSync(absoluteFilePath) });
+    const parser = new PDFParse({ data: buffer });
     try {
       const result = await parser.getText();
       return result.text;
@@ -30,7 +30,7 @@ async function extractArtifactText(absoluteFilePath) {
     }
   }
   if (ext === '.docx') {
-    const result = await mammoth.extractRawText({ path: absoluteFilePath });
+    const result = await mammoth.extractRawText({ buffer });
     return result.value;
   }
   throw new Error(`Unsupported artifact file type "${ext}" — only .txt, .md, .pdf, .docx are supported.`);

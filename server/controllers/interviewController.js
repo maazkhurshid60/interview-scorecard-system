@@ -1,4 +1,3 @@
-const fs = require('fs');
 const { google } = require('googleapis');
 const Interview = require('../models/Interview');
 const Application = require('../models/Application');
@@ -8,7 +7,7 @@ const AuditLog = require('../models/AuditLog');
 const logger = require('../utils/logger');
 const { asyncHandler, getEnabledStagesSorted } = require('../utils/helpers');
 const { ValidationError, TranscriptNotReadyError } = require('../utils/errors');
-const { relativeUploadPath } = require('../middleware/upload');
+const { uploadBuffer } = require('../config/cloudinary');
 const transcriptProvider = require('../services/transcriptProvider');
 const { scoreInterview } = require('../services/aiScorer');
 const slackNotifier = require('../services/slackNotifier');
@@ -182,20 +181,16 @@ const fetchTranscript = asyncHandler(async (req, res) => {
 /**
  * POST /api/interviews/:id/upload-transcript
  * Manual transcript upload (in-person / fallback). The uploaded file's text
- * is read into transcriptText and the raw file is deleted immediately —
- * the Interview schema has no separate field to track a raw transcript
- * file, so keeping an untracked orphan file on disk would serve no purpose
- * once its content is safely captured in the document.
+ * is read straight from the in-memory buffer into transcriptText — the
+ * Interview schema has no separate field to track a raw transcript file, so
+ * the raw upload itself is never persisted anywhere, just its text content.
  */
 const uploadTranscript = asyncHandler(async (req, res) => {
   const interview = await Interview.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   if (!req.file) throw new ValidationError(['transcript'], 'A transcript file is required (field name "transcript").');
 
-  const text = fs.readFileSync(req.file.path, 'utf8');
-  fs.unlink(req.file.path, (err) => {
-    if (err) logger.warn(`[Interview] Could not remove temp transcript upload ${req.file.path}: ${err.message}`);
-  });
+  const text = req.file.buffer.toString('utf8');
 
   interview.transcriptText = text;
   interview.transcriptStatus = 'ready';
@@ -214,20 +209,23 @@ const uploadTranscript = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/interviews/:id/upload-artifact — deliverable/CV for
- * task_performance/resume_screen stages. The uploaded file is kept on disk
- * (HR reference/download) AND its text is extracted into transcriptText,
- * so score() and aiScorer — which only ever read transcriptText — can score
- * an artifact exactly like a transcript, with no changes to either.
+ * task_performance/resume_screen stages. The uploaded file is stored on
+ * Cloudinary (HR reference/download) AND its text is extracted into
+ * transcriptText, so score() and aiScorer — which only ever read
+ * transcriptText — can score an artifact exactly like a transcript, with no
+ * changes to either.
  */
 const uploadArtifact = asyncHandler(async (req, res) => {
   const interview = await Interview.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   if (!req.file) throw new ValidationError(['artifact'], 'An artifact file is required (field name "artifact").');
 
-  interview.artifactFileUrl = relativeUploadPath(req.file);
+  const uploaded = await uploadBuffer(req.file.buffer, { folder: 'interview-artifacts', filename: `${Date.now()}-${req.file.originalname}` });
+  interview.artifactFileUrl = uploaded.secureUrl;
+  interview.artifactFilePublicId = uploaded.publicId;
 
   try {
-    interview.transcriptText = await extractArtifactText(req.file.path);
+    interview.transcriptText = await extractArtifactText(req.file.buffer, req.file.originalname);
     interview.transcriptStatus = 'ready';
   } catch (err) {
     interview.transcriptStatus = 'failed';

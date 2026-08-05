@@ -1,10 +1,9 @@
-const fs = require('fs');
-const path = require('path');
 const logger = require('../utils/logger');
 const Requisition = require('../models/Requisition');
 const Interview = require('../models/Interview');
 const Setting = require('../models/Setting');
 const AuditLog = require('../models/AuditLog');
+const { destroyFile } = require('../config/cloudinary');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 let intervalHandle = null;
@@ -18,28 +17,25 @@ async function getRetentionDays() {
   return Number(setting?.value ?? process.env.TRANSCRIPT_RETENTION_DAYS ?? 90);
 }
 
-/** Deletes an uploaded file from disk if it exists; a missing file is not an error. */
-function deleteFileIfExists(filePath) {
-  const resolved = path.isAbsolute(filePath) ? filePath : path.join(__dirname, '..', filePath);
-  fs.unlink(resolved, (err) => {
-    if (err && err.code !== 'ENOENT') {
-      logger.warn(`[RetentionService] Could not delete file ${resolved}: ${err.message}`);
-    }
-  });
-}
-
 /**
  * Purges the raw content of one interview: transcript text, the uploaded
- * artifact file (and the file itself on disk), and each score's AI
+ * artifact file (and the file itself on Cloudinary), and each score's AI
  * justification text. NEVER touches numeric scores, stageAverage, or any
  * other part of the permanent decision record.
  * @param {import('mongoose').Document} interview
  */
 async function purgeInterview(interview) {
-  if (interview.artifactFileUrl) deleteFileIfExists(interview.artifactFileUrl);
+  if (interview.artifactFilePublicId) {
+    try {
+      await destroyFile(interview.artifactFilePublicId);
+    } catch (err) {
+      logger.warn(`[RetentionService] Could not delete Cloudinary file ${interview.artifactFilePublicId}: ${err.message}`);
+    }
+  }
 
   interview.transcriptText = undefined;
   interview.artifactFileUrl = undefined;
+  interview.artifactFilePublicId = undefined;
   interview.scores.forEach((score) => { score.aiJustification = undefined; });
   interview.markModified('scores');
 

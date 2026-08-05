@@ -4,7 +4,7 @@ const Requisition = require('../models/Requisition');
 const logger = require('../utils/logger');
 const { asyncHandler } = require('../utils/helpers');
 const { ValidationError } = require('../utils/errors');
-const { relativeUploadPath } = require('../middleware/upload');
+const { uploadBuffer, destroyFile } = require('../config/cloudinary');
 
 /** GET /api/candidates — list all candidates. */
 const list = asyncHandler(async (req, res) => {
@@ -17,12 +17,21 @@ const create = asyncHandler(async (req, res) => {
   const { name, email, phone, notes } = req.body;
   if (!name) throw new ValidationError(['name'], 'name is required.');
 
+  let resumeFileUrl;
+  let resumeFilePublicId;
+  if (req.file) {
+    const uploaded = await uploadBuffer(req.file.buffer, { folder: 'resumes', filename: `${Date.now()}-${req.file.originalname}` });
+    resumeFileUrl = uploaded.secureUrl;
+    resumeFilePublicId = uploaded.publicId;
+  }
+
   const candidate = await Candidate.create({
     name,
     email,
     phone,
     notes,
-    resumeFileUrl: req.file ? relativeUploadPath(req.file) : undefined,
+    resumeFileUrl,
+    resumeFilePublicId,
   });
 
   logger.info(`[Candidate] Created "${name}" (${candidate._id})${req.file ? ' with résumé' : ''}.`);
@@ -46,7 +55,14 @@ const update = asyncHandler(async (req, res) => {
   if (email !== undefined) candidate.email = email;
   if (phone !== undefined) candidate.phone = phone;
   if (notes !== undefined) candidate.notes = notes;
-  if (req.file) candidate.resumeFileUrl = relativeUploadPath(req.file);
+
+  if (req.file) {
+    const oldPublicId = candidate.resumeFilePublicId;
+    const uploaded = await uploadBuffer(req.file.buffer, { folder: 'resumes', filename: `${Date.now()}-${req.file.originalname}` });
+    candidate.resumeFileUrl = uploaded.secureUrl;
+    candidate.resumeFilePublicId = uploaded.publicId;
+    if (oldPublicId) destroyFile(oldPublicId).catch((err) => logger.warn(`[Candidate] Could not delete old résumé ${oldPublicId}: ${err.message}`));
+  }
 
   await candidate.save();
   res.json({ candidate });

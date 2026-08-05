@@ -278,7 +278,7 @@ export default function InterviewRoom() {
           </CardHeader>
           <CardContent>
             {interview.artifactFileUrl ? (
-              <a href={`/${interview.artifactFileUrl}`} target="_blank" rel="noreferrer" className="text-sm text-[#d21e2b] hover:underline">
+              <a href={interview.artifactFileUrl} target="_blank" rel="noreferrer" className="text-sm text-[#d21e2b] hover:underline">
                 View uploaded artifact
               </a>
             ) : (

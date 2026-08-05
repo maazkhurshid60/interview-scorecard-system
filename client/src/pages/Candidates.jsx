@@ -178,7 +178,7 @@ export default function Candidates() {
                         {c.email} {c.phone ? `· ${c.phone}` : ''} · Added {formatDate(c.createdAt)}
                       </div>
                       {c.resumeFileUrl && (
-                        <a href={`/${c.resumeFileUrl}`} target="_blank" rel="noreferrer" className="text-xs text-[#d21e2b] hover:underline">
+                        <a href={c.resumeFileUrl} target="_blank" rel="noreferrer" className="text-xs text-[#d21e2b] hover:underline">
                           View résumé
                         </a>
                       )}
