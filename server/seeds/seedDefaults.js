@@ -14,22 +14,6 @@ const User = require("../models/User");
 const PipelineTemplate = require("../models/PipelineTemplate");
 const Setting = require("../models/Setting");
 
-/**
- * Idempotently seeds the data a fresh install needs before anyone can log in
- * or create a requisition:
- * - A default admin user (from SEED_ADMIN_* env vars, or safe fallbacks).
- * - One demo login per remaining role (hiring_manager, recruiter, interviewer)
- *   so every role can be logged into and viewed.
- * - The default pipeline template (HR 10% / Simulation 35% / Ops 35% / CEO 20%,
- *   gates 3.0/3.0/3.5/3.5), with the remaining stage types shipped disabled.
- * - Scalar Settings: hire/maybe thresholds, transcript retention days,
- *   monthly AI spend cap, spend warn percent, active transcript provider.
- * - The per-model-tier cost rate table used to compute aiCostUsd.
- *
- * Safe to run multiple times: each section checks for an existing record
- * before creating one, so re-running never duplicates or overwrites
- * something an admin has since changed by hand.
- */
 async function seedAdminUser() {
   const email = process.env.SEED_ADMIN_EMAIL || "admin@example.com";
   const existing = await User.findOne({ email });
@@ -68,11 +52,6 @@ const DEMO_USERS = [
   },
 ];
 
-/**
- * Idempotently seeds one demo login per non-admin role, so every role can be
- * logged into and viewed without waiting on real team accounts. Same
- * exists-by-email check as seedAdminUser — safe to re-run.
- */
 async function seedDemoUsers() {
   for (const { role, email, name } of DEMO_USERS) {
     const existing = await User.findOne({ email });
@@ -81,7 +60,7 @@ async function seedDemoUsers() {
       continue;
     }
 
-    const passwordHash = await bcrypt.hash("change_this_password", 10);
+    const passwordHash = await bcrypt.hash("12345678", 10);
     await User.create({ name, email, passwordHash, role, active: true });
     logger.info(`[Seed] Created demo ${role} user: ${email}`);
   }

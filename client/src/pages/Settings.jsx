@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ArrowLeft } from 'lucide-react';
+import {
+  ArrowLeft, Plug, SlidersHorizontal, FileText, DollarSign, Info, CheckCircle2, XCircle,
+} from 'lucide-react';
 import api from '../hooks/useApi';
 import { useAuth } from '../context/AuthContext';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatCurrency } from '../utils/formatters';
 
@@ -19,10 +29,12 @@ const RETENTION_OPTIONS = [
 const SERVICES = [
   {
     key: 'claude', label: 'Claude API',
+    blurb: 'Generates scorecards and scores every interview.',
     fields: [{ settingKey: 'anthropicApiKey', label: 'API Key' }],
   },
   {
     key: 'google_meet', label: 'Google Meet',
+    blurb: 'Creates meeting links and fetches transcripts.',
     fields: [
       { settingKey: 'googleClientId', label: 'Client ID' },
       { settingKey: 'googleClientSecret', label: 'Client Secret' },
@@ -31,6 +43,7 @@ const SERVICES = [
   },
   {
     key: 'slack', label: 'Slack',
+    blurb: 'Posts notifications when a stage is scored or decided.',
     fields: [{ settingKey: 'slackWebhookUrl', label: 'Webhook URL' }],
   },
 ];
@@ -116,243 +129,325 @@ export default function Settings() {
     }
   }
 
-  if (loading) return <div className="text-muted-foreground">Loading...</div>;
+  if (loading) {
+    return (
+      <div>
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-9 w-9" />
+          <Skeleton className="h-7 w-32" />
+        </div>
+        <Skeleton className="mt-5 h-9 w-96" />
+        <div className="mt-4 space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="space-y-3 p-5">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-64" />
+                <Skeleton className="h-9 w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const spendCap = Number(settings.monthlyAiSpendCapUsd) || 0;
+  const totalSpend = usage?.totalCostUsd || 0;
 
   return (
-    <div className="space-y-6">
+    <div>
+      {/* ---------- header ---------- */}
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          disabled={!canGoBack}
-          className="inline-flex items-center justify-center rounded-md border border-border bg-background p-2 text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
+        <Button variant="outline" size="icon" onClick={() => navigate(-1)} disabled={!canGoBack}>
+          <ArrowLeft />
+        </Button>
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
+          <p className="text-sm text-muted-foreground">
+            Credentials, scoring thresholds, retention and AI spend.
+          </p>
+        </div>
       </div>
+
       {!isAdmin && (
-        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          You're viewing Settings as a non-admin — values are read-only.
-        </p>
+        <Alert variant="warning" className="mt-4">
+          <Info />
+          <AlertDescription>
+            You’re viewing Settings as a non-admin — everything here is read-only.
+          </AlertDescription>
+        </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>External Services</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {SERVICES.map((svc) => {
-              const status = keyStatus[svc.key] || {};
-              const result = testResults[svc.key];
-              return (
-                <Card key={svc.key} className="shadow-none">
-                  <CardContent className="p-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <Tabs defaultValue="integrations" className="mt-5">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start sm:w-auto">
+          <TabsTrigger value="integrations"><Plug />Integrations</TabsTrigger>
+          <TabsTrigger value="scoring"><SlidersHorizontal />Scoring</TabsTrigger>
+          <TabsTrigger value="transcripts"><FileText />Transcripts</TabsTrigger>
+          <TabsTrigger value="spend"><DollarSign />Spend & Usage</TabsTrigger>
+        </TabsList>
+
+        {/* ================= INTEGRATIONS ================= */}
+        <TabsContent value="integrations" className="space-y-4">
+          {SERVICES.map((svc) => {
+            const status = keyStatus[svc.key] || {};
+            const result = testResults[svc.key];
+            return (
+              <Card key={svc.key}>
+                <CardContent className="p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 flex-shrink-0 rounded-full ${status.configured ? 'bg-green-500' : 'bg-gray-300'}`} />
-                        <span className="text-sm font-medium text-foreground">{svc.label}</span>
-                        <span className="text-xs text-muted-foreground">{status.configured ? 'Configured' : 'Not configured'}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {result && (
-                          <span className={`text-xs font-medium ${result.status === 'ok' ? 'text-green-700' : 'text-red-700'}`}>
-                            {result.status === 'ok' ? 'OK' : (result.message || 'Failed')}
-                          </span>
-                        )}
-                        <button
-                          type="button" onClick={() => testConnection(svc.key)} disabled={!isAdmin || testing[svc.key]}
-                          className="rounded-md bg-[#d21e2b] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
+                        <span className="text-sm font-semibold text-foreground">{svc.label}</span>
+                        <Badge
+                          variant="secondary"
+                          className={`font-normal ${status.configured ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}`}
                         >
-                          {testing[svc.key] ? 'Testing...' : 'Test Connection'}
-                        </button>
+                          {status.configured ? 'Configured' : 'Not configured'}
+                        </Badge>
                       </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{svc.blurb}</p>
                     </div>
-                    <div className="mt-3 space-y-1.5 border-t border-border pt-3">
-                      {svc.fields.map((f) => (
-                        <MaskedKeyInput
-                          key={f.settingKey}
-                          label={f.label}
-                          masked={status.keys?.[f.settingKey]}
-                          disabled={!isAdmin}
-                          saving={savingKey === f.settingKey}
-                          onSave={(v) => saveSecret(f.settingKey, v)}
-                        />
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Keys are masked — only the last 4 characters are ever shown. The real value stays on the server and falls back to .env until you set one here.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Claude Models</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {MODEL_TIERS.map((tier) => (
-              <ModelSetting
-                key={tier.key}
-                label={tier.label} hint={tier.hint}
-                value={settings[tier.key]} disabled={!isAdmin} saving={savingKey === tier.key}
-                onSave={(v) => saveSetting(tier.key, v)}
-              />
-            ))}
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Change which model each tier uses without touching .env or redeploying — e.g. switch the deep tier from Sonnet to Opus for a hard technical round, then switch it back to save cost.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Scoring Thresholds</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NumberSetting
-              label="Hire threshold" value={settings.hireThreshold} disabled={!isAdmin} saving={savingKey === 'hireThreshold'}
-              onSave={(v) => saveSetting('hireThreshold', v)} step={0.1} min={1} max={5}
-            />
-            <NumberSetting
-              label="Maybe threshold" value={settings.maybeThreshold} disabled={!isAdmin} saving={savingKey === 'maybeThreshold'}
-              onSave={(v) => saveSetting('maybeThreshold', v)} step={0.1} min={1} max={5}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Transcripts & Provider</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-foreground">Transcript retention</label>
-              <Select
-                value={String(settings.transcriptRetentionDays ?? 90)}
-                onValueChange={(v) => saveSetting('transcriptRetentionDays', Number(v))}
-                disabled={!isAdmin}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RETENTION_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground">Active transcript provider</label>
-              <Select
-                value={settings.activeTranscriptProvider ?? 'google_meet'}
-                onValueChange={(v) => saveSetting('activeTranscriptProvider', v)}
-                disabled={!isAdmin}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="google_meet">Google Meet</SelectItem>
-                  <SelectItem value="zoom">Zoom (not implemented yet)</SelectItem>
-                  <SelectItem value="fathom">Fathom (not implemented yet)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>AI Spend Controls</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NumberSetting
-              label="Monthly AI spend cap (USD)" value={settings.monthlyAiSpendCapUsd} disabled={!isAdmin} saving={savingKey === 'monthlyAiSpendCapUsd'}
-              onSave={(v) => saveSetting('monthlyAiSpendCapUsd', v)} step={10} min={0}
-            />
-            <NumberSetting
-              label="Warn at % of cap" value={settings.aiSpendWarnPercent} disabled={!isAdmin} saving={savingKey === 'aiSpendWarnPercent'}
-              onSave={(v) => saveSetting('aiSpendWarnPercent', v)} step={5} min={0} max={100}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>AI Usage</CardTitle>
-          <span className="text-sm font-semibold text-foreground">Total: {formatCurrency(usage?.totalCostUsd)}</span>
-        </CardHeader>
-        <CardContent>
-          {!usage || usage.rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No AI usage recorded yet.</p>
-          ) : (
-            <>
-              {/* md: and up — real table */}
-              <div className="hidden max-h-[32rem] overflow-y-auto overflow-x-auto md:block">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
-                      <th className="sticky top-0 bg-white px-3 py-2">Month</th>
-                      <th className="sticky top-0 bg-white px-3 py-2">Requisition</th>
-                      <th className="sticky top-0 bg-white px-3 py-2">Stage</th>
-                      <th className="sticky top-0 bg-white px-3 py-2">Model</th>
-                      <th className="sticky top-0 bg-white px-3 py-2">Interviews</th>
-                      <th className="sticky top-0 bg-white px-3 py-2">Tokens (in/out)</th>
-                      <th className="sticky top-0 bg-white px-3 py-2">Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {usage.rows.map((r, i) => (
-                      <tr key={i}>
-                        <td className="px-3 py-2">{r.month}</td>
-                        <td className="px-3 py-2">{r.requisitionTitle}</td>
-                        <td className="px-3 py-2">{r.stageKey}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{r.model || '—'}</td>
-                        <td className="px-3 py-2">{r.interviewCount}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{r.totalInputTokens} / {r.totalOutputTokens}</td>
-                        <td className="px-3 py-2 font-medium">{formatCurrency(r.totalCostUsd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* below md — stacked card per row */}
-              <div className="space-y-3 md:hidden">
-                {usage.rows.map((r, i) => (
-                  <div key={i} className="rounded-md border border-border p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-foreground">{r.requisitionTitle}</span>
-                      <span className="text-sm font-medium text-foreground">{formatCurrency(r.totalCostUsd)}</span>
-                    </div>
-                    <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                      <div>{r.month} · {r.stageKey}</div>
-                      <div>{r.model || '—'} · {r.interviewCount} interview{r.interviewCount === 1 ? '' : 's'}</div>
-                      <div>Tokens: {r.totalInputTokens} in / {r.totalOutputTokens} out</div>
+                    <div className="flex flex-shrink-0 items-center gap-2">
+                      {result && (
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-medium ${result.status === 'ok' ? 'text-green-700' : 'text-red-700'}`}
+                        >
+                          {result.status === 'ok' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                          {result.status === 'ok' ? 'Connected' : (result.message || 'Failed')}
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        onClick={() => testConnection(svc.key)}
+                        disabled={!isAdmin || testing[svc.key]}
+                        className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+                      >
+                        {testing[svc.key] ? 'Testing…' : 'Test connection'}
+                      </Button>
                     </div>
                   </div>
+
+                  <div className="mt-4 space-y-2 border-t border-border pt-4">
+                    {svc.fields.map((f) => (
+                      <MaskedKeyInput
+                        key={f.settingKey}
+                        label={f.label}
+                        masked={status.keys?.[f.settingKey]}
+                        disabled={!isAdmin}
+                        saving={savingKey === f.settingKey}
+                        onSave={(v) => saveSecret(f.settingKey, v)}
+                      />
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+
+          <Alert>
+            <Info />
+            <AlertDescription className="text-muted-foreground">
+              Keys are masked — only the last 4 characters are ever shown. The real value stays on the
+              server and falls back to <code className="font-mono text-xs">.env</code> until you set one here.
+            </AlertDescription>
+          </Alert>
+        </TabsContent>
+
+        {/* ================= SCORING ================= */}
+        <TabsContent value="scoring" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Scoring thresholds</CardTitle>
+              <CardDescription>
+                A candidate needs every gate passed <em>and</em> a weighted total at or above the hire
+                threshold. Below the maybe threshold is a no-hire.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <NumberSetting
+                  label="Hire threshold" value={settings.hireThreshold} disabled={!isAdmin}
+                  saving={savingKey === 'hireThreshold'}
+                  onSave={(v) => saveSetting('hireThreshold', v)} step={0.1} min={1} max={5}
+                />
+                <NumberSetting
+                  label="Maybe threshold" value={settings.maybeThreshold} disabled={!isAdmin}
+                  saving={savingKey === 'maybeThreshold'}
+                  onSave={(v) => saveSetting('maybeThreshold', v)} step={0.1} min={1} max={5}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Claude models</CardTitle>
+              <CardDescription>
+                Change which model each tier uses without touching <code className="font-mono text-xs">.env</code> or
+                redeploying — e.g. move the deep tier to Opus for a hard technical round, then back to save cost.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                {MODEL_TIERS.map((tier) => (
+                  <ModelSetting
+                    key={tier.key}
+                    label={tier.label} hint={tier.hint}
+                    value={settings[tier.key]} disabled={!isAdmin} saving={savingKey === tier.key}
+                    onSave={(v) => saveSetting(tier.key, v)}
+                  />
                 ))}
               </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ================= TRANSCRIPTS ================= */}
+        <TabsContent value="transcripts">
+          <Card>
+            <CardHeader>
+              <CardTitle>Transcripts & provider</CardTitle>
+              <CardDescription>
+                After a requisition closes and the retention window passes, transcripts and AI
+                justifications are purged — numeric scores and the audit log are always kept.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="retention">Transcript retention</Label>
+                  <Select
+                    value={String(settings.transcriptRetentionDays ?? 90)}
+                    onValueChange={(v) => saveSetting('transcriptRetentionDays', Number(v))}
+                    disabled={!isAdmin}
+                  >
+                    <SelectTrigger id="retention"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {RETENTION_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="provider">Active transcript provider</Label>
+                  <Select
+                    value={settings.activeTranscriptProvider ?? 'google_meet'}
+                    onValueChange={(v) => saveSetting('activeTranscriptProvider', v)}
+                    disabled={!isAdmin}
+                  >
+                    <SelectTrigger id="provider"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="google_meet">Google Meet</SelectItem>
+                      <SelectItem value="zoom">Zoom (not implemented yet)</SelectItem>
+                      <SelectItem value="fathom">Fathom (not implemented yet)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ================= SPEND & USAGE ================= */}
+        <TabsContent value="spend" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>AI spend controls</CardTitle>
+              <CardDescription>
+                Scoring is blocked once the monthly cap is reached — raise it here to unblock.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <NumberSetting
+                  label="Monthly AI spend cap (USD)" value={settings.monthlyAiSpendCapUsd}
+                  disabled={!isAdmin} saving={savingKey === 'monthlyAiSpendCapUsd'}
+                  onSave={(v) => saveSetting('monthlyAiSpendCapUsd', v)} step={10} min={0}
+                />
+                <NumberSetting
+                  label="Warn at % of cap" value={settings.aiSpendWarnPercent}
+                  disabled={!isAdmin} saving={savingKey === 'aiSpendWarnPercent'}
+                  onSave={(v) => saveSetting('aiSpendWarnPercent', v)} step={5} min={0} max={100}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle>AI usage</CardTitle>
+                <CardDescription>Cost per requisition and stage, all time.</CardDescription>
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-semibold text-foreground">{formatCurrency(totalSpend)}</div>
+                {spendCap > 0 && <div className="text-xs text-muted-foreground">of a {formatCurrency(spendCap)} cap</div>}
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!usage || usage.rows.length === 0 ? (
+                <p className="px-6 pb-6 text-sm text-muted-foreground">No AI usage recorded yet.</p>
+              ) : (
+                <>
+                  {/* md and up — table */}
+                  <div className="hidden max-h-[32rem] overflow-y-auto border-t border-border md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="sticky top-0 bg-background">Month</TableHead>
+                          <TableHead className="sticky top-0 bg-background">Requisition</TableHead>
+                          <TableHead className="sticky top-0 bg-background">Stage</TableHead>
+                          <TableHead className="sticky top-0 bg-background">Model</TableHead>
+                          <TableHead className="sticky top-0 bg-background text-right">Interviews</TableHead>
+                          <TableHead className="sticky top-0 bg-background text-right">Tokens in/out</TableHead>
+                          <TableHead className="sticky top-0 bg-background text-right">Cost</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {usage.rows.map((r, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="whitespace-nowrap py-2.5 text-xs text-muted-foreground">{r.month}</TableCell>
+                            <TableCell className="py-2.5 text-sm">{r.requisitionTitle}</TableCell>
+                            <TableCell className="py-2.5 text-xs text-muted-foreground">{r.stageKey}</TableCell>
+                            <TableCell className="py-2.5 font-mono text-xs text-muted-foreground">{r.model || '—'}</TableCell>
+                            <TableCell className="py-2.5 text-right text-sm">{r.interviewCount}</TableCell>
+                            <TableCell className="whitespace-nowrap py-2.5 text-right text-xs text-muted-foreground">
+                              {r.totalInputTokens.toLocaleString()} / {r.totalOutputTokens.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="py-2.5 text-right text-sm font-medium">{formatCurrency(r.totalCostUsd)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* below md — stacked */}
+                  <div className="space-y-3 p-4 md:hidden">
+                    {usage.rows.map((r, i) => (
+                      <div key={i} className="rounded-md border border-border p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-foreground">{r.requisitionTitle}</span>
+                          <span className="flex-shrink-0 text-sm font-medium">{formatCurrency(r.totalCostUsd)}</span>
+                        </div>
+                        <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                          <div>{r.month} · {r.stageKey}</div>
+                          <div className="font-mono">{r.model || '—'}</div>
+                          <div>
+                            {r.interviewCount} interview{r.interviewCount === 1 ? '' : 's'} ·{' '}
+                            {r.totalInputTokens.toLocaleString()} in / {r.totalOutputTokens.toLocaleString()} out
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -365,21 +460,21 @@ function NumberSetting({ label, value, onSave, disabled, saving, step, min, max 
   const changed = Number(draft) !== Number(value);
 
   return (
-    <div>
-      <label className="block text-sm font-medium text-foreground">{label}</label>
-      <div className="mt-1 flex gap-2">
-        <input
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="flex gap-2">
+        <Input
           type="number" value={draft} step={step} min={min} max={max} disabled={disabled}
           onChange={(e) => setDraft(e.target.value)}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b] disabled:bg-muted"
+          className="disabled:bg-muted"
         />
         {!disabled && changed && (
-          <button
-            type="button" onClick={() => onSave(Number(draft))} disabled={saving}
-            className="flex-shrink-0 rounded-md bg-[#d21e2b] px-3 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:opacity-50"
+          <Button
+            onClick={() => onSave(Number(draft))} disabled={saving}
+            className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
           >
-            {saving ? '...' : 'Save'}
-          </button>
+            {saving ? '…' : 'Save'}
+          </Button>
         )}
       </div>
     </div>
@@ -409,48 +504,49 @@ function ModelSetting({ label, hint, value, onSave, disabled, saving }) {
   }
 
   return (
-    <div>
-      <label className="block text-sm font-medium text-foreground">{label}</label>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      <div className="mt-1 flex gap-2">
+    <div className="space-y-1.5">
+      <div>
+        <Label>{label}</Label>
+        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+      </div>
+      <div className="flex gap-2">
         {customMode ? (
           <>
-            <input
+            <Input
               type="text" value={draft} disabled={disabled} placeholder="e.g. claude-opus-5"
               onChange={(e) => setDraft(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b] disabled:bg-muted"
+              className="font-mono text-xs disabled:bg-muted"
             />
             {!disabled && (
-              <button
-                type="button"
+              <Button
+                variant="ghost" size="sm" className="flex-shrink-0"
                 onClick={() => { setCustomMode(false); setDraft(isKnown ? value : ''); }}
-                className="flex-shrink-0 text-xs text-muted-foreground underline hover:text-foreground"
               >
                 Use list
-              </button>
+              </Button>
             )}
           </>
         ) : (
           <Select value={draft || undefined} onValueChange={handleSelectChange} disabled={disabled}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select a model..." />
-            </SelectTrigger>
+            <SelectTrigger><SelectValue placeholder="Select a model…" /></SelectTrigger>
             <SelectContent>
               {KNOWN_MODELS.map((m) => <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>)}
-              <SelectItem value="__other__">Other (type manually)...</SelectItem>
+              <SelectItem value="__other__">Other (type manually)…</SelectItem>
             </SelectContent>
           </Select>
         )}
         {!disabled && changed && draft && (
-          <button
-            type="button" onClick={() => onSave(draft)} disabled={saving}
-            className="flex-shrink-0 rounded-md bg-[#d21e2b] px-3 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:opacity-50"
+          <Button
+            onClick={() => onSave(draft)} disabled={saving}
+            className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
           >
-            {saving ? '...' : 'Save'}
-          </button>
+            {saving ? '…' : 'Save'}
+          </Button>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">Current: <span className="font-mono">{value || '—'}</span></p>
+      <p className="text-xs text-muted-foreground">
+        Current: <span className="font-mono">{value || '—'}</span>
+      </p>
     </div>
   );
 }
@@ -475,34 +571,31 @@ function MaskedKeyInput({ label, masked, onSave, disabled, saving }) {
       <span className="w-32 flex-shrink-0 text-xs text-muted-foreground">{label}</span>
       {editing ? (
         <div className="flex flex-1 flex-wrap items-center gap-2">
-          <input
-            type="text" value={draft} autoFocus placeholder="Paste new value..."
+          <Input
+            type="text" value={draft} autoFocus placeholder="Paste new value…"
             onChange={(e) => setDraft(e.target.value)}
-            className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs font-mono focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b]"
+            className="h-8 min-w-0 flex-1 font-mono text-xs"
           />
-          <button
-            type="button" onClick={handleSave} disabled={saving || !draft}
-            className="flex-shrink-0 rounded-md bg-[#d21e2b] px-2 py-1 text-xs font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
+          <Button
+            size="sm" onClick={handleSave} disabled={saving || !draft}
+            className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
           >
-            {saving ? '...' : 'Save'}
-          </button>
-          <button
-            type="button" onClick={() => { setEditing(false); setDraft(''); }}
-            className="flex-shrink-0 text-xs text-muted-foreground underline hover:text-foreground"
+            {saving ? '…' : 'Save'}
+          </Button>
+          <Button
+            variant="ghost" size="sm" className="flex-shrink-0"
+            onClick={() => { setEditing(false); setDraft(''); }}
           >
             Cancel
-          </button>
+          </Button>
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-between">
+        <div className="flex flex-1 items-center justify-between gap-2">
           <span className="font-mono text-xs text-muted-foreground">{masked || 'Not configured'}</span>
           {!disabled && (
-            <button
-              type="button" onClick={() => setEditing(true)}
-              className="text-xs text-muted-foreground underline hover:text-foreground"
-            >
+            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
               {masked ? 'Replace' : 'Set'}
-            </button>
+            </Button>
           )}
         </div>
       )}

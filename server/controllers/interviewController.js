@@ -4,6 +4,7 @@ const Application = require('../models/Application');
 const Requisition = require('../models/Requisition');
 const Scorecard = require('../models/Scorecard');
 const AuditLog = require('../models/AuditLog');
+require('../models/Candidate'); // registers the Candidate model for populate('candidateId')
 const logger = require('../utils/logger');
 const { asyncHandler, getEnabledStagesSorted } = require('../utils/helpers');
 const { ValidationError, TranscriptNotReadyError } = require('../utils/errors');
@@ -11,7 +12,42 @@ const { uploadBuffer } = require('../config/cloudinary');
 const transcriptProvider = require('../services/transcriptProvider');
 const { scoreInterview } = require('../services/aiScorer');
 const slackNotifier = require('../services/slackNotifier');
+const emailNotifier = require('../services/emailNotifier');
 const { extractArtifactText } = require('../utils/textExtractor');
+
+/**
+ * Emails the candidate their current meeting link. Never throws — a missing
+ * candidate email or a send failure is reported in the return value, never
+ * as an error on the caller (creating/resending a meeting must still succeed
+ * even if the email itself can't go out).
+ * @param {import('mongoose').Document} interview
+ * @returns {Promise<{sent:boolean, reason?:string}>}
+ */
+async function emailMeetingLinkToCandidate(interview) {
+  try {
+    const application = await Application.findById(interview.applicationId).populate('candidateId', 'name email');
+    const candidate = application?.candidateId;
+    if (!candidate?.email) {
+      logger.warn(`[Interview] No candidate email on file for application ${interview.applicationId} — skipping meeting email.`);
+      return { sent: false, reason: 'No candidate email on file.' };
+    }
+    const requisition = await Requisition.findById(interview.requisitionId);
+    const stageConfig = requisition?.stages.find((s) => s.key === interview.stageKey);
+    return await emailNotifier.sendMeetingLinkEmail({
+      candidateEmail: candidate.email,
+      candidateName: candidate.name,
+      requisitionTitle: requisition?.title || 'your role',
+      stageLabel: stageConfig?.label || interview.stageKey,
+      meetingUri: interview.meetingUri,
+    });
+  } catch (err) {
+    // The meeting itself is already saved — a failure anywhere in here (DB
+    // lookup, credential read, transport setup) must never turn a successful
+    // meeting creation into a 500 the caller has to retry.
+    logger.warn(`[Interview] Could not email meeting link for ${interview._id}: ${err.message}`);
+    return { sent: false, reason: 'Could not send the email — the meeting link was still saved.' };
+  }
+}
 
 /**
  * Checks that every enabled stage before `stageKey` (in pipeline order) has
@@ -129,7 +165,51 @@ const createMeeting = asyncHandler(async (req, res) => {
   interview.status = 'scheduled';
   await interview.save();
 
+  const emailResult = await emailMeetingLinkToCandidate(interview);
+
   logger.info(`[Interview] Meeting set for ${interview._id}: ${interview.meetingUri}`);
+  res.json({ interview, emailSent: emailResult.sent, emailReason: emailResult.reason });
+});
+
+/**
+ * POST /api/interviews/:id/send-meeting-email
+ * Manually (re)sends the current meeting link to the candidate — for when
+ * the auto-send on creation failed, was missed, or the link since changed.
+ */
+const sendMeetingEmail = asyncHandler(async (req, res) => {
+  const interview = await Interview.findById(req.params.id);
+  if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
+  if (!interview.meetingUri) {
+    throw new ValidationError(['meetingUri'], 'This interview has no meeting link yet.');
+  }
+
+  const result = await emailMeetingLinkToCandidate(interview);
+  res.json(result);
+});
+
+/**
+ * DELETE /api/interviews/:id/meeting
+ * Cancels a created/pasted meeting so a fresh one can be set. Only ever
+ * touches the meeting link itself — if this stage already has scores, the
+ * scores/status/transcript are left completely untouched, so cancelling a
+ * stale link can never orphan or reset evidence a human already reviewed.
+ */
+const cancelMeeting = asyncHandler(async (req, res) => {
+  const interview = await Interview.findById(req.params.id);
+  if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
+
+  interview.meetingUri = undefined;
+  interview.conferenceId = undefined;
+
+  if (!interview.scores?.length) {
+    interview.status = 'pending';
+    if (interview.transcriptStatus === 'pending') {
+      interview.transcriptStatus = 'none';
+    }
+  }
+  await interview.save();
+
+  logger.info(`[Interview] Meeting cancelled for ${interview._id}.`);
   res.json({ interview });
 });
 
@@ -338,6 +418,6 @@ const googleOAuthCallback = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  list, getOne, create, createMeeting, recordConsent, fetchTranscript,
+  list, getOne, create, createMeeting, cancelMeeting, sendMeetingEmail, recordConsent, fetchTranscript,
   uploadTranscript, uploadArtifact, score, googleOAuthCallback,
 };

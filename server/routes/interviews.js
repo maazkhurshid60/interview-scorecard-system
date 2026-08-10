@@ -14,6 +14,8 @@ router.get('/', interviewController.list);
 router.get('/:id', interviewController.getOne);
 router.post('/', interviewController.create);
 router.post('/:id/meeting', interviewController.createMeeting);
+router.delete('/:id/meeting', interviewController.cancelMeeting);
+router.post('/:id/send-meeting-email', interviewController.sendMeetingEmail);
 router.post('/:id/consent', interviewController.recordConsent);
 router.post('/:id/fetch-transcript', interviewController.fetchTranscript);
 router.post('/:id/upload-transcript', upload.single('transcript'), interviewController.uploadTranscript);
