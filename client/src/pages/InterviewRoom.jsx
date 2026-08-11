@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ChevronDown } from 'lucide-react';
 import api from '../hooks/useApi';
 import PipelineStepper from '../components/PipelineStepper';
 import ScoreReviewTable from '../components/ScoreReviewTable';
@@ -14,6 +14,7 @@ export default function InterviewRoom() {
 
   const [interview, setInterview] = useState(null);
   const [requisition, setRequisition] = useState(null);
+  const [scorecard, setScorecard] = useState(null);
   const [application, setApplication] = useState(null);
   const [stageLinks, setStageLinks] = useState({});
   const [loading, setLoading] = useState(true);
@@ -28,6 +29,10 @@ export default function InterviewRoom() {
   const [scoring, setScoring] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
   const [recomputed, setRecomputed] = useState(null);
+  const [openAttrs, setOpenAttrs] = useState(new Set());
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [startingStage, setStartingStage] = useState(false);
+  const [sendingMeetingEmail, setSendingMeetingEmail] = useState(false);
 
   const pollTimer = useRef(null);
 
@@ -37,6 +42,7 @@ export default function InterviewRoom() {
 
     const { data: reqData } = await api.get(`/requisitions/${interviewData.interview.requisitionId}`);
     setRequisition(reqData.requisition);
+    setScorecard(reqData.scorecard || null);
     const app = reqData.applications.find((a) => a._id === interviewData.interview.applicationId);
     setApplication(app || null);
 
@@ -53,6 +59,21 @@ export default function InterviewRoom() {
   }, [load]);
 
   const stageConfig = requisition?.stages.find((s) => s.key === interview?.stageKey);
+  const stageAttributes = scorecard?.stages?.find((s) => s.stageKey === interview?.stageKey)?.attributes || [];
+
+  useEffect(() => {
+    setOpenAttrs(new Set(stageAttributes.length > 0 ? [stageAttributes[0].attributeId] : []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interview?.stageKey, scorecard]);
+
+  function toggleAttr(attributeId) {
+    setOpenAttrs((prev) => {
+      const next = new Set(prev);
+      if (next.has(attributeId)) next.delete(attributeId);
+      else next.add(attributeId);
+      return next;
+    });
+  }
 
   function stopPolling() {
     clearTimeout(pollTimer.current);
@@ -88,7 +109,65 @@ export default function InterviewRoom() {
       setInterview(res.data.interview);
       setChangingMeeting(false);
       setMeetingLinkInput('');
-      toast.success('Meeting set.');
+      if (res.data.emailSent) {
+        toast.success('Meeting set and emailed to candidate.');
+      } else {
+        toast.success('Meeting set.');
+        toast.error(res.data.emailReason || 'Could not email the candidate.');
+      }
+    } finally {
+      setCreatingMeeting(false);
+    }
+  }
+
+  async function handleResendMeetingEmail() {
+    setSendingMeetingEmail(true);
+    try {
+      const res = await api.post(`/interviews/${id}/send-meeting-email`, {}, { validateStatus: () => true });
+      if (res.data?.sent) {
+        toast.success('Email sent to candidate.');
+      } else {
+        toast.error(res.data?.reason || res.data?.message || 'Could not send email.');
+      }
+    } finally {
+      setSendingMeetingEmail(false);
+    }
+  }
+
+  async function handleStartNextStage(stageKey) {
+    setStartingStage(true);
+    try {
+      const res = await api.post(
+        '/interviews',
+        { applicationId: application._id, stageKey },
+        { validateStatus: () => true }
+      );
+      if (res.status === 201) {
+        navigate(`/interview/${res.data.interview._id}`);
+      } else if (res.status === 409 && res.data?.interviewId) {
+        // Duplicate interview — open the one that already exists. Out-of-order
+        // stage attempts also return 409, but carry no interviewId; those fall
+        // through so their "Stage X must be approved first" message is shown.
+        navigate(`/interview/${res.data.interviewId}`);
+      } else {
+        toast.error(res.data?.message || 'Could not start next stage.');
+      }
+    } finally {
+      setStartingStage(false);
+    }
+  }
+
+  async function handleCancelMeeting() {
+    if (!window.confirm('Cancel this meeting? The link will be removed — you can create or paste a new one afterward.')) return;
+    setCreatingMeeting(true);
+    try {
+      const res = await api.delete(`/interviews/${id}/meeting`, { validateStatus: () => true });
+      if (res.status >= 400) {
+        toast.error(res.data?.message || 'Could not cancel the meeting.');
+        return;
+      }
+      setInterview(res.data.interview);
+      toast.success('Meeting cancelled.');
     } finally {
       setCreatingMeeting(false);
     }
@@ -165,7 +244,8 @@ export default function InterviewRoom() {
     }
   }
 
-  const canScore = interview?.consentObtained
+  const isTranscriptStage = stageConfig?.inputType === 'transcript';
+  const canScore = (isTranscriptStage ? interview?.consentObtained : true)
     && (stageConfig?.inputType === 'artifact' ? !!interview.artifactFileUrl : interview?.transcriptStatus === 'ready')
     && interview?.status !== 'approved';
 
@@ -194,10 +274,58 @@ export default function InterviewRoom() {
             stages={requisition.stages}
             progress={Object.fromEntries((application?.stageProgress || []).map((p) => [p.stageKey, p.status]))}
             stageLinks={stageLinks}
+            currentStageKey={application?.currentStageKey}
+            onStartStage={handleStartNextStage}
+            startingStageKey={startingStage ? application?.currentStageKey : null}
           />
         </CardContent>
       </Card>
 
+      {stageAttributes.length > 0 && (
+        <Card className="mt-4">
+          <CardHeader
+            onClick={() => setGuideOpen((v) => !v)}
+            className="cursor-pointer flex-row items-center justify-between space-y-0"
+          >
+            <CardTitle>Interview Guide — {stageConfig?.label}</CardTitle>
+            <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${guideOpen ? 'rotate-180' : ''}`} />
+          </CardHeader>
+          {guideOpen && (
+          <CardContent className="space-y-3">
+            {stageAttributes.map((attr) => {
+              const isOpen = openAttrs.has(attr.attributeId);
+              return (
+                <div key={attr.attributeId} className="rounded-md border border-border p-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleAttr(attr.attributeId)}
+                    className="flex w-full items-center justify-between text-left"
+                  >
+                    <p className="text-sm font-semibold text-foreground">{attr.name}</p>
+                    <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {isOpen && (
+                    <div className="mt-3 space-y-2.5">
+                      <p className="text-sm text-foreground">{attr.question}</p>
+                      <div className="rounded-md border border-green-200 bg-green-50 p-2.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-green-700">What a 5 looks like</p>
+                        <p className="mt-1 text-sm text-green-900">{attr.anchor5}</p>
+                      </div>
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Red flags</p>
+                        <p className="mt-1 text-sm text-amber-900">{attr.redFlags}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+          )}
+        </Card>
+      )}
+
+      {isTranscriptStage && (
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader>
@@ -205,17 +333,33 @@ export default function InterviewRoom() {
           </CardHeader>
           <CardContent>
             {interview.meetingUri && !changingMeeting ? (
-              <div>
-                <a href={interview.meetingUri} target="_blank" rel="noreferrer" className="text-sm text-blue-600 hover:underline">
-                  {interview.meetingUri}
-                </a>
-                <span className="ml-2 text-xs text-muted-foreground">({interview.provider === 'manual' ? 'pasted link' : 'created via Google Meet'})</span>
-                <button
-                  type="button" onClick={() => setChangingMeeting(true)}
-                  className="ml-2 text-xs text-muted-foreground underline hover:text-foreground"
-                >
-                  Change
-                </button>
+              <div className="space-y-2.5">
+                <div>
+                  <a href={interview.meetingUri} target="_blank" rel="noreferrer" className="break-all text-sm text-blue-600 hover:underline">
+                    {interview.meetingUri}
+                  </a>
+                  <span className="ml-2 text-xs text-muted-foreground">({interview.provider === 'manual' ? 'pasted link' : 'created via Google Meet'})</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button" onClick={() => setChangingMeeting(true)}
+                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+                  >
+                    Change
+                  </button>
+                  <button
+                    type="button" onClick={handleResendMeetingEmail} disabled={sendingMeetingEmail}
+                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sendingMeetingEmail ? 'Sending...' : 'Resend Email'}
+                  </button>
+                  <button
+                    type="button" onClick={handleCancelMeeting} disabled={creatingMeeting}
+                    className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {creatingMeeting ? 'Cancelling...' : 'Cancel Meeting'}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -270,6 +414,7 @@ export default function InterviewRoom() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {stageConfig?.inputType === 'artifact' ? (
         <Card className="mt-4">
@@ -334,8 +479,10 @@ export default function InterviewRoom() {
         >
           {scoring ? 'Scoring...' : interview.scores?.length ? 'Re-run AI Scoring' : 'Run AI Scoring'}
         </button>
-        {!canScore && interview.status !== 'approved' && (
-          <p className="mt-1 text-xs text-muted-foreground">Requires consent + a ready transcript (or artifact) first.</p>
+        {!canScore && interview.status !== 'approved' && (isTranscriptStage || stageConfig?.inputType === 'artifact') && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {isTranscriptStage ? 'Requires consent + a ready transcript first.' : 'Requires an uploaded artifact first.'}
+          </p>
         )}
       </div>
 
@@ -343,8 +490,12 @@ export default function InterviewRoom() {
         <div className="mt-4">
           <ScoreReviewTable
             interview={interview}
+            attributes={stageAttributes}
             passThreshold={stageConfig?.passThreshold}
-            onUpdated={(updatedInterview) => setInterview(updatedInterview)}
+            onUpdated={(updatedInterview) => {
+              setInterview(updatedInterview);
+              if (updatedInterview.status === 'approved') load();
+            }}
           />
         </div>
       )}

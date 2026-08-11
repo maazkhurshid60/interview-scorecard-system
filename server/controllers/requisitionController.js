@@ -59,12 +59,39 @@ const create = asyncHandler(async (req, res) => {
 /**
  * GET /api/requisitions
  * Lists requisitions, optionally filtered by status (?status=open|on_hold|closed).
+ *
+ * Each row carries a candidate rollup (total, still in progress, and the
+ * hire/maybe/no-hire split) so the list can answer "which roles are actually
+ * moving?" without the client fetching every requisition's detail separately.
  */
 const list = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
-  const requisitions = await Requisition.find(filter).sort({ createdAt: -1 });
-  res.json({ requisitions });
+  const requisitions = await Requisition.find(filter).sort({ createdAt: -1 }).lean();
+
+  const applications = await Application.find({ requisitionId: { $in: requisitions.map((r) => r._id) } })
+    .select('requisitionId disposition')
+    .lean();
+
+  const statsByRequisition = new Map();
+  applications.forEach((a) => {
+    const key = String(a.requisitionId);
+    if (!statsByRequisition.has(key)) {
+      statsByRequisition.set(key, { total: 0, inProgress: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0 });
+    }
+    const stats = statsByRequisition.get(key);
+    stats.total += 1;
+    if (a.disposition) stats[a.disposition] += 1;
+    else stats.inProgress += 1;
+  });
+
+  res.json({
+    requisitions: requisitions.map((r) => ({
+      ...r,
+      candidateStats: statsByRequisition.get(String(r._id))
+        || { total: 0, inProgress: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0 },
+    })),
+  });
 });
 
 /**

@@ -146,7 +146,7 @@ export default function CandidateRankTable({ ranking, onDecisionRecorded }) {
   return (
     <>
       {/* md: and up — real table, capped height so 100+ rows don't stretch the page; header stays pinned while rows scroll */}
-      <div className="hidden max-h-[32rem] overflow-x-auto overflow-y-auto rounded-lg border border-gray-200 bg-white md:block">
+      <div className="hidden max-h-[32rem] overflow-x-auto overflow-y-auto md:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 text-left text-xs uppercase text-gray-400">

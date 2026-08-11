@@ -6,10 +6,46 @@ const { asyncHandler } = require('../utils/helpers');
 const { ValidationError } = require('../utils/errors');
 const { uploadBuffer, destroyFile } = require('../config/cloudinary');
 
-/** GET /api/candidates — list all candidates. */
+/**
+ * GET /api/candidates — list all candidates, each with the requisitions it is
+ * already attached to.
+ *
+ * The attachments are resolved here in two queries rather than left to the
+ * client, which would otherwise need one request per requisition just to
+ * answer "is this person already in a pipeline?" — and without that answer the
+ * only way to find out is to attempt an attach and read the 409.
+ */
 const list = asyncHandler(async (req, res) => {
-  const candidates = await Candidate.find().sort({ createdAt: -1 });
-  res.json({ candidates });
+  const candidates = await Candidate.find().sort({ createdAt: -1 }).lean();
+
+  const applications = await Application.find({ candidateId: { $in: candidates.map((c) => c._id) } })
+    .select('candidateId requisitionId currentStageKey disposition')
+    .lean();
+  const requisitions = await Requisition.find({ _id: { $in: applications.map((a) => a.requisitionId) } })
+    .select('title status')
+    .lean();
+  const requisitionById = new Map(requisitions.map((r) => [String(r._id), r]));
+
+  const byCandidate = new Map();
+  applications.forEach((a) => {
+    const requisition = requisitionById.get(String(a.requisitionId));
+    if (!requisition) return;
+    const entry = {
+      applicationId: a._id,
+      requisitionId: a.requisitionId,
+      title: requisition.title,
+      status: requisition.status,
+      currentStageKey: a.currentStageKey,
+      disposition: a.disposition ?? null,
+    };
+    const key = String(a.candidateId);
+    if (!byCandidate.has(key)) byCandidate.set(key, []);
+    byCandidate.get(key).push(entry);
+  });
+
+  res.json({
+    candidates: candidates.map((c) => ({ ...c, applications: byCandidate.get(String(c._id)) || [] })),
+  });
 });
 
 /** POST /api/candidates — create a candidate; `resume` file field is optional (multer). */

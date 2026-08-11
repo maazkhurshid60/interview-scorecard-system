@@ -24,6 +24,10 @@ const pipelineTemplateSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },
   description: String,
   isDefault: { type: Boolean, default: false, index: true },
+  // true  -> enabling/disabling a stage re-splits the 100% budget evenly.
+  // false -> the admin owns the numbers; toggling never rewrites them (they're
+  //          still normalized to 100% on save so the maths stays valid).
+  autoWeights: { type: Boolean, default: true },
   stages: [stageSchema],
 }, { timestamps: true });
 

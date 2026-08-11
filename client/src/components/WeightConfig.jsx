@@ -10,9 +10,10 @@
  * @param {{
  *   stages: Array<{key:string, label:string, enabled:boolean, inputType:string, weight:number}>,
  *   onChangeWeight: (key: string, percent: number) => void,
+ *   readOnly?: boolean,
  * }} props
  */
-export default function WeightConfig({ stages, onChangeWeight }) {
+export default function WeightConfig({ stages, onChangeWeight, readOnly }) {
   const scoredStages = stages.filter((s) => s.enabled && (s.inputType === 'transcript' || s.inputType === 'artifact'));
 
   if (scoredStages.length === 0) {
@@ -36,13 +37,16 @@ export default function WeightConfig({ stages, onChangeWeight }) {
             max="100"
             value={Math.round(s.weight * 100)}
             onChange={(e) => onChangeWeight(s.key, Number(e.target.value) || 0)}
-            className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+            disabled={readOnly}
+            className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
           />
           <span className="text-sm text-gray-400">%</span>
         </div>
       ))}
       <div className={`text-xs ${liveSum === 100 ? 'text-gray-400' : 'text-amber-600'}`}>
-        Current sum: {liveSum}% {liveSum !== 100 && '— will be auto-normalized to 100% on save'}
+        {readOnly
+          ? `Current sum: ${liveSum}% — split evenly across ${scoredStages.length} enabled stage${scoredStages.length === 1 ? '' : 's'}`
+          : `Current sum: ${liveSum}%${liveSum !== 100 ? ' — will be auto-normalized to 100% on save' : ''}`}
       </div>
     </div>
   );

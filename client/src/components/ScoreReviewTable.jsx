@@ -21,9 +21,10 @@ function draftsFromInterview(interview) {
  * whatever the server actually saved (never show a number that wasn't
  * persisted, e.g. after Approve silently discards an unsaved edit).
  *
- * @param {{interview: object, passThreshold: number, onUpdated: (interview: object, stageAverage?: number, passed?: boolean) => void}} props
+ * @param {{interview: object, attributes?: Array<{attributeId:string, name:string, question:string}>, passThreshold: number, onUpdated: (interview: object, stageAverage?: number, passed?: boolean) => void}} props
  */
-export default function ScoreReviewTable({ interview, passThreshold, onUpdated }) {
+export default function ScoreReviewTable({ interview, attributes, passThreshold, onUpdated }) {
+  const attributeById = Object.fromEntries((attributes || []).map((a) => [a.attributeId, a]));
   const [drafts, setDrafts] = useState(() => draftsFromInterview(interview));
   const [saving, setSaving] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -103,7 +104,11 @@ export default function ScoreReviewTable({ interview, passThreshold, onUpdated }
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
-      <table className="w-full text-sm">
+      {/* Five columns (one holding a 224px input) can't fit a phone — scroll the
+          table inside its own container rather than letting the page scroll
+          sideways. min-w keeps the columns readable while scrolling. */}
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[44rem] text-sm">
         <thead>
           <tr className="border-b border-gray-200 text-left text-xs uppercase text-gray-400">
             <th className="px-4 py-2">Attribute</th>
@@ -117,11 +122,15 @@ export default function ScoreReviewTable({ interview, passThreshold, onUpdated }
           {interview.scores.map((s) => {
             const draft = drafts[s.attributeId];
             const changed = Number(draft.approvedScore) !== Number(s.approvedScore ?? s.aiScore);
+            const attr = attributeById[s.attributeId];
             return (
               <tr key={s.attributeId}>
-                <td className="px-4 py-3 font-medium text-gray-900">
-                  {s.attributeId}
-                  {s.overridden && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">overridden</span>}
+                <td className="max-w-[14rem] px-4 py-3">
+                  <div className="font-medium text-gray-900">
+                    {attr?.name || s.attributeId}
+                    {s.overridden && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">overridden</span>}
+                  </div>
+                  {attr?.question && <div className="mt-0.5 text-xs text-gray-400">{attr.question}</div>}
                 </td>
                 <td className="px-4 py-3 text-gray-700">{formatScore(s.aiScore)}</td>
                 <td className="max-w-xs px-4 py-3 text-xs text-gray-500">{s.aiJustification}</td>
@@ -147,6 +156,7 @@ export default function ScoreReviewTable({ interview, passThreshold, onUpdated }
           })}
         </tbody>
       </table>
+      </div>
 
       {isStale && (
         <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
@@ -156,7 +166,7 @@ export default function ScoreReviewTable({ interview, passThreshold, onUpdated }
         </div>
       )}
 
-      <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+      <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm">
           {stageAverage != null ? (
             <span>

@@ -16,7 +16,7 @@ import toast from 'react-hot-toast';
  */
 export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving }) {
   const [stages, setStages] = useState(() => JSON.parse(JSON.stringify(scorecard.stages || [])));
-  const [openStages, setOpenStages] = useState(() => new Set(stages.length > 0 ? [stages[0].stageKey] : []));
+  const [openStages, setOpenStages] = useState(() => new Set());
 
   function toggleStage(stageKey) {
     setOpenStages((prev) => {

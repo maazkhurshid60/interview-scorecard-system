@@ -7,8 +7,88 @@ const logger = require('../utils/logger');
 const { asyncHandler, getEnabledStagesSorted } = require('../utils/helpers');
 const { ValidationError } = require('../utils/errors');
 const { FINAL_DECISIONS } = require('../utils/constants');
-const { computeStageAverage, isStagePassed, computeApplicationResult } = require('../services/scoringEngine');
+const { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } = require('../services/scoringEngine');
 const slackNotifier = require('../services/slackNotifier');
+
+/**
+ * Recomputes an application's weightedTotal / allGatesPassed / disposition
+ * from its interviews' APPROVED scores, mirrors the per-stage results onto
+ * stageProgress, saves, and audits a disposition change.
+ *
+ * Per spec ("Recompute whenever an approval/override changes a score"), this
+ * runs automatically on approval rather than waiting for a manual call —
+ * otherwise the ranking table sits empty (or stale) after HR approves a
+ * stage, which is exactly when the numbers change.
+ *
+ * Always derives stage averages live from approvedScore, never from the
+ * cached interview.stageAverage, so it can't propagate a stale value.
+ *
+ * @param {import('mongoose').Document} application
+ * @param {import('mongoose').Document} requisition
+ * @param {string} userId
+ * @param {string} reason - audit reason if the disposition changes
+ * @returns {Promise<object>} the computeApplicationResult payload
+ */
+async function recomputeAndPersist(application, requisition, userId, reason) {
+  const interviews = await Interview.find({ applicationId: application._id });
+  const interviewsByStageKey = new Map(interviews.map((i) => [i.stageKey, i]));
+
+  const result = computeApplicationResult({
+    stages: requisition.stages,
+    interviewsByStageKey,
+    hireThreshold: requisition.hireThreshold,
+    maybeThreshold: requisition.maybeThreshold,
+  });
+
+  result.stageResults.forEach((r) => {
+    const progress = application.stageProgress.find((p) => p.stageKey === r.stageKey);
+    if (progress) { progress.stageAverage = r.stageAverage; progress.passed = r.passed; }
+  });
+
+  const oldDisposition = application.disposition;
+  application.weightedTotal = result.weightedTotal;
+  application.allGatesPassed = result.allGatesPassed;
+  application.disposition = result.disposition;
+  await application.save();
+
+  if (oldDisposition !== result.disposition) {
+    await AuditLog.create({
+      action: 'disposition_change', userId, requisitionId: application.requisitionId, applicationId: application._id,
+      targetType: 'application', targetId: application._id.toString(),
+      oldValue: oldDisposition, newValue: result.disposition, reason,
+    });
+  }
+
+  await persistRanks(application);
+  return result;
+}
+
+/**
+ * Re-ranks every application in the requisition and persists the result.
+ *
+ * Rank is requisition-wide — one candidate's new weighted total can reorder
+ * everyone else — so it can't be derived from a single application. Written
+ * with updateOne rather than save() to avoid two live documents for the same
+ * record. Application.rank is a real schema field that requisitionController
+ * .getOne() sorts by; without this it stays undefined forever and that sort
+ * silently does nothing.
+ * @param {import('mongoose').Document} application - the just-recomputed application
+ */
+async function persistRanks(application) {
+  const siblings = await Application.find({ requisitionId: application.requisitionId }).select('_id weightedTotal rank');
+  const ranked = rankApplications(siblings.map((a) => a.toObject()));
+
+  const writes = ranked
+    .filter((a) => {
+      const current = siblings.find((s) => String(s._id) === String(a._id));
+      return current && current.rank !== a.rank;
+    })
+    .map((a) => Application.updateOne({ _id: a._id }, { $set: { rank: a.rank } }));
+  await Promise.all(writes);
+
+  const mine = ranked.find((a) => String(a._id) === String(application._id));
+  if (mine) application.rank = mine.rank; // keep the returned document consistent
+}
 
 /**
  * PATCH /api/scoring/interview/:id/approve
@@ -47,7 +127,7 @@ const approve = asyncHandler(async (req, res) => {
     const currentIndex = ordered.findIndex((s) => s.key === interview.stageKey);
     const next = ordered[currentIndex + 1];
     if (next) application.currentStageKey = next.key;
-    await application.save();
+    await recomputeAndPersist(application, requisitionForType, req.user._id, 'Recomputed after status-only stage approval.');
 
     logger.info(`[Scoring] Marked status-only interview ${interview._id} approved (no scores).`);
     return res.json({ interview, stageAverage: null, passed: null });
@@ -89,10 +169,10 @@ const approve = asyncHandler(async (req, res) => {
     const next = ordered[currentIndex + 1];
     if (next) application.currentStageKey = next.key;
   }
-  await application.save();
+  const result = await recomputeAndPersist(application, requisitionForType, req.user._id, 'Recomputed after stage approval.');
 
-  logger.info(`[Scoring] Approved interview ${interview._id}. stageAverage=${stageAverage} passed=${passed}`);
-  res.json({ interview, stageAverage, passed });
+  logger.info(`[Scoring] Approved interview ${interview._id}. stageAverage=${stageAverage} passed=${passed} weightedTotal=${result.weightedTotal} disposition=${result.disposition}`);
+  res.json({ interview, stageAverage, passed, application });
 });
 
 /**
@@ -147,35 +227,9 @@ const recompute = asyncHandler(async (req, res) => {
   if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
 
   const requisition = await Requisition.findById(application.requisitionId);
-  const interviews = await Interview.find({ applicationId: application._id });
-  const interviewsByStageKey = new Map(interviews.map((i) => [i.stageKey, i]));
-
-  const result = computeApplicationResult({
-    stages: requisition.stages,
-    interviewsByStageKey,
-    hireThreshold: requisition.hireThreshold,
-    maybeThreshold: requisition.maybeThreshold,
-  });
-
-  result.stageResults.forEach((r) => {
-    const progress = application.stageProgress.find((p) => p.stageKey === r.stageKey);
-    if (progress) { progress.stageAverage = r.stageAverage; progress.passed = r.passed; }
-  });
-
-  const oldDisposition = application.disposition;
-  application.weightedTotal = result.weightedTotal;
-  application.allGatesPassed = result.allGatesPassed;
-  application.disposition = result.disposition;
-  await application.save();
-
-  if (oldDisposition !== result.disposition) {
-    await AuditLog.create({
-      action: 'disposition_change', userId: req.user._id, requisitionId: application.requisitionId, applicationId: application._id,
-      targetType: 'application', targetId: application._id.toString(),
-      oldValue: oldDisposition, newValue: result.disposition,
-      reason: 'Recomputed after score approval/override.',
-    });
-  }
+  const result = await recomputeAndPersist(
+    application, requisition, req.user._id, 'Recomputed after score approval/override.'
+  );
 
   logger.info(`[Scoring] Recomputed application ${application._id}: weightedTotal=${result.weightedTotal} disposition=${result.disposition}`);
   res.json({ application, stageResults: result.stageResults });

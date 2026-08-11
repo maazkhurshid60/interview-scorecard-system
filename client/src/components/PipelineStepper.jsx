@@ -22,9 +22,22 @@ const STATUS_STYLES = {
  * there's no way to revisit an earlier (even already-approved) stage once
  * you've navigated away from it.
  *
- * @param {{stages: Array<{key:string, label:string, enabled:boolean}>, progress?: Record<string,string>, stageLinks?: Record<string,string>, compact?: boolean}} props
+ * With `currentStageKey` + `onStartStage`, the one stage that's next up (no
+ * interview yet, but unlocked) becomes clickable too — clicking it starts
+ * that stage instead of just sitting there inert. Stages further ahead stay
+ * inert, so nobody can skip ahead out of order.
+ *
+ * @param {{
+ *   stages: Array<{key:string, label:string, enabled:boolean}>,
+ *   progress?: Record<string,string>,
+ *   stageLinks?: Record<string,string>,
+ *   currentStageKey?: string,
+ *   onStartStage?: (stageKey: string) => void,
+ *   startingStageKey?: string|null,
+ *   compact?: boolean,
+ * }} props
  */
-export default function PipelineStepper({ stages, progress, stageLinks, compact }) {
+export default function PipelineStepper({ stages, progress, stageLinks, currentStageKey, onStartStage, startingStageKey, compact }) {
   const enabledStages = stages.filter((s) => s.enabled);
 
   return (
@@ -35,17 +48,36 @@ export default function PipelineStepper({ stages, progress, stageLinks, compact 
           const style = STATUS_STYLES[status] || STATUS_STYLES.pending;
           const Icon = style.icon;
           const interviewId = stageLinks?.[stage.key];
+          const canStart = !interviewId && onStartStage && stage.key === currentStageKey;
+          const isStarting = startingStageKey === stage.key;
 
           const circle = (
-            <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${style.circle} ${interviewId ? 'cursor-pointer ring-offset-1 hover:ring-2 hover:ring-gray-400' : ''}`}>
+            <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${style.circle} ${interviewId || canStart ? 'cursor-pointer ring-offset-1 hover:ring-2 hover:ring-gray-400' : ''} ${isStarting ? 'opacity-50' : ''}`}>
               {Icon ? <Icon className="h-3.5 w-3.5" /> : index + 1}
             </div>
           );
 
+          let content = circle;
+          if (interviewId) {
+            content = <Link to={`/interview/${interviewId}`}>{circle}</Link>;
+          } else if (canStart) {
+            content = (
+              <button type="button" onClick={() => onStartStage(stage.key)} disabled={isStarting}>
+                {circle}
+              </button>
+            );
+          }
+
+          const title = interviewId
+            ? `${stage.label}: ${status.replace('_', ' ')} — click to open`
+            : canStart
+              ? `${stage.label} — click to start`
+              : `${stage.label}: ${status.replace('_', ' ')}`;
+
           return (
             <div key={stage.key} className="flex items-center">
-              <div className="flex flex-col items-center" title={`${stage.label}: ${status.replace('_', ' ')}${interviewId ? ' — click to open' : ''}`}>
-                {interviewId ? <Link to={`/interview/${interviewId}`}>{circle}</Link> : circle}
+              <div className="flex flex-col items-center" title={title}>
+                {content}
                 {!compact && <span className="mt-1 max-w-[4.5rem] truncate text-center text-[10px] text-gray-500">{stage.label}</span>}
               </div>
               {index < enabledStages.length - 1 && <div className="mx-1 h-px w-4 flex-shrink-0 bg-gray-300" />}

@@ -1,10 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Plus, ChevronUp, ChevronDown, Star, Trash2, ArrowLeft } from 'lucide-react';
+import {
+  Plus, ChevronUp, ChevronDown, Star, Trash2, ArrowLeft, Search, X,
+  GitBranch, MoreHorizontal,
+} from 'lucide-react';
 import api from '../hooks/useApi';
 import WeightConfig from '../components/WeightConfig';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton } from '@/components/ui/skeleton';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+const PAGE_SIZE = 10;
 
 /** Starting point for a brand-new template — every known stage type, all disabled by default. */
 const STAGE_TYPE_DEFAULTS = [
@@ -21,22 +44,66 @@ const STAGE_TYPE_DEFAULTS = [
   { key: 'offer', label: 'Offer', stageType: 'offer', inputType: 'status_only' },
 ].map((s, i) => ({ ...s, enabled: false, order: i + 1, weight: 0, passThreshold: 3.0 }));
 
+const INPUT_TYPE_LABEL = {
+  transcript: 'Transcript',
+  artifact: 'Artifact',
+  pass_fail: 'Pass / fail',
+  status_only: 'Status only',
+};
+
 function reindexOrder(stages) {
   return stages.map((s, i) => ({ ...s, order: i + 1 }));
+}
+
+/**
+ * Splits the 100% budget evenly across enabled scored stages — one stage gets
+ * 100%, two get 50/50, and so on. Mirrors the identical rule the server
+ * applies on save (see pipelineController.equalizeScoredWeights), so the
+ * percentages update live as checkboxes are toggled instead of only appearing
+ * after a round-trip. pass_fail/status_only stages never carry weight.
+ */
+function equalizeScoredWeights(stages) {
+  const scoredKeys = stages
+    .filter((s) => s.enabled && s.inputType !== 'pass_fail' && s.inputType !== 'status_only')
+    .map((s) => s.key);
+  if (scoredKeys.length === 0) return stages;
+
+  const share = 1 / scoredKeys.length;
+  return stages.map((s) => (scoredKeys.includes(s.key) ? { ...s, weight: share } : s));
 }
 
 /** One template's editable card: toggle/reorder stages, edit weights & gates, save/default/delete. */
 function TemplateCard({ template, onChanged, onDeleted }) {
   const [stages, setStages] = useState(() => [...template.stages].sort((a, b) => a.order - b.order));
+  const [autoWeights, setAutoWeights] = useState(template.autoWeights !== false);
   const [saving, setSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   function toggleEnabled(key) {
-    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, enabled: !s.enabled } : s)));
+    setStages((prev) => {
+      const next = prev.map((s) => (s.key === key ? { ...s, enabled: !s.enabled } : s));
+      // In manual mode the admin owns the numbers — toggling a stage must not
+      // rewrite them (the server normalizes to 100% on save either way).
+      return autoWeights ? equalizeScoredWeights(next) : next;
+    });
+  }
+
+  function changeWeightMode(nextAuto) {
+    setAutoWeights(nextAuto);
+    // Switching back to auto re-balances straight away rather than waiting for
+    // the next stage toggle; switching to manual keeps what's on screen as the
+    // starting point.
+    if (nextAuto) setStages((prev) => equalizeScoredWeights(prev));
   }
 
   function changeWeight(key, percent) {
-    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, weight: percent / 100 } : s)));
+    // `min`/`max` on a number input only restrict the spinner arrows, not typed
+    // input — clamp here so a typed "-50" can never become a negative weight
+    // (which would subtract from the candidate's weighted total downstream).
+    const safe = Math.min(100, Math.max(0, Number(percent) || 0));
+    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, weight: safe / 100 } : s)));
   }
 
   function changeGate(key, value) {
@@ -56,12 +123,20 @@ function TemplateCard({ template, onChanged, onDeleted }) {
   async function handleSave() {
     setSaving(true);
     try {
-      const res = await api.patch(`/pipelines/${template._id}`, { stages });
-      const newWeights = res.data.template.stages
-        .filter((s) => s.enabled && (s.inputType === 'transcript' || s.inputType === 'artifact'))
-        .map((s) => `${s.label} ${Math.round(s.weight * 100)}%`)
-        .join(', ');
-      toast.success(`Weights re-normalized: ${newWeights || 'no scored stages enabled'}`);
+      const res = await api.patch(`/pipelines/${template._id}`, { stages, autoWeights });
+      // The server re-normalizes weights (and re-splits them for newly-enabled
+      // stages), so the saved values differ from what was posted. This card's
+      // `stages` state is seeded once and the card never remounts (stable key),
+      // so without syncing it back the inputs would keep showing stale numbers
+      // until a full page reload.
+      setStages([...res.data.template.stages].sort((a, b) => a.order - b.order));
+      setAutoWeights(res.data.template.autoWeights !== false);
+      const scored = res.data.template.stages.filter(
+        (s) => s.enabled && (s.inputType === 'transcript' || s.inputType === 'artifact')
+      );
+      toast.success(
+        scored.length ? `Saved — ${scored.length} scored stage${scored.length === 1 ? '' : 's'}, weights total 100%.` : 'Saved.'
+      );
       onChanged(res.data.template);
     } finally {
       setSaving(false);
@@ -75,100 +150,209 @@ function TemplateCard({ template, onChanged, onDeleted }) {
   }
 
   async function handleDelete() {
-    if (!window.confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
-    await api.delete(`/pipelines/${template._id}`);
-    toast.success('Template deleted.');
-    onDeleted(template._id);
+    setDeleting(true);
+    try {
+      await api.delete(`/pipelines/${template._id}`);
+      toast.success('Template deleted.');
+      setConfirmDelete(false);
+      onDeleted(template._id);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const enabledCount = stages.filter((s) => s.enabled).length;
+  const scoredStages = stages.filter((s) => s.enabled && s.inputType !== 'pass_fail' && s.inputType !== 'status_only');
 
   return (
     <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-start justify-between">
+      <CardContent className="p-0">
+        {/* ---------- header ---------- */}
+        <div className="flex items-start justify-between gap-3 p-4">
           <button
             type="button"
             onClick={() => setIsOpen((v) => !v)}
-            className="flex flex-1 items-start gap-2 text-left"
+            className="flex flex-1 items-start gap-2.5 text-left"
           >
-            <ChevronDown className={`mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-            <div>
-              <div className="flex items-center gap-2">
+            <ChevronDown
+              className={`mt-1 h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`}
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold text-foreground">{template.name}</h3>
                 {template.isDefault && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[#d21e2b]/10 px-2 py-0.5 text-xs font-medium text-[#d21e2b]">
+                  <Badge variant="secondary" className="gap-1 bg-[#d21e2b]/10 font-normal text-[#d21e2b] hover:bg-[#d21e2b]/10">
                     <Star className="h-3 w-3" /> Default
-                  </span>
+                  </Badge>
                 )}
-                <span className="text-xs text-muted-foreground">({enabledCount} of {stages.length} stages enabled)</span>
+                <Badge variant="secondary" className="font-normal">
+                  {enabledCount} of {stages.length} stages
+                </Badge>
+                <Badge variant="secondary" className="font-normal">
+                  {autoWeights ? 'Even split' : 'Manual weights'}
+                </Badge>
               </div>
-              {template.description && <p className="mt-0.5 text-xs text-muted-foreground">{template.description}</p>}
+              {template.description && (
+                <p className="mt-1 text-xs text-muted-foreground">{template.description}</p>
+              )}
             </div>
           </button>
-          <div className="flex flex-shrink-0 gap-2">
-            {!template.isDefault && (
-              <button type="button" onClick={handleSetDefault} className="text-xs font-medium text-[#d21e2b] hover:text-[#d21e2b]/80">
-                Set as default
-              </button>
-            )}
-            {!template.isDefault && (
-              <button type="button" onClick={handleDelete} className="rounded-md p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600" title="Delete template">
-                <Trash2 className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="flex-shrink-0">
+                <MoreHorizontal />
+                <span className="sr-only">Template actions</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleSetDefault} disabled={template.isDefault}>
+                <Star />
+                {template.isDefault ? 'Already default' : 'Set as default'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setConfirmDelete(true)}
+                disabled={template.isDefault}
+                className="text-red-600 focus:text-red-600"
+              >
+                <Trash2 />
+                {template.isDefault ? "Can't delete default" : 'Delete template'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
+        {/* ---------- body ---------- */}
         {isOpen && (
-          <>
-            <div className="mt-4 space-y-2">
-              {stages.map((s, index) => (
-                <div key={s.key} className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-2 text-sm">
-                  <div className="flex flex-col">
-                    <button type="button" onClick={() => moveStage(index, -1)} disabled={index === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-20">
-                      <ChevronUp className="h-3.5 w-3.5" />
-                    </button>
-                    <button type="button" onClick={() => moveStage(index, 1)} disabled={index === stages.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-20">
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <input type="checkbox" checked={s.enabled} onChange={() => toggleEnabled(s.key)} className="h-4 w-4 flex-shrink-0 accent-[#d21e2b]" />
-                  <span className={`min-w-[8rem] flex-1 ${s.enabled ? 'text-foreground' : 'text-muted-foreground'}`}>{s.label}</span>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="flex-shrink-0 text-xs text-muted-foreground">{s.inputType}</span>
-                    {s.inputType !== 'status_only' && (
-                      <div className="flex flex-shrink-0 items-center gap-1">
-                        <label className="text-xs text-muted-foreground">Gate:</label>
-                        <input
+          <div className="border-t border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">Order</TableHead>
+                  <TableHead className="w-12">On</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead className="hidden sm:table-cell">Input</TableHead>
+                  <TableHead className="w-28 text-right">Gate</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stages.map((s, index) => (
+                  <TableRow key={s.key} className={s.enabled ? '' : 'opacity-60'}>
+                    <TableCell className="py-2">
+                      <div className="flex flex-col">
+                        <button
+                          type="button" onClick={() => moveStage(index, -1)} disabled={index === 0}
+                          className="text-muted-foreground hover:text-foreground disabled:opacity-20"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button" onClick={() => moveStage(index, 1)} disabled={index === stages.length - 1}
+                          className="text-muted-foreground hover:text-foreground disabled:opacity-20"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <Checkbox
+                        checked={s.enabled}
+                        onCheckedChange={() => toggleEnabled(s.key)}
+                        aria-label={`Enable ${s.label}`}
+                      />
+                    </TableCell>
+                    <TableCell className={`py-2 text-sm ${s.enabled ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+                      {s.label}
+                    </TableCell>
+                    <TableCell className="hidden py-2 sm:table-cell">
+                      <Badge variant="outline" className="font-normal">
+                        {INPUT_TYPE_LABEL[s.inputType] || s.inputType}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="py-2 text-right">
+                      {s.inputType === 'status_only' ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : (
+                        <Input
                           type="number" step="0.1" min="1" max="5"
                           value={s.passThreshold}
                           onChange={(e) => changeGate(s.key, e.target.value)}
-                          className="w-16 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b]"
+                          className="ml-auto h-8 w-20 text-xs"
                         />
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+
+            {/* ---------- weights ---------- */}
+            <div className="border-t border-border p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Weights</h4>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {scoredStages.length === 0
+                      ? 'Enable a scored stage to assign weights.'
+                      : `Across ${scoredStages.length} scored stage${scoredStages.length === 1 ? '' : 's'}.`}
+                  </p>
                 </div>
-              ))}
+                <RadioGroup
+                  value={autoWeights ? 'auto' : 'manual'}
+                  onValueChange={(v) => changeWeightMode(v === 'auto')}
+                  className="flex items-center gap-4"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <RadioGroupItem value="auto" id={`auto-${template._id}`} />
+                    <Label htmlFor={`auto-${template._id}`} className="cursor-pointer text-xs font-normal">
+                      Split evenly
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <RadioGroupItem value="manual" id={`manual-${template._id}`} />
+                    <Label htmlFor={`manual-${template._id}`} className="cursor-pointer text-xs font-normal">
+                      Set manually
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+              <WeightConfig stages={stages} onChangeWeight={changeWeight} readOnly={autoWeights} />
             </div>
 
-            <div className="mt-4 border-t border-border pt-4">
-              <h4 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Weights</h4>
-              <WeightConfig stages={stages} onChangeWeight={changeWeight} />
+            <div className="flex justify-end border-t border-border p-4">
+              <Button
+                onClick={handleSave} disabled={saving}
+                className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+              >
+                {saving ? 'Saving…' : 'Save changes'}
+              </Button>
             </div>
-
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="mt-4 rounded-md bg-[#d21e2b] px-4 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </>
+          </div>
         )}
       </CardContent>
+
+      {/* ---------- delete confirmation ---------- */}
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{template.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This can’t be undone. Requisitions already created from this template keep their own
+              copy of the stages, so they aren’t affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); handleDelete(); }}
+              disabled={deleting}
+              className="bg-red-600 text-white hover:bg-red-600/90"
+            >
+              {deleting ? 'Deleting…' : 'Delete template'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
@@ -178,12 +362,14 @@ export default function Pipelines() {
   const [canGoBack] = useState(() => typeof window !== 'undefined' && window.history.state?.idx > 0);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+
+  const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [creating, setCreating] = useState(false);
+
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 10;
 
   async function loadTemplates() {
     setLoading(true);
@@ -206,10 +392,10 @@ export default function Pipelines() {
     setCreating(true);
     try {
       await api.post('/pipelines', { name: newName, description: newDescription, stages: STAGE_TYPE_DEFAULTS });
-      toast.success('Template created — enable and configure stages below.');
+      toast.success('Template created — open it to enable stages.');
       setNewName('');
       setNewDescription('');
-      setShowForm(false);
+      setCreateOpen(false);
       loadTemplates();
     } finally {
       setCreating(false);
@@ -217,116 +403,174 @@ export default function Pipelines() {
   }
 
   function handleChanged(updated, refetchAll) {
-    if (refetchAll) {
-      loadTemplates();
-    } else {
-      setTemplates((prev) => prev.map((t) => (t._id === updated._id ? updated : t)));
-    }
+    if (refetchAll) loadTemplates();
+    else setTemplates((prev) => prev.map((t) => (t._id === updated._id ? updated : t)));
   }
 
   function handleDeleted(id) {
     setTemplates((prev) => prev.filter((t) => t._id !== id));
   }
 
-  const totalPages = Math.max(1, Math.ceil(templates.length / PAGE_SIZE));
+  const query = search.trim().toLowerCase();
+  const filtered = useMemo(() => (
+    query
+      ? templates.filter((t) => `${t.name || ''} ${t.description || ''}`.toLowerCase().includes(query))
+      : templates
+  ), [templates, query]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const paginatedTemplates = templates.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div>
+      {/* ---------- header ---------- */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            disabled={!canGoBack}
-            className="inline-flex items-center justify-center rounded-md border border-border bg-background p-2 text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <h1 className="text-2xl font-semibold text-foreground">Pipelines</h1>
+          <Button variant="outline" size="icon" onClick={() => navigate(-1)} disabled={!canGoBack}>
+            <ArrowLeft />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">Pipelines</h1>
+            <p className="text-sm text-muted-foreground">
+              {loading ? 'Loading…' : `${templates.length} template${templates.length === 1 ? '' : 's'}`}
+            </p>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          className="inline-flex items-center gap-2 rounded-md bg-[#d21e2b] px-3 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90"
-        >
-          <Plus className="h-4 w-4" />
+        <Button className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90" onClick={() => setCreateOpen(true)}>
+          <Plus />
           New Template
-        </button>
+        </Button>
       </div>
 
-      {showForm && (
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle>New Template</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleCreate} className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-foreground">Template Name</label>
-                <input
-                  type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground">Description</label>
-                <input
-                  type="text" value={newDescription} onChange={(e) => setNewDescription(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b]"
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">All stage types are included, disabled by default — enable and configure the ones you need after creating.</p>
-              <button
-                type="submit" disabled={creating}
-                className="rounded-md bg-[#d21e2b] px-4 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {creating ? 'Creating...' : 'Create Template'}
-              </button>
-            </form>
-          </CardContent>
-        </Card>
+      {/* ---------- search ---------- */}
+      {(templates.length > 0 || loading) && (
+        <div className="relative mt-5 w-full sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search templates…"
+            className="pl-9 pr-9"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => { setSearch(''); setPage(1); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       )}
 
-      <div className="mt-6 space-y-4">
+      {/* ---------- list ---------- */}
+      <div className="mt-4 space-y-3">
         {loading ? (
-          <p className="text-sm text-muted-foreground">Loading...</p>
+          Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="flex items-start gap-3 p-4">
+                <Skeleton className="mt-1 h-4 w-4" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-52" />
+                  <Skeleton className="h-3 w-72" />
+                </div>
+                <Skeleton className="h-8 w-8" />
+              </CardContent>
+            </Card>
+          ))
         ) : templates.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No pipeline templates yet.</p>
+          <Card>
+            <CardContent className="flex flex-col items-center gap-3 px-6 py-14 text-center">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-muted">
+                <GitBranch className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">No pipeline templates yet</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  A template defines the interview stages, their order, gates and weights.
+                </p>
+              </div>
+              <Button className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90" onClick={() => setCreateOpen(true)}>
+                <Plus />
+                New Template
+              </Button>
+            </CardContent>
+          </Card>
+        ) : filtered.length === 0 ? (
+          <Card>
+            <CardContent className="px-6 py-14 text-center">
+              <p className="text-sm font-medium text-foreground">No matches for “{search}”</p>
+              <p className="mt-1 text-sm text-muted-foreground">Try a different template name.</p>
+            </CardContent>
+          </Card>
         ) : (
-          paginatedTemplates.map((t) => (
+          paginated.map((t) => (
             <TemplateCard key={t._id} template={t} onChanged={handleChanged} onDeleted={handleDeleted} />
           ))
         )}
       </div>
 
-      {!loading && templates.length > PAGE_SIZE && (
-        <div className="mt-4 flex items-center justify-between">
+      {/* ---------- pagination ---------- */}
+      {!loading && filtered.length > PAGE_SIZE && (
+        <div className="mt-3 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, templates.length)} of {templates.length} templates
+            Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
           </p>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={safePage === 1}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1}>
               Previous
-            </button>
+            </Button>
             <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
-            <button
-              type="button"
+            <Button
+              variant="outline" size="sm"
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={safePage === totalPages}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next
-            </button>
+            </Button>
           </div>
         </div>
       )}
+
+      {/* ---------- create dialog ---------- */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New pipeline template</DialogTitle>
+            <DialogDescription>
+              Every stage type is included but switched off — enable the ones this role needs after creating.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-name">Template name</Label>
+              <Input
+                id="tpl-name" value={newName} autoFocus
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Engineering Pipeline"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-desc">Description <span className="text-muted-foreground">(optional)</span></Label>
+              <Input
+                id="tpl-desc" value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                placeholder="Rewritten automatically from the stages you enable"
+              />
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={creating} className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90">
+                {creating ? 'Creating…' : 'Create template'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

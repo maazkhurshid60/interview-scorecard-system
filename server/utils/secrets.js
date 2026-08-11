@@ -3,6 +3,7 @@ const Setting = require('../models/Setting');
 /** Every credential an admin can override from Settings, instead of editing .env + redeploying. */
 const SECRET_SETTING_KEYS = [
   'anthropicApiKey', 'googleClientId', 'googleClientSecret', 'googleRefreshToken', 'slackWebhookUrl',
+  'gmailUser', 'gmailAppPassword',
 ];
 
 /**
@@ -11,7 +12,7 @@ const SECRET_SETTING_KEYS = [
  * pattern claudeClient.js already uses for model tiers. Real values are only
  * ever used server-side; nothing here is sent back to the frontend as-is
  * (see maskSecret) — that's what keeps "masked, show last 4" honest.
- * @returns {Promise<{anthropicApiKey:string, googleClientId:string, googleClientSecret:string, googleRefreshToken:string, slackWebhookUrl:string}>}
+ * @returns {Promise<{anthropicApiKey:string, googleClientId:string, googleClientSecret:string, googleRefreshToken:string, slackWebhookUrl:string, gmailUser:string, gmailAppPassword:string}>}
  */
 async function getSecrets() {
   const docs = await Setting.find({ key: { $in: SECRET_SETTING_KEYS } });
@@ -23,6 +24,8 @@ async function getSecrets() {
     googleClientSecret: map.googleClientSecret || process.env.GOOGLE_CLIENT_SECRET,
     googleRefreshToken: map.googleRefreshToken || process.env.GOOGLE_REFRESH_TOKEN,
     slackWebhookUrl: map.slackWebhookUrl || process.env.SLACK_WEBHOOK_URL,
+    gmailUser: map.gmailUser || process.env.GMAIL_USER,
+    gmailAppPassword: map.gmailAppPassword || process.env.GMAIL_APP_PASSWORD,
   };
 }
 
