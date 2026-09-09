@@ -110,7 +110,7 @@ const DEFAULT_PIPELINE_STAGES = [
     enabled: true,
     order: 3,
     weight: 0.35,
-    passThreshold: 3.5,
+    passThreshold: 3.0,
   },
   {
     key: 'final',
@@ -120,7 +120,7 @@ const DEFAULT_PIPELINE_STAGES = [
     enabled: true,
     order: 4,
     weight: 0.20,
-    passThreshold: 3.5,
+    passThreshold: 3.0,
   },
   // Shipped disabled; HR enables per-requisition as needed.
   {
@@ -151,7 +151,7 @@ const DEFAULT_PIPELINE_STAGES = [
     enabled: false,
     order: 6,
     weight: 0,
-    passThreshold: 3.5,
+    passThreshold: 3.0,
   },
   {
     key: 'culture',
