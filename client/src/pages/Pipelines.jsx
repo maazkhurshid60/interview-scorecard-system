@@ -286,7 +286,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                             className={`ml-auto h-8 w-20 text-xs ${s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold) ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                           />
                           {(s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold)) && (
-                            <span className="text-[10px] text-red-500 leading-tight">Must be whole number 1-5</span>
+                            <span className="text-[10px] text-red-500 leading-tight whitespace-nowrap">Must be 1-5</span>
                           )}
                         </div>
                       )}
