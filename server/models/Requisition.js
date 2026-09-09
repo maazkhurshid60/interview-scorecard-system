@@ -17,7 +17,7 @@ const requisitionStageSchema = new mongoose.Schema({
   enabled: { type: Boolean, default: true },
   order: { type: Number, required: true },
   weight: { type: Number, default: 0 },
-  passThreshold: { type: Number, default: 3.0 },
+  passThreshold: { type: Number, default: 3.0, min: 1, max: 5 },
 }, { _id: false });
 
 const requisitionSchema = new mongoose.Schema({
@@ -33,8 +33,8 @@ const requisitionSchema = new mongoose.Schema({
   // Snapshot of stages at creation, so later template edits don't mutate an open req
   stages: [requisitionStageSchema],
   scorecardId: { type: mongoose.Schema.Types.ObjectId, ref: 'Scorecard' },
-  hireThreshold: { type: Number, default: 3.5 },
-  maybeThreshold: { type: Number, default: 3.0 },
+  hireThreshold: { type: Number, default: 3.5, min: 1, max: 5 },
+  maybeThreshold: { type: Number, default: 3.0, min: 1, max: 5 },
   closedAt: Date,                                          // Drives retention purge
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

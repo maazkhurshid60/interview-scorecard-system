@@ -107,7 +107,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
   }
 
   function changeGate(key, value) {
-    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, passThreshold: Number(value) } : s)));
+    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, passThreshold: value === '' ? 1 : Number(value) } : s)));
   }
 
   function moveStage(index, direction) {
@@ -273,12 +273,22 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                       {s.inputType === 'status_only' ? (
                         <span className="text-xs text-muted-foreground">—</span>
                       ) : (
-                        <Input
-                          type="number" step="0.1" min="1" max="5"
-                          value={s.passThreshold}
-                          onChange={(e) => changeGate(s.key, e.target.value)}
-                          className="ml-auto h-8 w-20 text-xs"
-                        />
+                        <div className="flex flex-col items-end gap-1">
+                          <Input
+                            type="number" step="1" min="1" max="5"
+                            value={s.passThreshold}
+                            onChange={(e) => changeGate(s.key, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) {
+                                e.preventDefault();
+                              }
+                            }}
+                            className={`ml-auto h-8 w-20 text-xs ${s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold) ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                          />
+                          {(s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold)) && (
+                            <span className="text-[10px] text-red-500 leading-tight whitespace-nowrap">Must be 1-5</span>
+                          )}
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
@@ -321,7 +331,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
 
             <div className="flex justify-end border-t border-border p-4">
               <Button
-                onClick={handleSave} disabled={saving}
+                onClick={handleSave} disabled={saving || stages.some(s => s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold))}
                 className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
               >
                 {saving ? 'Saving…' : 'Save changes'}

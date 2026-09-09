@@ -457,20 +457,29 @@ function NumberSetting({ label, value, onSave, disabled, saving, step, min, max 
 
   useEffect(() => { setDraft(value ?? ''); }, [value]);
 
-  const changed = Number(draft) !== Number(value);
+  const numDraft = Number(draft);
+  const changed = numDraft !== Number(value);
+  const isInvalid = (min !== undefined && numDraft < min) || (max !== undefined && numDraft > max);
 
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
-      <div className="flex gap-2">
-        <Input
-          type="number" value={draft} step={step} min={min} max={max} disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-          className="disabled:bg-muted"
-        />
+      <div className="flex items-start gap-2">
+        <div className="flex w-full flex-col gap-1">
+          <Input
+            type="number" value={draft} step={step} min={min} max={max} disabled={disabled}
+            onChange={(e) => setDraft(e.target.value)}
+            className={`disabled:bg-muted ${isInvalid ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+          />
+          {isInvalid && (
+            <span className="text-[10px] leading-tight text-red-500">
+              Must be {min}-{max}
+            </span>
+          )}
+        </div>
         {!disabled && changed && (
           <Button
-            onClick={() => onSave(Number(draft))} disabled={saving}
+            onClick={() => onSave(numDraft)} disabled={saving || isInvalid}
             className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
           >
             {saving ? '…' : 'Save'}
