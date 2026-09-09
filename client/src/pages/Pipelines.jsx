@@ -275,13 +275,18 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                       ) : (
                         <div className="flex flex-col items-end gap-1">
                           <Input
-                            type="number" step="0.1" min="1" max="5"
+                            type="number" step="1" min="1" max="5"
                             value={s.passThreshold}
                             onChange={(e) => changeGate(s.key, e.target.value)}
-                            className={`ml-auto h-8 w-20 text-xs ${s.passThreshold < 1 || s.passThreshold > 5 ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                            onKeyDown={(e) => {
+                              if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) {
+                                e.preventDefault();
+                              }
+                            }}
+                            className={`ml-auto h-8 w-20 text-xs ${s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold) ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                           />
-                          {(s.passThreshold < 1 || s.passThreshold > 5) && (
-                            <span className="text-[10px] text-red-500 leading-tight">Must be 1-5</span>
+                          {(s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold)) && (
+                            <span className="text-[10px] text-red-500 leading-tight">Must be whole number 1-5</span>
                           )}
                         </div>
                       )}
@@ -326,7 +331,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
 
             <div className="flex justify-end border-t border-border p-4">
               <Button
-                onClick={handleSave} disabled={saving || stages.some(s => s.passThreshold < 1 || s.passThreshold > 5)}
+                onClick={handleSave} disabled={saving || stages.some(s => s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold))}
                 className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
               >
                 {saving ? 'Saving…' : 'Save changes'}
