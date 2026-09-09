@@ -17,7 +17,7 @@ const stageSchema = new mongoose.Schema({
   enabled: { type: Boolean, default: true },
   order: { type: Number, required: true },       // Position in the pipeline
   weight: { type: Number, default: 0 },          // 0..1 ; enabled scored weights sum to 1
-  passThreshold: { type: Number, default: 3.0 }, // 1-5 gate; ignored for status_only
+  passThreshold: { type: Number, default: 3.0, min: 1, max: 5 }, // 1-5 gate; ignored for status_only
 }, { _id: false });
 
 const pipelineTemplateSchema = new mongoose.Schema({
