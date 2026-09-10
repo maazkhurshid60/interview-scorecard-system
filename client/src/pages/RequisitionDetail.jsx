@@ -343,7 +343,8 @@ export default function RequisitionDetail() {
       </Card>
 
       {/* ---------- scorecard ---------- */}
-      <Card className="mt-6">
+      {scorecard?.stages?.length > 0 && (
+        <Card className="mt-6">
         <CardHeader>
           <CardTitle>Scorecard</CardTitle>
         </CardHeader>
@@ -360,6 +361,7 @@ export default function RequisitionDetail() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ---------- close confirmation ---------- */}
       <AlertDialog open={pendingClose} onOpenChange={setPendingClose}>
