@@ -343,8 +343,8 @@ const passFail = asyncHandler(async (req, res) => {
     oldValue: null,
     newValue: { passed },
     reason: passed
-      ? 'HR marked pass_fail stage as passed.'
-      : 'HR marked pass_fail stage as failed.',
+      ? 'Marked pass_fail stage as passed.'
+      : 'Marked pass_fail stage as failed.',
   });
 
   const application = await Application.findById(interview.applicationId);
