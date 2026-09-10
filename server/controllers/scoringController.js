@@ -279,4 +279,128 @@ const decision = asyncHandler(async (req, res) => {
   res.json({ application });
 });
 
-module.exports = { approve, override, recompute, decision };
+const passFail = asyncHandler(async (req, res) => {
+  const interview = await Interview.findById(req.params.id);
+
+  if (!interview) {
+    return res.status(404).json({
+      error: 'NOT_FOUND',
+      message: 'Interview not found.',
+    });
+  }
+
+  const requisition = await Requisition.findById(interview.requisitionId);
+
+  if (!requisition) {
+    return res.status(404).json({
+      error: 'NOT_FOUND',
+      message: 'Requisition not found.',
+    });
+  }
+
+  const stageConfig = requisition.stages.find(
+    (s) => s.key === interview.stageKey
+  );
+
+  if (!stageConfig) {
+    return res.status(404).json({
+      error: 'NOT_FOUND',
+      message: 'Stage configuration not found.',
+    });
+  }
+
+  if (stageConfig.inputType !== 'pass_fail') {
+    throw new ValidationError(
+      ['stage'],
+      'This endpoint is only for pass_fail stages.'
+    );
+  }
+
+  const { passed } = req.body;
+
+  if (typeof passed !== 'boolean') {
+    throw new ValidationError(
+      ['passed'],
+      'passed must be a boolean.'
+    );
+  }
+
+  // Reuse existing Interview fields.
+  // No schema change required.
+  interview.passFailResult = passed ? 'pass' : 'fail';
+  interview.stageAverage = passed ? 5 : 1;
+  interview.status = 'approved';
+
+  await interview.save();
+
+  await AuditLog.create({
+    action: 'score_approve',
+    userId: req.user._id,
+    requisitionId: interview.requisitionId,
+    applicationId: interview.applicationId,
+    targetType: 'interview',
+    targetId: interview._id.toString(),
+    oldValue: null,
+    newValue: { passed },
+    reason: passed
+      ? 'HR marked pass_fail stage as passed.'
+      : 'HR marked pass_fail stage as failed.',
+  });
+
+  const application = await Application.findById(interview.applicationId);
+
+  if (!application) {
+    return res.status(404).json({
+      error: 'NOT_FOUND',
+      message: 'Application not found.',
+    });
+  }
+
+  const progress = application.stageProgress.find(
+    (p) => p.stageKey === interview.stageKey
+  );
+
+  if (progress) {
+    progress.stageAverage = passed ? 5 : 1;
+    progress.passed = passed;
+    progress.status = passed ? 'passed' : 'failed';
+  }
+
+  // Only PASS moves the candidate to the next stage.
+  if (passed) {
+    const ordered = getEnabledStagesSorted(requisition);
+
+    const currentIndex = ordered.findIndex(
+      (s) => s.key === interview.stageKey
+    );
+
+    const next = ordered[currentIndex + 1];
+
+    if (next) {
+      application.currentStageKey = next.key;
+    }
+  }
+
+  const result = await recomputeAndPersist(
+    application,
+    requisition,
+    req.user._id,
+    `Recomputed after HR marked pass_fail stage as ${passed ? 'passed' : 'failed'
+    }.`
+  );
+
+  logger.info(
+    `[Scoring] HR marked pass_fail interview ${interview._id} ` +
+    `passed=${passed} weightedTotal=${result.weightedTotal} ` +
+    `disposition=${result.disposition}`
+  );
+
+  res.json({
+    interview,
+    stageAverage: passed ? 5 : 1,
+    passed,
+    application,
+  });
+});
+
+module.exports = { approve, override, recompute, decision, passFail };

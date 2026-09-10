@@ -249,24 +249,39 @@ export default function InterviewRoom() {
 
   async function handleSavePassFail() {
     if (!passFailResult) return;
+
     setPassFailSaving(true);
 
     try {
-      const res = await api.post(`/interviews/${id}/pass-fail`, {
-        result: passFailResult,
-      });
+      const res = await api.patch(
+        `/scoring/interview/${id}/pass-fail`,
+        {
+          passed: passFailResult === 'pass',
+        },
+        { validateStatus: () => true }
+      );
+
+      if (res.status >= 400) {
+        toast.error(res.data?.message || 'Could not save decision.');
+        return;
+      }
 
       setInterview(res.data.interview);
 
-      if (res.data.application) {
-        setApplication(res.data.application);
-      }
+      // Backend has already moved the application to the next stage
+      // when the decision is PASS. Reload application/stage information.
+      await load();
 
-      toast.success('Stage decision saved.');
+      toast.success(
+        passFailResult === 'pass'
+          ? 'Candidate passed this stage.'
+          : 'Candidate failed this stage.'
+      );
     } finally {
       setPassFailSaving(false);
     }
   }
+
 
   const isTranscriptStage = stageConfig?.inputType === 'transcript';
   const canScore = (isTranscriptStage ? interview?.consentObtained : true)
@@ -531,14 +546,15 @@ export default function InterviewRoom() {
               </button>
             </div>
 
-            {interview.passFailResult && (
+            {interview.status === 'approved' && stageConfig?.inputType === 'pass_fail' && (
               <p className="mt-3 text-xs text-muted-foreground">
                 Saved decision:{' '}
                 <span className="font-medium text-foreground">
-                  {interview.passFailResult.toUpperCase()}
+                  {interview.stageAverage >= stageConfig.passThreshold ? 'PASS' : 'FAIL'}
                 </span>
               </p>
             )}
+
           </CardContent>
         </Card>
       ) : (
