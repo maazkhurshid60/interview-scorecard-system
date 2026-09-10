@@ -5,7 +5,6 @@ import {
   Plus, ArrowLeft, Search, X, Briefcase, ChevronRight, Check, ChevronsUpDown, Users,
 } from 'lucide-react';
 import api from '../hooks/useApi';
-import ScorecardEditor from '../components/ScorecardEditor';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,12 +51,6 @@ export default function Requisitions() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
-  // After creation: the new requisition + its freshly generated scorecard,
-  // shown inline for immediate review/editing before returning to the list.
-  const [reviewRequisition, setReviewRequisition] = useState(null);
-  const [reviewScorecard, setReviewScorecard] = useState(null);
-  const [savingScorecard, setSavingScorecard] = useState(false);
-
   async function loadRequisitions() {
     setLoading(true);
     try {
@@ -89,27 +82,22 @@ export default function Requisitions() {
       const createRes = await api.post('/requisitions', form);
       const requisition = createRes.data.requisition;
       toast.success('Requisition created. Generating scorecard from the JD…');
-
-      const scorecardRes = await api.post(`/requisitions/${requisition._id}/generate-scorecard`);
+      await api.post(`/requisitions/${requisition._id}/generate-scorecard`);
       toast.success('Scorecard generated — review and edit below.');
-
-      setReviewRequisition(requisition);
-      setReviewScorecard(scorecardRes.data.scorecard);
       setCreateOpen(false);
       setForm(EMPTY_FORM);
       loadRequisitions();
+      navigate(`/requisitions/${requisition._id}`);
+
+    } catch (error) {
+      console.error('Failed to create requisition:', error);
+
+      toast.error(
+        error?.response?.data?.message ||
+        'Failed to create requisition. Please try again.'
+      );
     } finally {
       setCreating(false);
-    }
-  }
-
-  async function handleSaveScorecard(stages) {
-    setSavingScorecard(true);
-    try {
-      await api.patch(`/requisitions/${reviewRequisition._id}/scorecard`, { stages });
-      toast.success('Scorecard saved.');
-    } finally {
-      setSavingScorecard(false);
     }
   }
 
@@ -123,43 +111,6 @@ export default function Requisitions() {
   const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const selectedTemplate = templates.find((t) => t._id === form.pipelineTemplateId);
-
-  // ---------- post-creation scorecard review ----------
-  if (reviewRequisition && reviewScorecard) {
-    const stageLabels = Object.fromEntries(reviewRequisition.stages.map((s) => [s.key, s.label]));
-    return (
-      <div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-foreground">{reviewRequisition.title}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Review the AI-generated scorecard, edit anything, then save.
-            </p>
-          </div>
-          <div className="flex flex-shrink-0 gap-2">
-            <Button variant="outline" onClick={() => { setReviewRequisition(null); setReviewScorecard(null); }}>
-              Back to list
-            </Button>
-            <Button asChild className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90">
-              <Link to={`/requisitions/${reviewRequisition._id}`}>
-                Go to requisition
-                <ChevronRight />
-              </Link>
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <ScorecardEditor
-            scorecard={reviewScorecard}
-            stageLabels={stageLabels}
-            onSave={handleSaveScorecard}
-            saving={savingScorecard}
-          />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
