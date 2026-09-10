@@ -30,6 +30,7 @@ const requisitionSchema = new mongoose.Schema({
     index: true,
   },
   pipelineTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'PipelineTemplate' },
+  pipelineTemplateName: { type: String },
   // Snapshot of stages at creation, so later template edits don't mutate an open req
   stages: [requisitionStageSchema],
   scorecardId: { type: mongoose.Schema.Types.ObjectId, ref: 'Scorecard' },

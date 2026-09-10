@@ -59,6 +59,8 @@ export default function RequisitionDetail() {
       const res = await api.get(`/requisitions/${id}`);
       setData(res.data);
 
+      console.log(res.data);
+
       const { data: interviewData } = await api.get('/interviews', { params: { requisitionId: id } });
       const byApp = {};
       interviewData.interviews.forEach((iv) => {
@@ -343,7 +345,8 @@ export default function RequisitionDetail() {
       </Card>
 
       {/* ---------- scorecard ---------- */}
-      <Card className="mt-6">
+      {scorecard?.stages?.length > 0 && (
+        <Card className="mt-6">
         <CardHeader>
           <CardTitle>Scorecard</CardTitle>
         </CardHeader>
@@ -360,6 +363,7 @@ export default function RequisitionDetail() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ---------- close confirmation ---------- */}
       <AlertDialog open={pendingClose} onOpenChange={setPendingClose}>
