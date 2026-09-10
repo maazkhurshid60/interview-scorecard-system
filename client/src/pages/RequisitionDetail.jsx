@@ -59,6 +59,8 @@ export default function RequisitionDetail() {
       const res = await api.get(`/requisitions/${id}`);
       setData(res.data);
 
+      console.log(res.data);
+
       const { data: interviewData } = await api.get('/interviews', { params: { requisitionId: id } });
       const byApp = {};
       interviewData.interviews.forEach((iv) => {

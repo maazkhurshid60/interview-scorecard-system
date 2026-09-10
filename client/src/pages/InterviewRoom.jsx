@@ -34,6 +34,9 @@ export default function InterviewRoom() {
   const [startingStage, setStartingStage] = useState(false);
   const [sendingMeetingEmail, setSendingMeetingEmail] = useState(false);
 
+  const [passFailResult, setPassFailResult] = useState('');
+  const [passFailSaving, setPassFailSaving] = useState(false);
+
   const pollTimer = useRef(null);
 
   const load = useCallback(async () => {
@@ -244,6 +247,27 @@ export default function InterviewRoom() {
     }
   }
 
+  async function handleSavePassFail() {
+    if (!passFailResult) return;
+    setPassFailSaving(true);
+
+    try {
+      const res = await api.post(`/interviews/${id}/pass-fail`, {
+        result: passFailResult,
+      });
+
+      setInterview(res.data.interview);
+
+      if (res.data.application) {
+        setApplication(res.data.application);
+      }
+
+      toast.success('Stage decision saved.');
+    } finally {
+      setPassFailSaving(false);
+    }
+  }
+
   const isTranscriptStage = stageConfig?.inputType === 'transcript';
   const canScore = (isTranscriptStage ? interview?.consentObtained : true)
     && (stageConfig?.inputType === 'artifact' ? !!interview.artifactFileUrl : interview?.transcriptStatus === 'ready')
@@ -291,129 +315,129 @@ export default function InterviewRoom() {
             <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${guideOpen ? 'rotate-180' : ''}`} />
           </CardHeader>
           {guideOpen && (
-          <CardContent className="space-y-3">
-            {stageAttributes.map((attr) => {
-              const isOpen = openAttrs.has(attr.attributeId);
-              return (
-                <div key={attr.attributeId} className="rounded-md border border-border p-3">
-                  <button
-                    type="button"
-                    onClick={() => toggleAttr(attr.attributeId)}
-                    className="flex w-full items-center justify-between text-left"
-                  >
-                    <p className="text-sm font-semibold text-foreground">{attr.name}</p>
-                    <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  {isOpen && (
-                    <div className="mt-3 space-y-2.5">
-                      <p className="text-sm text-foreground">{attr.question}</p>
-                      <div className="rounded-md border border-green-200 bg-green-50 p-2.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-green-700">What a 5 looks like</p>
-                        <p className="mt-1 text-sm text-green-900">{attr.anchor5}</p>
+            <CardContent className="space-y-3">
+              {stageAttributes.map((attr) => {
+                const isOpen = openAttrs.has(attr.attributeId);
+                return (
+                  <div key={attr.attributeId} className="rounded-md border border-border p-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleAttr(attr.attributeId)}
+                      className="flex w-full items-center justify-between text-left"
+                    >
+                      <p className="text-sm font-semibold text-foreground">{attr.name}</p>
+                      <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isOpen && (
+                      <div className="mt-3 space-y-2.5">
+                        <p className="text-sm text-foreground">{attr.question}</p>
+                        <div className="rounded-md border border-green-200 bg-green-50 p-2.5">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-green-700">What a 5 looks like</p>
+                          <p className="mt-1 text-sm text-green-900">{attr.anchor5}</p>
+                        </div>
+                        <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Red flags</p>
+                          <p className="mt-1 text-sm text-amber-900">{attr.redFlags}</p>
+                        </div>
                       </div>
-                      <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Red flags</p>
-                        <p className="mt-1 text-sm text-amber-900">{attr.redFlags}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </CardContent>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
           )}
         </Card>
       )}
 
       {isTranscriptStage && (
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Meeting</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {interview.meetingUri && !changingMeeting ? (
-              <div className="space-y-2.5">
-                <div>
-                  <a href={interview.meetingUri} target="_blank" rel="noreferrer" className="break-all text-sm text-blue-600 hover:underline">
-                    {interview.meetingUri}
-                  </a>
-                  <span className="ml-2 text-xs text-muted-foreground">({interview.provider === 'manual' ? 'pasted link' : 'created via Google Meet'})</span>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Meeting</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {interview.meetingUri && !changingMeeting ? (
+                <div className="space-y-2.5">
+                  <div>
+                    <a href={interview.meetingUri} target="_blank" rel="noreferrer" className="break-all text-sm text-blue-600 hover:underline">
+                      {interview.meetingUri}
+                    </a>
+                    <span className="ml-2 text-xs text-muted-foreground">({interview.provider === 'manual' ? 'pasted link' : 'created via Google Meet'})</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button" onClick={() => setChangingMeeting(true)}
+                      className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+                    >
+                      Change
+                    </button>
+                    <button
+                      type="button" onClick={handleResendMeetingEmail} disabled={sendingMeetingEmail}
+                      className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {sendingMeetingEmail ? 'Sending...' : 'Resend Email'}
+                    </button>
+                    <button
+                      type="button" onClick={handleCancelMeeting} disabled={creatingMeeting}
+                      className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {creatingMeeting ? 'Cancelling...' : 'Cancel Meeting'}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
+              ) : (
+                <div className="space-y-2">
+                  {interview.meetingUri && (
+                    <button
+                      type="button" onClick={() => setChangingMeeting(false)}
+                      className="text-xs text-muted-foreground underline hover:text-foreground"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text" value={meetingLinkInput} onChange={(e) => setMeetingLinkInput(e.target.value)}
+                      placeholder="Paste an existing meeting link..."
+                      className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b]"
+                    />
+                    <button
+                      type="button" onClick={() => handleCreateMeeting(false)} disabled={creatingMeeting}
+                      className="rounded-md border border-[#d21e2b]/40 bg-white px-3 py-1.5 text-sm font-medium text-[#d21e2b] hover:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Use Link
+                    </button>
+                  </div>
                   <button
-                    type="button" onClick={() => setChangingMeeting(true)}
-                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+                    type="button" onClick={() => handleCreateMeeting(true)} disabled={creatingMeeting}
+                    className="rounded-md bg-[#d21e2b] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Change
-                  </button>
-                  <button
-                    type="button" onClick={handleResendMeetingEmail} disabled={sendingMeetingEmail}
-                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {sendingMeetingEmail ? 'Sending...' : 'Resend Email'}
-                  </button>
-                  <button
-                    type="button" onClick={handleCancelMeeting} disabled={creatingMeeting}
-                    className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {creatingMeeting ? 'Cancelling...' : 'Cancel Meeting'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {interview.meetingUri && (
-                  <button
-                    type="button" onClick={() => setChangingMeeting(false)}
-                    className="text-xs text-muted-foreground underline hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
-                )}
-                <div className="flex gap-2">
-                  <input
-                    type="text" value={meetingLinkInput} onChange={(e) => setMeetingLinkInput(e.target.value)}
-                    placeholder="Paste an existing meeting link..."
-                    className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-[#d21e2b] focus:outline-none focus:ring-1 focus:ring-[#d21e2b]"
-                  />
-                  <button
-                    type="button" onClick={() => handleCreateMeeting(false)} disabled={creatingMeeting}
-                    className="rounded-md border border-[#d21e2b]/40 bg-white px-3 py-1.5 text-sm font-medium text-[#d21e2b] hover:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Use Link
+                    {creatingMeeting ? 'Creating...' : 'Create Google Meet Link'}
                   </button>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Consent</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {interview.consentObtained ? (
+                <p className="text-sm font-medium text-green-700">Candidate consent confirmed.</p>
+              ) : (
                 <button
-                  type="button" onClick={() => handleCreateMeeting(true)} disabled={creatingMeeting}
+                  type="button" onClick={handleConfirmConsent} disabled={confirmingConsent}
                   className="rounded-md bg-[#d21e2b] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {creatingMeeting ? 'Creating...' : 'Create Google Meet Link'}
+                  {confirmingConsent ? 'Confirming...' : 'Confirm Candidate Consent'}
                 </button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Consent</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {interview.consentObtained ? (
-              <p className="text-sm font-medium text-green-700">Candidate consent confirmed.</p>
-            ) : (
-              <button
-                type="button" onClick={handleConfirmConsent} disabled={confirmingConsent}
-                className="rounded-md bg-[#d21e2b] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {confirmingConsent ? 'Confirming...' : 'Confirm Candidate Consent'}
-              </button>
-            )}
-            <p className="mt-2 text-xs text-muted-foreground">Must be on before AI scoring can run.</p>
-          </CardContent>
-        </Card>
-      </div>
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">Must be on before AI scoring can run.</p>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {stageConfig?.inputType === 'artifact' ? (
@@ -464,6 +488,59 @@ export default function InterviewRoom() {
             </div>
           </CardContent>
         </Card>
+      ) : stageConfig?.inputType === 'pass_fail' ? (
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>Background Check</CardTitle>
+          </CardHeader>
+
+          <CardContent>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Review the background check and record the outcome for this stage.
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPassFailResult('pass')}
+                className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${passFailResult === 'pass'
+                  ? 'border-green-300 bg-green-50 text-slate-900'
+                  : 'border-border bg-background text-slate-900 hover:bg-accent'
+                  }`}
+              >
+                Pass
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPassFailResult('fail')}
+                className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${passFailResult === 'fail'
+                  ? 'border-red-300 bg-red-50 text-slate-900'
+                  : 'border-border bg-background text-slate-900 hover:bg-accent'
+                  }`}
+              >
+                Fail
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePassFail}
+                disabled={!passFailResult || passFailSaving}
+                className="ml-2 rounded-md bg-[#d21e2b] px-4 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {passFailSaving ? 'Saving...' : 'Save Decision'}
+              </button>
+            </div>
+
+            {interview.passFailResult && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Saved decision:{' '}
+                <span className="font-medium text-foreground">
+                  {interview.passFailResult.toUpperCase()}
+                </span>
+              </p>
+            )}
+          </CardContent>
+        </Card>
       ) : (
         <Card className="mt-4">
           <CardContent className="pt-6">
@@ -472,19 +549,21 @@ export default function InterviewRoom() {
         </Card>
       )}
 
-      <div className="mt-4">
-        <button
-          type="button" onClick={handleRunScoring} disabled={!canScore || scoring}
-          className="rounded-md bg-[#d21e2b] px-4 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {scoring ? 'Scoring...' : interview.scores?.length ? 'Re-run AI Scoring' : 'Run AI Scoring'}
-        </button>
-        {!canScore && interview.status !== 'approved' && (isTranscriptStage || stageConfig?.inputType === 'artifact') && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            {isTranscriptStage ? 'Requires consent + a ready transcript first.' : 'Requires an uploaded artifact first.'}
-          </p>
-        )}
-      </div>
+      {stageConfig?.inputType !== 'pass_fail' && (
+        <div className="mt-4">
+          <button
+            type="button" onClick={handleRunScoring} disabled={!canScore || scoring}
+            className="rounded-md bg-[#d21e2b] px-4 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {scoring ? 'Scoring...' : interview.scores?.length ? 'Re-run AI Scoring' : 'Run AI Scoring'}
+          </button>
+          {!canScore && interview.status !== 'approved' && (isTranscriptStage || stageConfig?.inputType === 'artifact') && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isTranscriptStage ? 'Requires consent + a ready transcript first.' : 'Requires an uploaded artifact first.'}
+            </p>
+          )}
+        </div>
+      )}
 
       {interview.scores?.length > 0 && (
         <div className="mt-4">
