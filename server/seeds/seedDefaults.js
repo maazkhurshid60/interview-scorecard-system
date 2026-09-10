@@ -41,13 +41,13 @@ async function seedAdminUser() {
 const DEMO_USERS = [
   {
     role: "hiring_manager",
-    email: "hiring_manager@example.com",
+    email: "hiring.manager@redstartechnologies.com",
     name: "Hiring Manager",
   },
-  { role: "recruiter", email: "recruiter@example.com", name: "Recruiter" },
+  { role: "recruiter", email: "recruiter@redstartechnologies.com", name: "Recruiter" },
   {
     role: "interviewer",
-    email: "interviewer@example.com",
+    email: "interviewer@redstartechnologies.com",
     name: "Interviewer",
   },
 ];
