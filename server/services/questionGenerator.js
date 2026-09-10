@@ -80,7 +80,7 @@ function chunk(array, size) {
  */
 async function generateScorecard(requisition) {
   const scoredStages = (requisition.stages || []).filter(
-    (s) => s.enabled && s.inputType !== 'status_only'
+    (s) => s.enabled && s.inputType !== 'status_only || pas_fail'
   );
 
   if (scoredStages.length === 0) {

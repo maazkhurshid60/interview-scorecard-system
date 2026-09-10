@@ -33,6 +33,7 @@ const create = asyncHandler(async (req, res) => {
   if (!template) {
     throw new ValidationError(['pipelineTemplateId'], 'No pipeline template found with that id.');
   }
+  const pipelineTemplateName = template.name;
 
   const stages = template.stages.map((s) => ({
     key: s.key, label: s.label, stageType: s.stageType, inputType: s.inputType,
@@ -46,6 +47,7 @@ const create = asyncHandler(async (req, res) => {
     title,
     jobDescription,
     pipelineTemplateId,
+    pipelineTemplateName,
     stages,
     hireThreshold: hireThreshold ?? defaultHire,
     maybeThreshold: maybeThreshold ?? defaultMaybe,

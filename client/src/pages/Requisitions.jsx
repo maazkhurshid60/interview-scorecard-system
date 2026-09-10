@@ -63,6 +63,7 @@ export default function Requisitions() {
     try {
       const res = await api.get('/requisitions', { params: statusFilter ? { status: statusFilter } : {} });
       setRequisitions(res.data.requisitions);
+      console.log("Requistions payload:", res.data.requisitions[0]);
     } finally {
       setLoading(false);
     }
@@ -267,6 +268,7 @@ export default function Requisitions() {
                   <TableHead>Requisition</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Candidates</TableHead>
+                  <TableHead>Pipeline</TableHead>
                   <TableHead className="hidden lg:table-cell">Created</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
@@ -309,6 +311,10 @@ export default function Requisitions() {
                             </span>
                           </div>
                         )}
+                      </TableCell>
+
+                      <TableCell className="text-sm text-muted-foreground">
+                        {r?.pipelineTemplateName}
                       </TableCell>
 
                       <TableCell className="hidden whitespace-nowrap text-sm text-muted-foreground lg:table-cell">
