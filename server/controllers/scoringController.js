@@ -49,6 +49,9 @@ async function recomputeAndPersist(application, requisition, userId, reason) {
   application.weightedTotal = result.weightedTotal;
   application.allGatesPassed = result.allGatesPassed;
   application.disposition = result.disposition;
+  if (result.disposition === 'NO_HIRE' || result.allGatesPassed === false || application.stageProgress.some((p) => p.status === 'failed')) {
+    application.currentStageKey = null;
+  }
   await application.save();
 
   if (oldDisposition !== result.disposition) {

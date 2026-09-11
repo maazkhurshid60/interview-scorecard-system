@@ -111,6 +111,9 @@ const create = asyncHandler(async (req, res) => {
 
   const application = await Application.findById(applicationId);
   if (!application) throw new ValidationError(['applicationId'], 'No application found with that id.');
+  if (application.disposition === 'NO_HIRE' || (application.stageProgress || []).some((p) => p.status === 'failed')) {
+    throw new ValidationError(['applicationId'], 'This candidate has failed a stage and cannot have new interviews created.');
+  }
 
   const requisition = await Requisition.findById(application.requisitionId);
   const stageConfig = requisition.stages.find((s) => s.key === stageKey && s.enabled);

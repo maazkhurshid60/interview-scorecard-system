@@ -9,6 +9,7 @@ const STATUS_STYLES = {
   transcript_pending: { circle: 'bg-amber-300 text-white', icon: Clock },
   scheduled: { circle: 'bg-blue-300 text-white', icon: Clock },
   pending: { circle: 'bg-gray-200 text-gray-500', icon: null },
+  disabled: { circle: 'bg-gray-200 text-gray-400 opacity-60', icon: null },
 };
 
 /**
@@ -39,16 +40,24 @@ const STATUS_STYLES = {
  */
 export default function PipelineStepper({ stages, progress, stageLinks, currentStageKey, onStartStage, startingStageKey, compact }) {
   const enabledStages = stages.filter((s) => s.enabled);
+  let priorStageFailed = false;
 
   return (
     <div className="relative">
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
         {enabledStages.map((stage, index) => {
-          const status = progress?.[stage.key] || 'pending';
+          const rawStatus = progress?.[stage.key] || 'pending';
+          const isBlocked = priorStageFailed;
+
+          if (rawStatus === 'failed') {
+            priorStageFailed = true;
+          }
+
+          const status = isBlocked ? 'disabled' : rawStatus;
           const style = STATUS_STYLES[status] || STATUS_STYLES.pending;
           const Icon = style.icon;
-          const interviewId = stageLinks?.[stage.key];
-          const canStart = !interviewId && onStartStage && stage.key === currentStageKey;
+          const interviewId = isBlocked ? null : stageLinks?.[stage.key];
+          const canStart = !isBlocked && !interviewId && onStartStage && stage.key === currentStageKey;
           const isStarting = startingStageKey === stage.key;
 
           const circle = (
@@ -68,11 +77,13 @@ export default function PipelineStepper({ stages, progress, stageLinks, currentS
             );
           }
 
-          const title = interviewId
-            ? `${stage.label}: ${status.replace('_', ' ')} — click to open`
-            : canStart
-              ? `${stage.label} — click to start`
-              : `${stage.label}: ${status.replace('_', ' ')}`;
+          const title = isBlocked
+            ? `${stage.label}: disabled (prior stage failed)`
+            : interviewId
+              ? `${stage.label}: ${status.replace('_', ' ')} — click to open`
+              : canStart
+                ? `${stage.label} — click to start`
+                : `${stage.label}: ${status.replace('_', ' ')}`;
 
           return (
             <div key={stage.key} className="flex items-center">

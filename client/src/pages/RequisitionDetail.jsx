@@ -89,6 +89,10 @@ export default function RequisitionDetail() {
   }
 
   async function handleGoToInterview(app) {
+    if (app.disposition === 'NO_HIRE' || (app.stageProgress || []).some((p) => p.status === 'failed')) {
+      toast.error('This candidate has failed a stage and cannot proceed.');
+      return;
+    }
     if (!app.currentStageKey) {
       toast.error('This candidate has no remaining stage — check their pipeline status.');
       return;
@@ -264,6 +268,9 @@ export default function RequisitionDetail() {
             <ul className="divide-y divide-border">
               {paginatedApplications.map((app) => {
                 const progressMap = Object.fromEntries((app.stageProgress || []).map((p) => [p.stageKey, p.status]));
+                const hasFailed = app.disposition === 'NO_HIRE' || (app.stageProgress || []).some((p) => p.status === 'failed');
+                const isGoDisabled = goingToInterview === app._id || !app.currentStageKey || hasFailed;
+
                 return (
                   <li key={app._id} className="flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:gap-4">
                     <div className="min-w-0 lg:w-40 lg:flex-shrink-0">
@@ -276,7 +283,7 @@ export default function RequisitionDetail() {
                         stages={requisition.stages}
                         progress={progressMap}
                         stageLinks={stageLinksByApp[app._id]}
-                        currentStageKey={app.currentStageKey}
+                        currentStageKey={hasFailed ? null : app.currentStageKey}
                         onStartStage={() => handleGoToInterview(app)}
                         startingStageKey={goingToInterview === app._id ? app.currentStageKey : null}
                         compact
@@ -295,7 +302,7 @@ export default function RequisitionDetail() {
                         variant="outline" size="sm"
                         className="border-[#d21e2b]/40 text-[#d21e2b] hover:bg-[#d21e2b]/5 hover:text-[#d21e2b]"
                         onClick={() => handleGoToInterview(app)}
-                        disabled={goingToInterview === app._id || !app.currentStageKey}
+                        disabled={isGoDisabled}
                       >
                         {goingToInterview === app._id ? 'Opening…' : 'Go to Interview'}
                       </Button>

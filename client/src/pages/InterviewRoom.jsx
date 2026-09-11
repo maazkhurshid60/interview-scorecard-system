@@ -64,6 +64,9 @@ export default function InterviewRoom() {
   const stageConfig = requisition?.stages.find((s) => s.key === interview?.stageKey);
   const stageAttributes = scorecard?.stages?.find((s) => s.stageKey === interview?.stageKey)?.attributes || [];
 
+  const enabledStages = requisition?.stages?.filter((s) => s.enabled) || [];
+  const isFinalStage = enabledStages.length > 0 && enabledStages[enabledStages.length - 1].key === interview?.stageKey;
+
   useEffect(() => {
     setOpenAttrs(new Set(stageAttributes.length > 0 ? [stageAttributes[0].attributeId] : []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -595,7 +598,7 @@ export default function InterviewRoom() {
         </div>
       )}
 
-      {interview.status === 'approved' && application && (
+      {interview.status === 'approved' && application && isFinalStage && (
         <Card className="mt-4">
           <CardHeader>
             <CardTitle>Application Results</CardTitle>
