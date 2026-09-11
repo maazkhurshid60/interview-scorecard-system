@@ -8,7 +8,7 @@ const STAGE_TYPES = [
 ];
 
 /** How a stage collects evidence to be scored/gated. */
-const INPUT_TYPES = ['transcript', 'artifact', 'pass_fail', 'status_only'];
+const INPUT_TYPES = ['transcript', 'artifact', 'pass_fail', 'status_only', 'manual_rubric'];
 
 /** User roles (single role field; full RBAC is Phase 2). */
 const USER_ROLES = ['admin', 'hiring_manager', 'recruiter', 'interviewer'];
@@ -96,7 +96,7 @@ const DEFAULT_PIPELINE_STAGES = [
     key: 'simulation',
     label: 'Sales Simulation',
     stageType: 'simulation',
-    inputType: 'transcript',
+    inputType: 'manual_rubric',
     enabled: true,
     order: 2,
     weight: 0.35,
@@ -137,7 +137,7 @@ const DEFAULT_PIPELINE_STAGES = [
     key: 'task_performance',
     label: 'Task Performance',
     stageType: 'task_performance',
-    inputType: 'artifact',
+    inputType: 'manual_rubric',
     enabled: false,
     order: 5,
     weight: 0,

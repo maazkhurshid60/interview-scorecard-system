@@ -160,7 +160,12 @@ const approve = asyncHandler(async (req, res) => {
   }
 
   if (interview.status !== 'scored' && interview.status !== 'approved') {
-    throw new ValidationError(['status'], 'Interview must be scored before it can be approved.');
+    const isManual = stageConfigForType?.inputType === 'manual_rubric' || stageConfigForType?.stageType === 'simulation' || stageConfigForType?.stageType === 'task_performance' || (interview.scores && interview.scores.some((s) => s.approvedScore != null));
+    if (isManual && interview.scores && interview.scores.length > 0) {
+      interview.status = 'scored';
+    } else {
+      throw new ValidationError(['status'], 'Interview must be scored before it can be approved.');
+    }
   }
 
   const oldScores = interview.scores.map((s) => ({ attributeId: s.attributeId, approvedScore: s.approvedScore }));
@@ -221,21 +226,26 @@ const override = asyncHandler(async (req, res) => {
     if (approvedScore < 1 || approvedScore > 5) {
       throw new ValidationError(['approvedScore'], `approvedScore must be between 1 and 5 (attribute ${attributeId}).`);
     }
-    const scoreEntry = interview.scores.find((s) => s.attributeId === attributeId);
+    let scoreEntry = interview.scores.find((s) => s.attributeId === attributeId);
     if (!scoreEntry) {
-      throw new ValidationError(['attributeId'], `No score entry found for attributeId "${attributeId}" on this interview.`);
+      scoreEntry = { attributeId };
+      interview.scores.push(scoreEntry);
     }
 
     const oldValue = scoreEntry.approvedScore;
     scoreEntry.approvedScore = approvedScore;
     scoreEntry.overridden = true;
     scoreEntry.overriddenBy = req.user._id;
-    scoreEntry.overrideReason = reason;
+    scoreEntry.overrideReason = reason || 'Manual score entry';
 
     await AuditLog.create({
       action: 'score_override', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
-      targetType: 'score', targetId: attributeId, oldValue, newValue: approvedScore, reason,
+      targetType: 'score', targetId: attributeId, oldValue, newValue: approvedScore, reason: reason || 'Manual score entry',
     });
+  }
+
+  if (interview.status !== 'approved') {
+    interview.status = 'scored';
   }
 
   await interview.save();
