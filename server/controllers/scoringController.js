@@ -93,6 +93,30 @@ async function persistRanks(application) {
   if (mine) application.rank = mine.rank; // keep the returned document consistent
 }
 
+async function getOrCreateNextInterview(application, requisition, currentStageKey, userId) {
+  const ordered = getEnabledStagesSorted(requisition);
+  const currentIndex = ordered.findIndex((s) => s.key === currentStageKey);
+  const next = ordered[currentIndex + 1];
+  if (!next) return null;
+
+  application.currentStageKey = next.key;
+
+  let existing = await Interview.findOne({ applicationId: application._id, stageKey: next.key });
+  if (!existing) {
+    existing = await Interview.create({
+      applicationId: application._id,
+      requisitionId: application.requisitionId,
+      stageKey: next.key,
+      meetingMode: 'online',
+      provider: 'google_meet',
+      designatedScorerId: userId,
+    });
+    const nextProgress = application.stageProgress?.find((p) => p.stageKey === next.key);
+    if (nextProgress) nextProgress.status = 'scheduled';
+  }
+  return existing._id;
+}
+
 /**
  * PATCH /api/scoring/interview/:id/approve
  * Approves AI scores for a stage: approvedScore := aiScore for every
@@ -126,14 +150,13 @@ const approve = asyncHandler(async (req, res) => {
     const application = await Application.findById(interview.applicationId);
     const progress = application.stageProgress.find((p) => p.stageKey === interview.stageKey);
     if (progress) progress.status = 'approved';
-    const ordered = getEnabledStagesSorted(requisitionForType);
-    const currentIndex = ordered.findIndex((s) => s.key === interview.stageKey);
-    const next = ordered[currentIndex + 1];
-    if (next) application.currentStageKey = next.key;
+
+    const nextInterviewId = await getOrCreateNextInterview(application, requisitionForType, interview.stageKey, req.user._id);
     await recomputeAndPersist(application, requisitionForType, req.user._id, 'Recomputed after status-only stage approval.');
 
-    logger.info(`[Scoring] Marked status-only interview ${interview._id} approved (no scores).`);
-    return res.json({ interview, stageAverage: null, passed: null });
+    console.log('[DEBUG - BACKEND APPROVE (STATUS ONLY)]', { interviewId: interview._id, passed: true, nextInterviewId });
+    logger.info(`[Scoring] Marked status-only interview ${interview._id} approved (no scores). nextInterviewId=${nextInterviewId}`);
+    return res.json({ interview, stageAverage: null, passed: true, application, nextInterviewId });
   }
 
   if (interview.status !== 'scored' && interview.status !== 'approved') {
@@ -166,16 +189,17 @@ const approve = asyncHandler(async (req, res) => {
     progress.passed = passed;
     progress.status = passed ? 'passed' : 'failed';
   }
+
+  let nextInterviewId = null;
   if (passed) {
-    const ordered = getEnabledStagesSorted(requisitionForType);
-    const currentIndex = ordered.findIndex((s) => s.key === interview.stageKey);
-    const next = ordered[currentIndex + 1];
-    if (next) application.currentStageKey = next.key;
+    nextInterviewId = await getOrCreateNextInterview(application, requisitionForType, interview.stageKey, req.user._id);
   }
+
   const result = await recomputeAndPersist(application, requisitionForType, req.user._id, 'Recomputed after stage approval.');
 
-  logger.info(`[Scoring] Approved interview ${interview._id}. stageAverage=${stageAverage} passed=${passed} weightedTotal=${result.weightedTotal} disposition=${result.disposition}`);
-  res.json({ interview, stageAverage, passed, application });
+  console.log('[DEBUG - BACKEND APPROVE]', { interviewId: interview._id, passed, nextInterviewId });
+  logger.info(`[Scoring] Approved interview ${interview._id}. stageAverage=${stageAverage} passed=${passed} weightedTotal=${result.weightedTotal} disposition=${result.disposition} nextInterviewId=${nextInterviewId}`);
+  res.json({ interview, stageAverage, passed, application, nextInterviewId });
 });
 
 /**
@@ -369,19 +393,10 @@ const passFail = asyncHandler(async (req, res) => {
     progress.status = passed ? 'passed' : 'failed';
   }
 
+  let nextInterviewId = null;
   // Only PASS moves the candidate to the next stage.
   if (passed) {
-    const ordered = getEnabledStagesSorted(requisition);
-
-    const currentIndex = ordered.findIndex(
-      (s) => s.key === interview.stageKey
-    );
-
-    const next = ordered[currentIndex + 1];
-
-    if (next) {
-      application.currentStageKey = next.key;
-    }
+    nextInterviewId = await getOrCreateNextInterview(application, requisition, interview.stageKey, req.user._id);
   }
 
   const result = await recomputeAndPersist(
@@ -392,10 +407,11 @@ const passFail = asyncHandler(async (req, res) => {
     }.`
   );
 
+  console.log('[DEBUG - BACKEND PASSFAIL]', { interviewId: interview._id, passed, nextInterviewId });
   logger.info(
     `[Scoring] HR marked pass_fail interview ${interview._id} ` +
     `passed=${passed} weightedTotal=${result.weightedTotal} ` +
-    `disposition=${result.disposition}`
+    `disposition=${result.disposition} nextInterviewId=${nextInterviewId}`
   );
 
   res.json({
@@ -403,6 +419,7 @@ const passFail = asyncHandler(async (req, res) => {
     stageAverage: passed ? 5 : 1,
     passed,
     application,
+    nextInterviewId,
   });
 });
 

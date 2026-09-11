@@ -82,11 +82,13 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
       toast.error('You have unsaved score changes — click "Save Overrides" first, or they will be discarded.');
       return;
     }
+    const wasAlreadyApproved = isApproved;
     setApproving(true);
     try {
       const res = await api.patch(`/scoring/interview/${interview._id}/approve`);
-      toast.success(isApproved ? 'Stage re-approved.' : 'Stage approved.');
-      onUpdated(res.data.interview, res.data.stageAverage, res.data.passed);
+      console.log('[DEBUG - FRONTEND SCORE REVIEW RESPONSE]', res.data);
+      toast.success(wasAlreadyApproved ? 'Stage re-approved.' : 'Stage approved.');
+      onUpdated(res.data.interview, res.data.stageAverage, res.data.passed, res.data.nextInterviewId, wasAlreadyApproved);
     } finally {
       setApproving(false);
     }
