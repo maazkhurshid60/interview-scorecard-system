@@ -598,7 +598,7 @@ export default function InterviewRoom() {
         </div>
       )}
 
-      {interview.status === 'approved' && application && isFinalStage && (
+      {interview.status === 'approved' && application && (isFinalStage || application.disposition) && (
         <Card className="mt-4">
           <CardHeader>
             <CardTitle>Application Results</CardTitle>
