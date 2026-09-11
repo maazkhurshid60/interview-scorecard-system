@@ -66,6 +66,8 @@ export default function InterviewRoom() {
 
   const enabledStages = requisition?.stages?.filter((s) => s.enabled) || [];
   const isFinalStage = enabledStages.length > 0 && enabledStages[enabledStages.length - 1].key === interview?.stageKey;
+  const currentStageProgress = application?.stageProgress?.find((p) => p.stageKey === interview?.stageKey);
+  const isFailedStage = currentStageProgress?.status === 'failed' || currentStageProgress?.passed === false;
 
   useEffect(() => {
     setOpenAttrs(new Set(stageAttributes.length > 0 ? [stageAttributes[0].attributeId] : []));
@@ -253,6 +255,7 @@ export default function InterviewRoom() {
   async function handleSavePassFail() {
     if (!passFailResult) return;
 
+    const wasAlreadyApproved = interview?.status === 'approved';
     setPassFailSaving(true);
 
     try {
@@ -271,15 +274,17 @@ export default function InterviewRoom() {
 
       setInterview(res.data.interview);
 
-      // Backend has already moved the application to the next stage
-      // when the decision is PASS. Reload application/stage information.
-      await load();
-
-      toast.success(
-        passFailResult === 'pass'
-          ? 'Candidate passed this stage.'
-          : 'Candidate failed this stage.'
-      );
+      if (res.data.passed && res.data.nextInterviewId) {
+        toast.success('Candidate passed this stage! Moving to next stage...');
+        navigate(`/interview/${res.data.nextInterviewId}`);
+      } else {
+        await load();
+        toast.success(
+          passFailResult === 'pass'
+            ? 'Candidate passed this stage.'
+            : 'Candidate failed this stage.'
+        );
+      }
     } finally {
       setPassFailSaving(false);
     }
@@ -590,15 +595,23 @@ export default function InterviewRoom() {
             interview={interview}
             attributes={stageAttributes}
             passThreshold={stageConfig?.passThreshold}
-            onUpdated={(updatedInterview) => {
+            onUpdated={(updatedInterview, stageAverage, passed, nextInterviewId, wasAlreadyApproved) => {
+              console.log('[DEBUG - FRONTEND ONUPDATED]', { status: updatedInterview.status, passed, nextInterviewId, wasAlreadyApproved });
               setInterview(updatedInterview);
-              if (updatedInterview.status === 'approved') load();
+              if (updatedInterview.status === 'approved') {
+                if (passed !== false && nextInterviewId) {
+                  toast.success('Stage passed! Moving to next stage...');
+                  navigate(`/interview/${nextInterviewId}`);
+                } else {
+                  load();
+                }
+              }
             }}
           />
         </div>
       )}
 
-      {interview.status === 'approved' && application && isFinalStage && (
+      {interview.status === 'approved' && application && (isFinalStage || isFailedStage || application.currentStageKey === interview.stageKey) && (
         <Card className="mt-4">
           <CardHeader>
             <CardTitle>Application Results</CardTitle>

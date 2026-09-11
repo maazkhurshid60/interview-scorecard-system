@@ -82,11 +82,13 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
       toast.error('You have unsaved score changes — click "Save Overrides" first, or they will be discarded.');
       return;
     }
+    const wasAlreadyApproved = isApproved;
     setApproving(true);
     try {
       const res = await api.patch(`/scoring/interview/${interview._id}/approve`);
-      toast.success(isApproved ? 'Stage re-approved.' : 'Stage approved.');
-      onUpdated(res.data.interview, res.data.stageAverage, res.data.passed);
+      console.log('[DEBUG - FRONTEND SCORE REVIEW RESPONSE]', res.data);
+      toast.success(wasAlreadyApproved ? 'Stage re-approved.' : 'Stage approved.');
+      onUpdated(res.data.interview, res.data.stageAverage, res.data.passed, res.data.nextInterviewId, wasAlreadyApproved);
     } finally {
       setApproving(false);
     }
@@ -108,54 +110,74 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
           table inside its own container rather than letting the page scroll
           sideways. min-w keeps the columns readable while scrolling. */}
       <div className="overflow-x-auto">
-      <table className="w-full min-w-[44rem] text-sm">
-        <thead>
-          <tr className="border-b border-gray-200 text-left text-xs uppercase text-gray-400">
-            <th className="px-4 py-2">Attribute</th>
-            <th className="px-4 py-2">AI Score</th>
-            <th className="px-4 py-2">AI Justification</th>
-            <th className="px-4 py-2">Approved Score</th>
-            <th className="px-4 py-2">Override Reason</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {interview.scores.map((s) => {
-            const draft = drafts[s.attributeId];
-            const changed = Number(draft.approvedScore) !== Number(s.approvedScore ?? s.aiScore);
-            const attr = attributeById[s.attributeId];
-            return (
-              <tr key={s.attributeId}>
-                <td className="max-w-[14rem] px-4 py-3">
-                  <div className="font-medium text-gray-900">
-                    {attr?.name || s.attributeId}
-                    {s.overridden && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">overridden</span>}
-                  </div>
-                  {attr?.question && <div className="mt-0.5 text-xs text-gray-400">{attr.question}</div>}
-                </td>
-                <td className="px-4 py-3 text-gray-700">{formatScore(s.aiScore)}</td>
-                <td className="max-w-xs px-4 py-3 text-xs text-gray-500">{s.aiJustification}</td>
-                <td className="px-4 py-3">
-                  <input
-                    type="number" min={1} max={5} step={0.5}
-                    value={draft.approvedScore ?? ''}
-                    onChange={(e) => updateDraft(s.attributeId, 'approvedScore', e.target.value)}
-                    className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  <input
-                    type="text"
-                    placeholder={changed ? 'Reason required...' : 'Only needed if you change the score'}
-                    value={draft.reason}
-                    onChange={(e) => updateDraft(s.attributeId, 'reason', e.target.value)}
-                    className="w-56 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+        <table className="w-full min-w-[44rem] text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 text-left text-xs uppercase text-gray-400">
+              <th className="px-4 py-2">Attribute</th>
+              <th className="px-4 py-2">AI Score</th>
+              <th className="px-4 py-2">AI Justification</th>
+              <th className="px-4 py-2">Approved Score</th>
+              <th className="px-4 py-2">Override Reason</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {interview.scores.map((s) => {
+              const draft = drafts[s.attributeId];
+              const changed = Number(draft.approvedScore) !== Number(s.approvedScore ?? s.aiScore);
+              const attr = attributeById[s.attributeId];
+              return (
+                <tr key={s.attributeId}>
+                  <td className="max-w-[14rem] px-4 py-3">
+                    <div className="font-medium text-gray-900">
+                      {attr?.name || s.attributeId}
+                      {s.overridden && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">overridden</span>}
+                    </div>
+                    {attr?.question && <div className="mt-0.5 text-xs text-gray-400">{attr.question}</div>}
+                  </td>
+                  <td className="px-4 py-3 text-gray-700">{formatScore(s.aiScore)}</td>
+                  <td className="max-w-xs px-4 py-3 text-xs text-gray-500">{s.aiJustification}</td>
+                  <td className="px-4 py-3">
+                    <input
+                      type="number" min={1} max={5} step={1}
+                      value={draft.approvedScore ?? ''}
+                      onKeyDown={(e) => {
+                        if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      onChange={(e) => {
+                        let val = e.target.value;
+                        if (val === '') {
+                          updateDraft(s.attributeId, 'approvedScore', '');
+                          return;
+                        }
+                        
+                        // Grab the last typed character so if they type '3' while '2' is there, it becomes '3' instead of '23' (clamping to 5)
+                        val = val.slice(-1);
+                        const parsed = parseInt(val, 10);
+                        if (isNaN(parsed)) return;
+                        
+                        if (parsed >= 1 && parsed <= 5) {
+                          updateDraft(s.attributeId, 'approvedScore', parsed);
+                        }
+                      }}
+                      className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <input
+                      type="text"
+                      placeholder={changed ? 'Reason required...' : 'Only needed if you change the score'}
+                      value={draft.reason}
+                      onChange={(e) => updateDraft(s.attributeId, 'reason', e.target.value)}
+                      className="w-56 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       {isStale && (

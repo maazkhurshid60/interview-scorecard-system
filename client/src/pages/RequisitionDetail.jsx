@@ -79,6 +79,11 @@ export default function RequisitionDetail() {
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSaveScorecard(stages) {
+    const hasEmptyStage = stages.some((s) => !s.attributes || s.attributes.length === 0);
+    if (hasEmptyStage) {
+      toast.error('Each stage must have at least one question.');
+      return;
+    }
     setSavingScorecard(true);
     try {
       await api.patch(`/requisitions/${id}/scorecard`, { stages });
@@ -89,8 +94,18 @@ export default function RequisitionDetail() {
   }
 
   async function handleGoToInterview(app) {
+    const enabledList = (requisition?.stages || []).filter((s) => s.enabled);
+    const allStagesPassed = enabledList.length > 0 && enabledList.every((s) => {
+      const p = (app.stageProgress || []).find((pr) => pr.stageKey === s.key);
+      return p && (p.passed === true || p.status === 'passed' || p.status === 'approved');
+    });
+
     if (app.disposition === 'NO_HIRE' || (app.stageProgress || []).some((p) => p.status === 'failed')) {
       toast.error('This candidate has failed a stage and cannot proceed.');
+      return;
+    }
+    if (allStagesPassed) {
+      toast.error('This candidate has passed all stages.');
       return;
     }
     if (!app.currentStageKey) {
@@ -268,8 +283,13 @@ export default function RequisitionDetail() {
             <ul className="divide-y divide-border">
               {paginatedApplications.map((app) => {
                 const progressMap = Object.fromEntries((app.stageProgress || []).map((p) => [p.stageKey, p.status]));
+                const enabledList = (requisition?.stages || []).filter((s) => s.enabled);
+                const allStagesPassed = enabledList.length > 0 && enabledList.every((s) => {
+                  const p = (app.stageProgress || []).find((pr) => pr.stageKey === s.key);
+                  return p && (p.passed === true || p.status === 'passed' || p.status === 'approved');
+                });
                 const hasFailed = app.disposition === 'NO_HIRE' || (app.stageProgress || []).some((p) => p.status === 'failed');
-                const isGoDisabled = goingToInterview === app._id || !app.currentStageKey || hasFailed;
+                const isGoDisabled = goingToInterview === app._id || !app.currentStageKey || hasFailed || allStagesPassed;
 
                 return (
                   <li key={app._id} className="flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:gap-4">
@@ -283,7 +303,7 @@ export default function RequisitionDetail() {
                         stages={requisition.stages}
                         progress={progressMap}
                         stageLinks={stageLinksByApp[app._id]}
-                        currentStageKey={hasFailed ? null : app.currentStageKey}
+                        currentStageKey={hasFailed || allStagesPassed ? null : app.currentStageKey}
                         onStartStage={() => handleGoToInterview(app)}
                         startingStageKey={goingToInterview === app._id ? app.currentStageKey : null}
                         compact

@@ -48,6 +48,11 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
   }
 
   function removeAttribute(stageIndex, attrIndex) {
+    const stage = stages[stageIndex];
+    if (stage && stage.attributes.length <= 1) {
+      toast.error('Each stage must have at least one question.');
+      return;
+    }
     setStages((prev) => {
       const next = [...prev];
       next[stageIndex] = { ...next[stageIndex], attributes: next[stageIndex].attributes.filter((_, i) => i !== attrIndex) };
@@ -56,6 +61,11 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
   }
 
   async function handleSave() {
+    const hasEmptyStage = stages.some((s) => !s.attributes || s.attributes.length === 0);
+    if (hasEmptyStage) {
+      toast.error('Each stage must have at least one question.');
+      return;
+    }
     const hasEmptyName = stages.some((s) => s.attributes.some((a) => !a.name?.trim()));
     if (hasEmptyName) {
       toast.error('Every attribute needs a name before saving.');
@@ -98,8 +108,9 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
                         <button
                           type="button"
                           onClick={() => removeAttribute(stageIndex, attrIndex)}
-                          className="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                          title="Remove attribute"
+                          disabled={stage.attributes.length <= 1}
+                          className="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:cursor-not-allowed"
+                          title={stage.attributes.length <= 1 ? "Each stage must have at least one question" : "Remove attribute"}
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
