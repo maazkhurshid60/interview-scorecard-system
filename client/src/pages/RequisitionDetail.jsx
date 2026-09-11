@@ -79,6 +79,11 @@ export default function RequisitionDetail() {
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSaveScorecard(stages) {
+    const hasEmptyStage = stages.some((s) => !s.attributes || s.attributes.length === 0);
+    if (hasEmptyStage) {
+      toast.error('Each stage must have at least one question.');
+      return;
+    }
     setSavingScorecard(true);
     try {
       await api.patch(`/requisitions/${id}/scorecard`, { stages });
