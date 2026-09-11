@@ -127,6 +127,11 @@ function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold,
   });
 
   const complete = stageResults.every((r) => r.complete);
+  const anyGateFailed = stageResults.some((r) => r.passed === false);
+
+  if (anyGateFailed) {
+    return { stageResults, weightedTotal: null, allGatesPassed: false, disposition: 'NO_HIRE', complete };
+  }
 
   if (!complete) {
     return { stageResults, weightedTotal: null, allGatesPassed: null, disposition: null, complete: false };
