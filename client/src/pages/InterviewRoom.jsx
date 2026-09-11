@@ -294,8 +294,11 @@ export default function InterviewRoom() {
   }
 
 
-  const isTranscriptStage = stageConfig?.inputType === 'transcript' && stageConfig?.stageType !== 'simulation' && stageConfig?.stageType !== 'task_performance';
-  const canScore = (isTranscriptStage ? interview?.consentObtained : true)
+  const isTranscriptStage = stageConfig?.inputType === 'transcript' || stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance';
+  const isTranscriptDisabled = stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance' || stageConfig?.inputType === 'manual_rubric';
+  const showConsentCard = isTranscriptStage && !isTranscriptDisabled;
+
+  const canScore = (showConsentCard ? interview?.consentObtained : true)
     && (stageConfig?.inputType === 'artifact' ? !!interview.artifactFileUrl : interview?.transcriptStatus === 'ready')
     && interview?.status !== 'approved';
 
@@ -375,8 +378,8 @@ export default function InterviewRoom() {
         </Card>
       )}
 
-      {isTranscriptStage && (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+      {stageConfig?.inputType !== 'pass_fail' && stageConfig?.inputType !== 'status_only' && (
+        <div className={`mt-6 grid gap-4 ${showConsentCard ? 'sm:grid-cols-2' : 'grid-cols-1'}`}>
           <Card>
             <CardHeader>
               <CardTitle>Meeting</CardTitle>
@@ -445,24 +448,26 @@ export default function InterviewRoom() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Consent</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {interview.consentObtained ? (
-                <p className="text-sm font-medium text-green-700">Candidate consent confirmed.</p>
-              ) : (
-                <button
-                  type="button" onClick={handleConfirmConsent} disabled={confirmingConsent}
-                  className="rounded-md bg-[#d21e2b] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {confirmingConsent ? 'Confirming...' : 'Confirm Candidate Consent'}
-                </button>
-              )}
-              <p className="mt-2 text-xs text-muted-foreground">Must be on before AI scoring can run.</p>
-            </CardContent>
-          </Card>
+          {showConsentCard && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Consent</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {interview.consentObtained ? (
+                  <p className="text-sm font-medium text-green-700">Candidate consent confirmed.</p>
+                ) : (
+                  <button
+                    type="button" onClick={handleConfirmConsent} disabled={confirmingConsent}
+                    className="rounded-md bg-[#d21e2b] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {confirmingConsent ? 'Confirming...' : 'Confirm Candidate Consent'}
+                  </button>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">Must be on before AI scoring can run.</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
@@ -483,35 +488,6 @@ export default function InterviewRoom() {
               type="file" onChange={handleUploadArtifact} disabled={uploadingArtifact}
               className="mt-2 cursor-pointer text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-[#d21e2b]/40 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-[#d21e2b] hover:file:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
             />
-          </CardContent>
-        </Card>
-      ) : (stageConfig?.inputType === 'transcript' && stageConfig?.stageType !== 'simulation') ? (
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle>Transcript</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {interview.transcriptStatus === 'ready' ? (
-              <p className="text-sm font-medium text-green-700">Transcript ready ({interview.transcriptText?.length || 0} chars).</p>
-            ) : interview.transcriptStatus === 'pending' || fetchingTranscript ? (
-              <p className="text-sm text-amber-600">Waiting for transcript... (auto-checking)</p>
-            ) : (
-              <p className="text-sm text-muted-foreground">No transcript yet.</p>
-            )}
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button" onClick={handleFetchTranscript} disabled={fetchingTranscript || !interview.meetingUri}
-                className="rounded-md border border-[#d21e2b]/40 bg-white px-3 py-1.5 text-sm font-medium text-[#d21e2b] hover:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
-                title={!interview.meetingUri ? 'Set a meeting first' : ''}
-              >
-                {fetchingTranscript ? 'Fetching...' : 'Fetch Transcript'}
-              </button>
-              <span className="text-xs text-muted-foreground">or</span>
-              <input
-                type="file" onChange={handleUploadTranscript} disabled={uploadingTranscript}
-                className="cursor-pointer text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-[#d21e2b]/40 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-[#d21e2b] hover:file:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </div>
           </CardContent>
         </Card>
       ) : stageConfig?.inputType === 'pass_fail' ? (
@@ -568,19 +544,59 @@ export default function InterviewRoom() {
 
           </CardContent>
         </Card>
-      ) : (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance') ? (
-        <Card className="mt-4 border-blue-200 bg-blue-50/50">
+      ) : isTranscriptStage ? (
+        <Card
+          className={`mt-4 ${isTranscriptDisabled ? 'bg-slate-50/70 border-slate-200' : ''}`}
+          title={isTranscriptDisabled ? 'Transcript is not needed for this step' : ''}
+        >
           <CardHeader className="pb-2">
-            <CardTitle className="text-blue-900">
-              {stageConfig?.stageType === 'task_performance' ? 'Task Performance (Manual Rating)' : 'Sales Simulation (Live Interview)'}
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className={isTranscriptDisabled ? 'text-muted-foreground' : ''}>Transcript</CardTitle>
+              {isTranscriptDisabled && (
+                <span
+                  className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600 border border-slate-300"
+                  title="Transcript is not needed for this step"
+                >
+                  Not needed for this step
+                </span>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-blue-800">
-              {stageConfig?.stageType === 'task_performance'
-                ? 'Review the candidate\'s submitted task deliverable against the criteria in the Guide below. Record your 1-5 ratings directly in the table below.'
-                : 'Ask the candidate the questions in the Interview Guide below. Evaluate their live responses against the 5-star criteria and record your scores directly in the table below.'}
-            </p>
+            {isTranscriptDisabled && (
+              <p className="mb-2 text-xs text-muted-foreground">
+                Transcript is not needed for this step. Evaluate the candidate using the scorecard table below.
+              </p>
+            )}
+            {interview.transcriptStatus === 'ready' ? (
+              <p className="text-sm font-medium text-green-700">Transcript ready ({interview.transcriptText?.length || 0} chars).</p>
+            ) : interview.transcriptStatus === 'pending' || fetchingTranscript ? (
+              <p className="text-sm text-amber-600">Waiting for transcript... (auto-checking)</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">No transcript yet.</p>
+            )}
+            <div
+              className={`mt-2 flex flex-wrap items-center gap-2 ${isTranscriptDisabled ? 'opacity-50' : ''}`}
+              title={isTranscriptDisabled ? 'Transcript is not needed for this step' : ''}
+            >
+              <button
+                type="button"
+                onClick={handleFetchTranscript}
+                disabled={isTranscriptDisabled || fetchingTranscript || !interview.meetingUri}
+                className="rounded-md border border-[#d21e2b]/40 bg-white px-3 py-1.5 text-sm font-medium text-[#d21e2b] hover:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
+                title={isTranscriptDisabled ? 'Transcript is not needed for this step' : !interview.meetingUri ? 'Set a meeting first' : ''}
+              >
+                {fetchingTranscript ? 'Fetching...' : 'Fetch Transcript'}
+              </button>
+              <span className="text-xs text-muted-foreground">or</span>
+              <input
+                type="file"
+                onChange={handleUploadTranscript}
+                disabled={isTranscriptDisabled || uploadingTranscript}
+                title={isTranscriptDisabled ? 'Transcript is not needed for this step' : ''}
+                className="cursor-pointer text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-[#d21e2b]/40 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-[#d21e2b] hover:file:bg-[#d21e2b]/5 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
           </CardContent>
         </Card>
       ) : (
@@ -591,7 +607,7 @@ export default function InterviewRoom() {
         </Card>
       )}
 
-      {stageConfig?.inputType !== 'pass_fail' && stageConfig?.inputType !== 'manual_rubric' && stageConfig?.stageType !== 'simulation' && stageConfig?.stageType !== 'task_performance' && (
+      {stageConfig?.inputType !== 'pass_fail' && stageConfig?.inputType !== 'status_only' && !isTranscriptDisabled && (
         <div className="mt-4">
           <button
             type="button" onClick={handleRunScoring} disabled={!canScore || scoring}
@@ -601,13 +617,17 @@ export default function InterviewRoom() {
           </button>
           {!canScore && interview.status !== 'approved' && (isTranscriptStage || stageConfig?.inputType === 'artifact') && (
             <p className="mt-1 text-xs text-muted-foreground">
-              {isTranscriptStage ? 'Requires consent + a ready transcript first.' : 'Requires an uploaded artifact first.'}
+              {stageConfig?.inputType === 'artifact'
+                ? 'Requires an uploaded artifact first.'
+                : showConsentCard
+                ? 'Requires consent + a ready transcript first.'
+                : 'Requires a ready transcript first.'}
             </p>
           )}
         </div>
       )}
 
-      {(interview.scores?.length > 0 || stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance') && (
+      {(interview.scores?.length > 0 || isTranscriptStage || stageConfig?.inputType === 'artifact') && (
         <div className="mt-4">
           <ScoreReviewTable
             interview={interview}
