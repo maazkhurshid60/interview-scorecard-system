@@ -160,7 +160,7 @@ const approve = asyncHandler(async (req, res) => {
   }
 
   if (interview.status !== 'scored' && interview.status !== 'approved') {
-    const isManual = stageConfigForType?.inputType === 'manual_rubric' || stageConfigForType?.stageType === 'simulation' || (interview.scores && interview.scores.some((s) => s.approvedScore != null));
+    const isManual = stageConfigForType?.inputType === 'manual_rubric' || stageConfigForType?.stageType === 'simulation' || stageConfigForType?.stageType === 'task_performance' || (interview.scores && interview.scores.some((s) => s.approvedScore != null));
     if (isManual && interview.scores && interview.scores.length > 0) {
       interview.status = 'scored';
     } else {

@@ -137,7 +137,7 @@ const DEFAULT_PIPELINE_STAGES = [
     key: 'task_performance',
     label: 'Task Performance',
     stageType: 'task_performance',
-    inputType: 'artifact',
+    inputType: 'manual_rubric',
     enabled: false,
     order: 5,
     weight: 0,

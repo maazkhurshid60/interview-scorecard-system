@@ -71,7 +71,7 @@ export default function InterviewRoom() {
 
   useEffect(() => {
     setOpenAttrs(new Set(stageAttributes.length > 0 ? stageAttributes.map((a) => a.attributeId) : []));
-    if (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation') {
+    if (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance') {
       setGuideOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -294,7 +294,7 @@ export default function InterviewRoom() {
   }
 
 
-  const isTranscriptStage = stageConfig?.inputType === 'transcript' && stageConfig?.stageType !== 'simulation';
+  const isTranscriptStage = stageConfig?.inputType === 'transcript' && stageConfig?.stageType !== 'simulation' && stageConfig?.stageType !== 'task_performance';
   const canScore = (isTranscriptStage ? interview?.consentObtained : true)
     && (stageConfig?.inputType === 'artifact' ? !!interview.artifactFileUrl : interview?.transcriptStatus === 'ready')
     && interview?.status !== 'approved';
@@ -568,14 +568,18 @@ export default function InterviewRoom() {
 
           </CardContent>
         </Card>
-      ) : (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation') ? (
+      ) : (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance') ? (
         <Card className="mt-4 border-blue-200 bg-blue-50/50">
           <CardHeader className="pb-2">
-            <CardTitle className="text-blue-900">Sales Simulation (Live Interview)</CardTitle>
+            <CardTitle className="text-blue-900">
+              {stageConfig?.stageType === 'task_performance' ? 'Task Performance (Manual Rating)' : 'Sales Simulation (Live Interview)'}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-blue-800">
-              Ask the candidate the questions in the <strong>Interview Guide</strong> below. Evaluate their live responses against the 5-star criteria and record your scores directly in the table below.
+              {stageConfig?.stageType === 'task_performance'
+                ? 'Review the candidate\'s submitted task deliverable against the criteria in the Guide below. Record your 1-5 ratings directly in the table below.'
+                : 'Ask the candidate the questions in the Interview Guide below. Evaluate their live responses against the 5-star criteria and record your scores directly in the table below.'}
             </p>
           </CardContent>
         </Card>
@@ -587,7 +591,7 @@ export default function InterviewRoom() {
         </Card>
       )}
 
-      {stageConfig?.inputType !== 'pass_fail' && stageConfig?.inputType !== 'manual_rubric' && stageConfig?.stageType !== 'simulation' && (
+      {stageConfig?.inputType !== 'pass_fail' && stageConfig?.inputType !== 'manual_rubric' && stageConfig?.stageType !== 'simulation' && stageConfig?.stageType !== 'task_performance' && (
         <div className="mt-4">
           <button
             type="button" onClick={handleRunScoring} disabled={!canScore || scoring}
@@ -603,7 +607,7 @@ export default function InterviewRoom() {
         </div>
       )}
 
-      {(interview.scores?.length > 0 || stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation') && (
+      {(interview.scores?.length > 0 || stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation' || stageConfig?.stageType === 'task_performance') && (
         <div className="mt-4">
           <ScoreReviewTable
             interview={interview}

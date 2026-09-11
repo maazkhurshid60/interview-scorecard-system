@@ -73,14 +73,16 @@ async function seedDefaultPipeline() {
   if (existing) {
     let tplUpdated = false;
     existing.stages.forEach((s) => {
-      if ((s.key === 'simulation' || s.stageType === 'simulation') && s.inputType !== 'manual_rubric') {
-        s.inputType = 'manual_rubric';
-        tplUpdated = true;
+      if (['simulation', 'task_performance'].includes(s.stageType) || ['simulation', 'task_performance'].includes(s.key)) {
+        if (s.inputType !== 'manual_rubric') {
+          s.inputType = 'manual_rubric';
+          tplUpdated = true;
+        }
       }
     });
     if (tplUpdated) {
       await existing.save();
-      logger.info('[Seed] Updated default pipeline template simulation stage to manual_rubric.');
+      logger.info('[Seed] Updated default pipeline template manual stages to manual_rubric.');
     }
   } else {
     existing = await PipelineTemplate.create({
@@ -93,12 +95,12 @@ async function seedDefaultPipeline() {
     logger.info('[Seed] Created default pipeline template "Standard Hiring Pipeline".');
   }
 
-  // Migrate existing requisitions in DB so stored simulation stage inputType is updated to manual_rubric
-  const reqs = await Requisition.find({ 'stages.stageType': 'simulation' });
+  // Migrate existing requisitions in DB so stored manual stage inputType is updated to manual_rubric
+  const reqs = await Requisition.find({ 'stages.stageType': { $in: ['simulation', 'task_performance'] } });
   for (const r of reqs) {
     let reqUpdated = false;
     r.stages.forEach((s) => {
-      if (s.stageType === 'simulation' && s.inputType !== 'manual_rubric') {
+      if (['simulation', 'task_performance'].includes(s.stageType) && s.inputType !== 'manual_rubric') {
         s.inputType = 'manual_rubric';
         reqUpdated = true;
       }
