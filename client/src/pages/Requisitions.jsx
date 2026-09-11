@@ -56,7 +56,6 @@ export default function Requisitions() {
     try {
       const res = await api.get('/requisitions', { params: statusFilter ? { status: statusFilter } : {} });
       setRequisitions(res.data.requisitions);
-      console.log("Requistions payload:", res.data.requisitions[0]);
     } finally {
       setLoading(false);
     }
