@@ -35,7 +35,7 @@ const STAGE_TYPE_DEFAULTS = [
   { key: 'hr_screen', label: 'HR Screen', stageType: 'hr_screen', inputType: 'transcript' },
   { key: 'task_performance', label: 'Task Performance', stageType: 'task_performance', inputType: 'artifact' },
   { key: 'technical', label: 'Technical', stageType: 'technical', inputType: 'transcript' },
-  { key: 'simulation', label: 'Simulation', stageType: 'simulation', inputType: 'transcript' },
+  { key: 'simulation', label: 'Simulation', stageType: 'simulation', inputType: 'manual_rubric' },
   { key: 'client', label: 'Client Interview', stageType: 'client', inputType: 'transcript' },
   { key: 'culture', label: 'Culture Fit', stageType: 'culture', inputType: 'transcript' },
   { key: 'final', label: 'Final / Executive', stageType: 'final', inputType: 'transcript' },
@@ -49,6 +49,7 @@ const INPUT_TYPE_LABEL = {
   artifact: 'Artifact',
   pass_fail: 'Pass / fail',
   status_only: 'Status only',
+  manual_rubric: 'Manual rubric',
 };
 
 function reindexOrder(stages) {

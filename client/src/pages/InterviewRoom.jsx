@@ -70,7 +70,10 @@ export default function InterviewRoom() {
   const isFailedStage = currentStageProgress?.status === 'failed' || currentStageProgress?.passed === false;
 
   useEffect(() => {
-    setOpenAttrs(new Set(stageAttributes.length > 0 ? [stageAttributes[0].attributeId] : []));
+    setOpenAttrs(new Set(stageAttributes.length > 0 ? stageAttributes.map((a) => a.attributeId) : []));
+    if (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation') {
+      setGuideOpen(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interview?.stageKey, scorecard]);
 
@@ -291,7 +294,7 @@ export default function InterviewRoom() {
   }
 
 
-  const isTranscriptStage = stageConfig?.inputType === 'transcript';
+  const isTranscriptStage = stageConfig?.inputType === 'transcript' && stageConfig?.stageType !== 'simulation';
   const canScore = (isTranscriptStage ? interview?.consentObtained : true)
     && (stageConfig?.inputType === 'artifact' ? !!interview.artifactFileUrl : interview?.transcriptStatus === 'ready')
     && interview?.status !== 'approved';
@@ -482,7 +485,7 @@ export default function InterviewRoom() {
             />
           </CardContent>
         </Card>
-      ) : stageConfig?.inputType === 'transcript' ? (
+      ) : (stageConfig?.inputType === 'transcript' && stageConfig?.stageType !== 'simulation') ? (
         <Card className="mt-4">
           <CardHeader>
             <CardTitle>Transcript</CardTitle>
@@ -565,6 +568,17 @@ export default function InterviewRoom() {
 
           </CardContent>
         </Card>
+      ) : (stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation') ? (
+        <Card className="mt-4 border-blue-200 bg-blue-50/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-blue-900">Sales Simulation (Live Interview)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-blue-800">
+              Ask the candidate the questions in the <strong>Interview Guide</strong> below. Evaluate their live responses against the 5-star criteria and record your scores directly in the table below.
+            </p>
+          </CardContent>
+        </Card>
       ) : (
         <Card className="mt-4">
           <CardContent className="pt-6">
@@ -573,7 +587,7 @@ export default function InterviewRoom() {
         </Card>
       )}
 
-      {stageConfig?.inputType !== 'pass_fail' && (
+      {stageConfig?.inputType !== 'pass_fail' && stageConfig?.inputType !== 'manual_rubric' && stageConfig?.stageType !== 'simulation' && (
         <div className="mt-4">
           <button
             type="button" onClick={handleRunScoring} disabled={!canScore || scoring}
@@ -589,7 +603,7 @@ export default function InterviewRoom() {
         </div>
       )}
 
-      {interview.scores?.length > 0 && (
+      {(interview.scores?.length > 0 || stageConfig?.inputType === 'manual_rubric' || stageConfig?.stageType === 'simulation') && (
         <div className="mt-4">
           <ScoreReviewTable
             interview={interview}

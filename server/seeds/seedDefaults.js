@@ -67,26 +67,46 @@ async function seedDemoUsers() {
 }
 
 async function seedDefaultPipeline() {
-  const existing = await PipelineTemplate.findOne({ isDefault: true });
+  const Requisition = require('../models/Requisition');
+  let existing = await PipelineTemplate.findOne({ isDefault: true });
+
   if (existing) {
-    logger.info(
-      `[Seed] Default pipeline template already exists ("${existing.name}"), skipping.`,
-    );
-    return existing;
+    let tplUpdated = false;
+    existing.stages.forEach((s) => {
+      if ((s.key === 'simulation' || s.stageType === 'simulation') && s.inputType !== 'manual_rubric') {
+        s.inputType = 'manual_rubric';
+        tplUpdated = true;
+      }
+    });
+    if (tplUpdated) {
+      await existing.save();
+      logger.info('[Seed] Updated default pipeline template simulation stage to manual_rubric.');
+    }
+  } else {
+    existing = await PipelineTemplate.create({
+      name: "Standard Hiring Pipeline",
+      description:
+        "HR Screen (10%) -> Sales Simulation (35%) -> Technical/Ops (35%) -> Final/CEO (20%).",
+      isDefault: true,
+      stages: DEFAULT_PIPELINE_STAGES,
+    });
+    logger.info('[Seed] Created default pipeline template "Standard Hiring Pipeline".');
   }
 
-  const template = await PipelineTemplate.create({
-    name: "Standard Hiring Pipeline",
-    description:
-      "HR Screen (10%) -> Sales Simulation (35%) -> Technical/Ops (35%) -> Final/CEO (20%).",
-    isDefault: true,
-    stages: DEFAULT_PIPELINE_STAGES,
-  });
+  // Migrate existing requisitions in DB so stored simulation stage inputType is updated to manual_rubric
+  const reqs = await Requisition.find({ 'stages.stageType': 'simulation' });
+  for (const r of reqs) {
+    let reqUpdated = false;
+    r.stages.forEach((s) => {
+      if (s.stageType === 'simulation' && s.inputType !== 'manual_rubric') {
+        s.inputType = 'manual_rubric';
+        reqUpdated = true;
+      }
+    });
+    if (reqUpdated) await r.save();
+  }
 
-  logger.info(
-    '[Seed] Created default pipeline template "Standard Hiring Pipeline".',
-  );
-  return template;
+  return existing;
 }
 
 async function upsertSetting(key, value, description) {
