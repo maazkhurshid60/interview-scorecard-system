@@ -25,7 +25,7 @@ const { getCaptchaConfig, verifyCaptcha } = require('../services/captchaService'
 const { destroyFileIfUnreferenced } = require('../services/fileReferenceCleanup');
 // Server-side validation mirror. The editable UI definition lives in client/src/constants.
 const screeningCriteriaConfig = {
-  education: { label: 'Education', options: ["Bachelor's degree", "Master's degree", 'PhD'] },
+  education: { label: 'Education', options: ['Undergraduate (currently studying)', "Bachelor's degree", "Master's degree", 'PhD'] },
   experience: { label: 'Experience', options: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10+'] },
 };
 
@@ -261,15 +261,12 @@ function normalizeInitialScreeningCriteria(raw) {
   const educationMinimum = String(educationInput.minimumValue || '').trim();
   const educationMaximum = String(educationInput.maximumValue || '').trim();
   const relevantField = String(educationInput.relevantField || '').trim();
-  const allowVirtualUniversityOngoing = Boolean(
-    educationInput.allowVirtualUniversityOngoing || items.some((i) => i?.allowVirtualUniversityOngoing)
-  );
   const minimumValue = String(experience.minimumValue || '').trim();
   const maximumValue = String(experience.maximumValue || '').trim();
 
   let educationReq = relevantField && educationMinimum && educationMaximum ? `${educationMinimum} to ${educationMaximum} in ${relevantField}` : '';
-  if (allowVirtualUniversityOngoing) {
-    educationReq += (educationReq ? ' | ' : '') + 'Allow ongoing/in-progress degree for Virtual University / Distance Learning';
+  if (educationMinimum === 'Undergraduate (currently studying)') {
+    educationReq += (educationReq ? ' | ' : '') + 'Candidates currently studying an undergraduate degree are eligible';
   }
 
   return [
@@ -278,7 +275,6 @@ function normalizeInitialScreeningCriteria(raw) {
       minimumValue: educationMinimum,
       maximumValue: educationMaximum,
       relevantField,
-      allowVirtualUniversityOngoing,
       requirement: educationReq,
     },
     {

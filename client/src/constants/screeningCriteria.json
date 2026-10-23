@@ -2,7 +2,7 @@
   "education": {
     "key": "education",
     "label": "Education",
-    "options": ["Bachelor's degree", "Master's degree", "PhD"]
+    "options": ["Undergraduate (currently studying)", "Bachelor's degree", "Master's degree", "PhD"]
   },
   "experience": {
     "key": "experience",
