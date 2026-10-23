@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, Plug, SlidersHorizontal, FileText, DollarSign, Info, CheckCircle2, XCircle,
+  Settings as SettingsIcon, Plug, SlidersHorizontal, FileText, DollarSign, Info, CheckCircle2, XCircle,
 } from 'lucide-react';
 import api from '../hooks/useApi';
 import { useAuth } from '../context/AuthContext';
@@ -55,16 +54,42 @@ const KNOWN_MODELS = [
 ];
 
 const MODEL_TIERS = [
-  { key: 'claudeModelCheap', label: 'Cheap tier', hint: 'Résumé Screen, Reference Check, Background Check' },
-  { key: 'claudeModelDefault', label: 'Default tier', hint: 'HR Screen, Final/CEO, Client, Culture Fit' },
-  { key: 'claudeModelDeep', label: 'Deep tier', hint: 'Technical, Simulation, Task Performance' },
+  { key: 'claudeModelCheap', label: 'Cheap tier', hint: 'Fast, low-cost model for quick screening and lightweight evaluation tasks.' },
+  { key: 'claudeModelDefault', label: 'Default tier', hint: 'Balanced model for standard interview scoring and general candidate evaluations.' },
+  { key: 'claudeModelDeep', label: 'Deep tier', hint: 'High-intelligence model for complex technical rounds and in-depth candidate analysis.' },
 ];
 
+const ALL_STAGE_TYPES = [
+  { key: 'resume_screen', label: 'Résumé Screen' },
+  { key: 'hr_screen', label: 'Initial Screening' },
+  { key: 'hr_interview', label: 'HR Interview' },
+  { key: 'task_performance', label: 'Task Performance' },
+  { key: 'technical', label: 'Technical' },
+  { key: 'simulation', label: 'Simulation' },
+  { key: 'client', label: 'Client Interview' },
+  { key: 'culture', label: 'Culture Fit' },
+  { key: 'final', label: 'Final / Executive' },
+  { key: 'reference', label: 'Reference Check' },
+  { key: 'background', label: 'Background Check' },
+];
+
+const DEFAULT_STAGE_MODEL_TIERS = {
+  resume_screen: 'cheap',
+  reference: 'cheap',
+  background: 'cheap',
+  hr_screen: 'cheap',
+  hr_interview: 'cheap',
+  final: 'cheap',
+  client: 'cheap',
+  culture: 'cheap',
+  technical: 'cheap',
+  simulation: 'cheap',
+  task_performance: 'cheap',
+};
+
 export default function Settings() {
-  const navigate = useNavigate();
-  const [canGoBack] = useState(() => typeof window !== 'undefined' && window.history.state?.idx > 0);
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
 
   const [settings, setSettings] = useState({});
   const [keyStatus, setKeyStatus] = useState({});
@@ -159,11 +184,11 @@ export default function Settings() {
     <div>
       {/* ---------- header ---------- */}
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="icon" onClick={() => navigate(-1)} disabled={!canGoBack}>
-          <ArrowLeft />
-        </Button>
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <SettingsIcon className="h-7 w-7 text-brand" />
+            Settings
+          </h1>
           <p className="text-sm text-muted-foreground">
             Credentials, scoring thresholds, retention and AI spend.
           </p>
@@ -221,7 +246,7 @@ export default function Settings() {
                         size="sm"
                         onClick={() => testConnection(svc.key)}
                         disabled={!isAdmin || testing[svc.key]}
-                        className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+                        className="bg-brand text-white hover:bg-brand/90"
                       >
                         {testing[svc.key] ? 'Testing…' : 'Test connection'}
                       </Button>
@@ -298,6 +323,51 @@ export default function Settings() {
                     onSave={(v) => saveSetting(tier.key, v)}
                   />
                 ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Stage Model Tier Assignments</CardTitle>
+              <CardDescription>
+                Select which AI model tier (Cheap, Default, or Deep) scores each interview stage.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {ALL_STAGE_TYPES.map((st) => {
+                  const currentTiers = settings.stageModelTiers || DEFAULT_STAGE_MODEL_TIERS;
+                  const currentTier = currentTiers[st.key] || DEFAULT_STAGE_MODEL_TIERS[st.key] || 'cheap';
+
+                  return (
+                    <div key={st.key} className="p-3 border rounded-lg bg-card space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground">{st.label}</span>
+                        <Badge variant="outline" className="text-[10px] capitalize">
+                          {currentTier} tier
+                        </Badge>
+                      </div>
+                      <Select
+                        value={currentTier}
+                        onValueChange={(newTier) => {
+                          const updated = { ...currentTiers, [st.key]: newTier };
+                          saveSetting('stageModelTiers', updated);
+                        }}
+                        disabled={!isAdmin || savingKey === 'stageModelTiers'}
+                      >
+                        <SelectTrigger className="h-8 text-xs bg-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cheap">Cheap Tier</SelectItem>
+                          <SelectItem value="default">Default Tier</SelectItem>
+                          <SelectItem value="deep">Deep Tier</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
@@ -457,21 +527,30 @@ function NumberSetting({ label, value, onSave, disabled, saving, step, min, max 
 
   useEffect(() => { setDraft(value ?? ''); }, [value]);
 
-  const changed = Number(draft) !== Number(value);
+  const numDraft = Number(draft);
+  const changed = numDraft !== Number(value);
+  const isInvalid = (min !== undefined && numDraft < min) || (max !== undefined && numDraft > max);
 
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
-      <div className="flex gap-2">
-        <Input
-          type="number" value={draft} step={step} min={min} max={max} disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-          className="disabled:bg-muted"
-        />
+      <div className="flex items-start gap-2">
+        <div className="flex w-full flex-col gap-1">
+          <Input
+            type="number" value={draft} step={step} min={min} max={max} disabled={disabled}
+            onChange={(e) => setDraft(e.target.value)}
+            className={`disabled:bg-muted ${isInvalid ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+          />
+          {isInvalid && (
+            <span className="text-[10px] leading-tight text-red-500">
+              Must be {min}-{max}
+            </span>
+          )}
+        </div>
         {!disabled && changed && (
           <Button
-            onClick={() => onSave(Number(draft))} disabled={saving}
-            className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+            onClick={() => onSave(numDraft)} disabled={saving || isInvalid}
+            className="flex-shrink-0 bg-brand text-white hover:bg-brand/90"
           >
             {saving ? '…' : 'Save'}
           </Button>
@@ -538,7 +617,7 @@ function ModelSetting({ label, hint, value, onSave, disabled, saving }) {
         {!disabled && changed && draft && (
           <Button
             onClick={() => onSave(draft)} disabled={saving}
-            className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+            className="flex-shrink-0 bg-brand text-white hover:bg-brand/90"
           >
             {saving ? '…' : 'Save'}
           </Button>
@@ -578,7 +657,7 @@ function MaskedKeyInput({ label, masked, onSave, disabled, saving }) {
           />
           <Button
             size="sm" onClick={handleSave} disabled={saving || !draft}
-            className="flex-shrink-0 bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+            className="flex-shrink-0 bg-brand text-white hover:bg-brand/90"
           >
             {saving ? '…' : 'Save'}
           </Button>

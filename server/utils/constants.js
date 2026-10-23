@@ -2,16 +2,19 @@ require('dotenv').config();
 
 /** All stage types a PipelineTemplate stage / Requisition stage can have. */
 const STAGE_TYPES = [
-  'resume_screen', 'hr_screen', 'task_performance', 'technical',
+  'resume_screen', 'hr_screen', 'hr_interview', 'task_performance', 'technical',
   'simulation', 'final', 'client', 'culture', 'reference',
   'background', 'offer',
 ];
 
 /** How a stage collects evidence to be scored/gated. */
-const INPUT_TYPES = ['transcript', 'artifact', 'pass_fail', 'status_only'];
+const INPUT_TYPES = ['transcript', 'artifact', 'pass_fail', 'status_only', 'manual_rubric'];
 
-/** User roles (single role field; full RBAC is Phase 2). */
-const USER_ROLES = ['admin', 'hiring_manager', 'recruiter', 'interviewer'];
+/** Employment types for requisitions. */
+const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'internship', 'temporary'];
+
+/** User roles: owner (super-admin), admin, hiring_manager, recruiter, interviewer. */
+const USER_ROLES = ['owner', 'admin', 'hiring_manager', 'recruiter', 'interviewer'];
 
 /** Application-level per-stage progress status. */
 const STAGE_PROGRESS_STATUS = [
@@ -46,7 +49,8 @@ const AUDIT_ACTIONS = [
   'score_override', 'score_approve', 'question_edit', 'stage_toggle',
   'weight_change', 'disposition_change', 'final_decision',
   'provider_change', 'key_change', 'transcript_upload', 'consent_capture',
-  'retention_purge',
+  'retention_purge', 'requisition_status_change', 'candidate_update',
+  'requisition_duplicated', 'offer_letter_sent', 'requisition_deleted',
 ];
 
 /**
@@ -60,13 +64,14 @@ const STAGE_MODEL_TIER = {
   resume_screen: 'cheap',
   reference: 'cheap',
   background: 'cheap',
-  hr_screen: 'default',
-  final: 'default',
-  client: 'default',
-  culture: 'default',
-  technical: 'deep',
-  simulation: 'deep',
-  task_performance: 'deep',
+  hr_screen: 'cheap',
+  hr_interview: 'cheap',
+  final: 'cheap',
+  client: 'cheap',
+  culture: 'cheap',
+  technical: 'cheap',
+  simulation: 'cheap',
+  task_performance: 'cheap',
 };
 
 /**
@@ -83,23 +88,43 @@ const DEFAULT_COST_RATE_TABLE = {
 /** The default pipeline template, exactly per the finalized spec / original Excel. */
 const DEFAULT_PIPELINE_STAGES = [
   {
-    key: 'hr_screen',
-    label: 'HR Screen',
-    stageType: 'hr_screen',
-    inputType: 'transcript',
+    key: 'resume_screen',
+    label: 'Résumé Screen',
+    stageType: 'resume_screen',
+    inputType: 'artifact',
     enabled: true,
     order: 1,
     weight: 0.10,
     passThreshold: 3.0,
   },
   {
+    key: 'hr_screen',
+    label: 'Initial Screening',
+    stageType: 'hr_screen',
+    inputType: 'artifact',
+    enabled: true,
+    order: 2,
+    weight: 0.10,
+    passThreshold: 3.0,
+  },
+  {
+    key: 'hr_interview',
+    label: 'HR Interview',
+    stageType: 'hr_interview',
+    inputType: 'transcript',
+    enabled: true,
+    order: 3,
+    weight: 0.15,
+    passThreshold: 3.0,
+  },
+  {
     key: 'simulation',
     label: 'Sales Simulation',
     stageType: 'simulation',
-    inputType: 'transcript',
+    inputType: 'manual_rubric',
     enabled: true,
-    order: 2,
-    weight: 0.35,
+    order: 4,
+    weight: 0.25,
     passThreshold: 3.0,
   },
   {
@@ -108,9 +133,9 @@ const DEFAULT_PIPELINE_STAGES = [
     stageType: 'technical',
     inputType: 'transcript',
     enabled: true,
-    order: 3,
-    weight: 0.35,
-    passThreshold: 3.5,
+    order: 5,
+    weight: 0.25,
+    passThreshold: 3.0,
   },
   {
     key: 'final',
@@ -118,26 +143,15 @@ const DEFAULT_PIPELINE_STAGES = [
     stageType: 'final',
     inputType: 'transcript',
     enabled: true,
-    order: 4,
-    weight: 0.20,
-    passThreshold: 3.5,
-  },
-  // Shipped disabled; HR enables per-requisition as needed.
-  {
-    key: 'resume_screen',
-    label: 'Résumé Screen',
-    stageType: 'resume_screen',
-    inputType: 'artifact',
-    enabled: false,
-    order: 0,
-    weight: 0,
+    order: 6,
+    weight: 0.15,
     passThreshold: 3.0,
   },
   {
     key: 'task_performance',
     label: 'Task Performance',
     stageType: 'task_performance',
-    inputType: 'artifact',
+    inputType: 'manual_rubric',
     enabled: false,
     order: 5,
     weight: 0,
@@ -151,7 +165,7 @@ const DEFAULT_PIPELINE_STAGES = [
     enabled: false,
     order: 6,
     weight: 0,
-    passThreshold: 3.5,
+    passThreshold: 3.0,
   },
   {
     key: 'culture',
@@ -167,7 +181,7 @@ const DEFAULT_PIPELINE_STAGES = [
     key: 'reference',
     label: 'Reference Check',
     stageType: 'reference',
-    inputType: 'transcript',
+    inputType: 'pass_fail',
     enabled: false,
     order: 8,
     weight: 0,
@@ -183,16 +197,16 @@ const DEFAULT_PIPELINE_STAGES = [
     weight: 0,
     passThreshold: 3.0,
   },
-  {
-    key: 'offer',
-    label: 'Offer',
-    stageType: 'offer',
-    inputType: 'status_only',
-    enabled: false,
-    order: 10,
-    weight: 0,
-    passThreshold: 3.0,
-  },
+  // {
+  //   key: 'offer',
+  //   label: 'Offer',
+  //   stageType: 'offer',
+  //   inputType: 'status_only',
+  //   enabled: false,
+  //   order: 10,
+  //   weight: 0,
+  //   passThreshold: 3.0,
+  // },
 ];
 
 /** Default scalar settings, seeded into the Setting collection. */
@@ -203,11 +217,13 @@ const DEFAULT_SETTINGS = {
   monthlyAiSpendCapUsd: Number(process.env.MONTHLY_AI_SPEND_CAP_USD) || 200,
   aiSpendWarnPercent: Number(process.env.AI_SPEND_WARN_PERCENT) || 80,
   activeTranscriptProvider: process.env.ACTIVE_TRANSCRIPT_PROVIDER || 'google_meet',
+  stageModelTiers: STAGE_MODEL_TIER,
 };
 
 module.exports = {
   STAGE_TYPES,
   INPUT_TYPES,
+  EMPLOYMENT_TYPES,
   USER_ROLES,
   STAGE_PROGRESS_STATUS,
   INTERVIEW_STATUS,

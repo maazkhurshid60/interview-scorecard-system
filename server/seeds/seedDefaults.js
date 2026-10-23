@@ -14,40 +14,52 @@ const User = require("../models/User");
 const PipelineTemplate = require("../models/PipelineTemplate");
 const Setting = require("../models/Setting");
 
-async function seedAdminUser() {
-  const email = process.env.SEED_ADMIN_EMAIL || "admin@example.com";
+/**
+ * Creates the first OWNER account from SEED_OWNER_NAME / SEED_OWNER_EMAIL / SEED_OWNER_PASSWORD.
+ */
+async function seedOwnerUser() {
+  const email = process.env.SEED_OWNER_EMAIL || "owner@example.com";
+  const hasOwner = await User.exists({ role: "owner" });
   const existing = await User.findOne({ email });
+
   if (existing) {
-    logger.info(`[Seed] Admin user already exists (${email}), skipping.`);
+    if (!hasOwner && existing.role === "admin") {
+      existing.role = "owner";
+      await existing.save();
+      logger.info(`[Seed] Upgraded existing user (${email}) to owner role.`);
+    } else {
+      logger.info(`[Seed] Owner user already exists (${email}) with role ${existing.role}, skipping.`);
+    }
     return existing;
   }
 
-  const name = process.env.SEED_ADMIN_NAME || "Admin";
-  const password = process.env.SEED_ADMIN_PASSWORD || "change_this_password";
+  const name = process.env.SEED_OWNER_NAME || "Owner";
+  const password = process.env.SEED_OWNER_PASSWORD || "change_this_password";
   const passwordHash = await bcrypt.hash(password, 10);
+  const initialRole = hasOwner ? "admin" : "owner";
 
-  const admin = await User.create({
+  const owner = await User.create({
     name,
     email,
     passwordHash,
-    role: "admin",
+    role: initialRole,
     active: true,
   });
 
-  logger.info(`[Seed] Created default admin user: ${email}`);
-  return admin;
+  logger.info(`[Seed] Created owner user: ${email} with role: ${initialRole}`);
+  return owner;
 }
 
 const DEMO_USERS = [
   {
     role: "hiring_manager",
-    email: "hiring_manager@example.com",
+    email: "hiring.manager@redstartechnologies.com",
     name: "Hiring Manager",
   },
-  { role: "recruiter", email: "recruiter@example.com", name: "Recruiter" },
+  { role: "recruiter", email: "recruiter@redstartechnologies.com", name: "Recruiter" },
   {
     role: "interviewer",
-    email: "interviewer@example.com",
+    email: "interviewer@redstartechnologies.com",
     name: "Interviewer",
   },
 ];
@@ -70,21 +82,21 @@ async function seedDefaultPipeline() {
   const existing = await PipelineTemplate.findOne({ isDefault: true });
   if (existing) {
     logger.info(
-      `[Seed] Default pipeline template already exists ("${existing.name}"), skipping.`,
+      `[Seed] Default hiring process template already exists ("${existing.name}"), skipping.`,
     );
     return existing;
   }
 
   const template = await PipelineTemplate.create({
-    name: "Standard Hiring Pipeline",
+    name: "Standard Hiring Stages",
     description:
-      "HR Screen (10%) -> Sales Simulation (35%) -> Technical/Ops (35%) -> Final/CEO (20%).",
+      "Initial Screening (10%) -> HR Interview (15%) -> Sales Simulation (25%) -> Technical/Ops (25%) -> Final/CEO (15%).",
     isDefault: true,
     stages: DEFAULT_PIPELINE_STAGES,
   });
 
   logger.info(
-    '[Seed] Created default pipeline template "Standard Hiring Pipeline".',
+    '[Seed] Created default hiring process template "Standard Hiring Stages".',
   );
   return template;
 }
@@ -133,6 +145,11 @@ async function seedSettings() {
     "aiCostRateTable",
     DEFAULT_COST_RATE_TABLE,
     "USD per 1M tokens (input/output) per model tier (cheap/default/deep). Confirm at console.anthropic.com.",
+  );
+  await upsertSetting(
+    "stageModelTiers",
+    DEFAULT_SETTINGS.stageModelTiers,
+    "Mapping of each interview stage type to AI model tier (cheap, default, deep).",
   );
   await upsertSetting(
     "aiMonthlySpend",
@@ -199,7 +216,7 @@ async function seedSettings() {
 async function run() {
   try {
     await connectDB();
-    await seedAdminUser();
+    await seedOwnerUser();
     await seedDemoUsers();
     await seedDefaultPipeline();
     await seedSettings();
@@ -216,7 +233,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  seedAdminUser,
+  seedOwnerUser,
   seedDemoUsers,
   seedDefaultPipeline,
   seedSettings,

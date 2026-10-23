@@ -69,8 +69,43 @@ function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold,
 
   const stageResults = relevantStages.map((stage) => {
     const interview = interviewsByStageKey.get(stage.key);
-    const stageAverage = interview ? computeStageAverage(interview) : null;
-    const passed = isStagePassed(stageAverage, stage.passThreshold);
+
+    // pass_fail stages use the explicit pass/fail decision,
+    // not approved scores.
+    if (stage.inputType === 'pass_fail') {
+      const stageAverage =
+        interview?.status === 'approved' &&
+          typeof interview?.stageAverage === 'number'
+          ? interview.stageAverage
+          : null;
+
+      const passed =
+        stageAverage === null
+          ? null
+          : stageAverage >= (stage.passThreshold ?? 5);
+
+      return {
+        stageKey: stage.key,
+        label: stage.label,
+        inputType: stage.inputType,
+        weight: stage.weight,
+        passThreshold: stage.passThreshold,
+        stageAverage,
+        passed,
+        complete: stageAverage !== null,
+      };
+    }
+
+    // All normal scored stages continue using approved scores.
+    const stageAverage = interview
+      ? computeStageAverage(interview)
+      : null;
+
+    const passed = isStagePassed(
+      stageAverage,
+      stage.passThreshold
+    );
+
     return {
       stageKey: stage.key,
       label: stage.label,
@@ -84,6 +119,11 @@ function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold,
   });
 
   const complete = stageResults.every((r) => r.complete);
+  const anyGateFailed = stageResults.some((r) => r.passed === false);
+
+  if (anyGateFailed) {
+    return { stageResults, weightedTotal: null, allGatesPassed: false, disposition: 'NO_HIRE', complete };
+  }
 
   if (!complete) {
     return { stageResults, weightedTotal: null, allGatesPassed: null, disposition: null, complete: false };
@@ -91,17 +131,31 @@ function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold,
 
   const allGatesPassed = stageResults.every((r) => r.passed === true);
 
-  const weightedTotal = round(
-    stageResults
-      .filter((r) => r.inputType !== 'pass_fail')
-      .reduce((sum, r) => sum + r.stageAverage * r.weight, 0),
-    4
+  const scoredStages = stageResults.filter(
+    (r) => r.inputType !== 'pass_fail'
   );
 
+  const weightedTotal = scoredStages.length > 0
+    ? round(
+      scoredStages.reduce(
+        (sum, r) => sum + r.stageAverage * r.weight,
+        0
+      ),
+      4
+    )
+    : null;
+
   let disposition;
-  if (allGatesPassed && weightedTotal >= hireThreshold) disposition = 'HIRE';
-  else if (allGatesPassed && weightedTotal >= maybeThreshold) disposition = 'MAYBE';
-  else disposition = 'NO_HIRE';
+
+  if (allGatesPassed && weightedTotal === null) {
+    disposition = 'HIRE';
+  } else if (allGatesPassed && weightedTotal >= hireThreshold) {
+    disposition = 'HIRE';
+  } else if (allGatesPassed && weightedTotal >= maybeThreshold) {
+    disposition = 'MAYBE';
+  } else {
+    disposition = 'NO_HIRE';
+  }
 
   return { stageResults, weightedTotal, allGatesPassed, disposition, complete: true };
 }

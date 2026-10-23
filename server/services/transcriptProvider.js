@@ -8,6 +8,9 @@ function notEnabledStub(name) {
     async createMeeting() {
       throw new Error(`${name} provider not enabled — wired in Phase 2.`);
     },
+    async cancelMeeting() {
+      throw new Error(`${name} provider not enabled — wired in Phase 2.`);
+    },
     async fetchTranscript() {
       throw new Error(`${name} provider not enabled — wired in Phase 2.`);
     },
@@ -41,12 +44,17 @@ async function getActiveProvider() {
  * @param {import('mongoose').Document} interview
  * @returns {Promise<{meetingUri: string, conferenceId: string}>}
  */
-async function createMeeting(interview) {
+async function createMeeting(interview, details) {
   const provider = await getActiveProvider();
   const impl = PROVIDERS[provider];
   if (!impl) throw new Error(`Unknown transcript provider "${provider}".`);
   logger.info(`[TranscriptProvider] createMeeting via provider=${provider} interview=${interview._id}`);
-  return impl.createMeeting(interview);
+  return impl.createMeeting(interview, details);
+}
+
+async function cancelMeeting(interview) {
+  if (interview.provider !== 'google_meet') return { cancelled: false };
+  return googleMeet.cancelMeeting(interview);
 }
 
 /**
@@ -62,4 +70,4 @@ async function fetchTranscript(interview) {
   return impl.fetchTranscript(interview);
 }
 
-module.exports = { createMeeting, fetchTranscript };
+module.exports = { createMeeting, cancelMeeting, fetchTranscript };

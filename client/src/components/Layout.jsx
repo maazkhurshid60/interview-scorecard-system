@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
 
@@ -6,8 +6,22 @@ import Sidebar from './Sidebar';
 export default function Layout({ children }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
+  // The authenticated shell has its own scrolling <main>. Prevent the document
+  // from becoming a second scroll container while this shell is mounted.
+  useEffect(() => {
+    const bodyOverflow = document.body.style.overflow;
+    const htmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = bodyOverflow;
+      document.documentElement.style.overflow = htmlOverflow;
+    };
+  }, []);
+
   return (
-    <div className="flex">
+    <div className="flex h-screen overflow-hidden">
       <Sidebar isOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
 
       {mobileNavOpen && (

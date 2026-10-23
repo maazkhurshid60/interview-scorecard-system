@@ -67,14 +67,19 @@ const update = asyncHandler(async (req, res) => {
   setting.updatedAt = new Date();
   await setting.save();
 
+  // Credentials are audited as an event only (which key, who, when). Their
+  // values — old, new, or masked — are never stored in the audit log (it is
+  // readable via /api/audit) and never echoed back in the response.
+  const isSecret = SECRET_SETTING_KEYS.includes(setting.key);
   await AuditLog.create({
     action: setting.key === 'activeTranscriptProvider' ? 'provider_change' : 'key_change',
     userId: req.user._id, targetType: 'setting', targetId: setting.key,
-    oldValue, newValue: setting.value, reason: `Setting "${setting.key}" updated.`,
+    ...(isSecret ? {} : { oldValue, newValue: setting.value }),
+    reason: isSecret ? `Credential "${setting.key}" updated (value not recorded).` : `Setting "${setting.key}" updated.`,
   });
 
   logger.info(`[Settings] Updated "${setting.key}" by user=${req.user._id}`);
-  res.json({ setting });
+  res.json({ setting: isSecret ? { ...setting.toObject(), value: undefined } : setting });
 });
 
 /**
@@ -134,7 +139,7 @@ const testApi = asyncHandler(async (req, res) => {
     const { slackWebhookUrl: webhookUrl } = await getSecrets();
     if (!webhookUrl) return res.json({ service, status: 'error', error: 'VALIDATION_ERROR', message: 'SLACK_WEBHOOK_URL is not configured.' });
     try {
-      await axios.post(webhookUrl, { text: ':white_check_mark: Test connection from Interview Scorecard System.' }, { timeout: 10000 });
+      await axios.post(webhookUrl, { text: ':white_check_mark: Test connection from OWNERS TALENT.' }, { timeout: 10000 });
       return res.json({ service, status: 'ok' });
     } catch (err) {
       return res.json({ service, status: 'error', ...describeError(err) });
@@ -170,11 +175,13 @@ const aiUsage = asyncHandler(async (req, res) => {
   const requisitionIds = [...new Set(grouped.map((g) => String(g._id.requisitionId)))];
   const requisitions = await Requisition.find({ _id: { $in: requisitionIds } }, 'title stages');
   const requisitionById = new Map(requisitions.map((r) => [String(r._id), r]));
+  const stageTiersSetting = await Setting.findOne({ key: 'stageModelTiers' });
+  const stageModelTiers = stageTiersSetting?.value || STAGE_MODEL_TIER;
 
   const rows = grouped.map((g) => {
     const requisition = requisitionById.get(String(g._id.requisitionId));
     const stageConfig = requisition?.stages.find((s) => s.key === g._id.stageKey);
-    const tier = stageConfig ? STAGE_MODEL_TIER[stageConfig.stageType] : undefined;
+    const tier = stageConfig ? (stageModelTiers[stageConfig.stageType] || STAGE_MODEL_TIER[stageConfig.stageType]) : undefined;
     const model = tier === 'cheap' ? process.env.CLAUDE_MODEL_CHEAP
       : tier === 'deep' ? process.env.CLAUDE_MODEL_DEEP
         : tier === 'default' ? process.env.CLAUDE_MODEL_DEFAULT : undefined;

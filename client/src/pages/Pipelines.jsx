@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  Plus, ChevronUp, ChevronDown, Star, Trash2, ArrowLeft, Search, X,
+  Plus, ChevronUp, ChevronDown, Star, Trash2, Search, X,
   GitBranch, MoreHorizontal,
 } from 'lucide-react';
 import api from '../hooks/useApi';
+import { useAuth } from '../context/AuthContext';
+import { canManagePipelines } from '../lib/permissions';
 import WeightConfig from '../components/WeightConfig';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,31 +29,53 @@ import {
 } from '@/components/ui/alert-dialog';
 
 const PAGE_SIZE = 10;
+const REQUIRED_STAGE_KEYS = new Set(['resume_screen', 'hr_screen']);
 
-/** Starting point for a brand-new template — every known stage type, all disabled by default. */
+/** Starting point for a new template; Résumé Screen and HR Screen are mandatory. */
 const STAGE_TYPE_DEFAULTS = [
   { key: 'resume_screen', label: 'Résumé Screen', stageType: 'resume_screen', inputType: 'artifact' },
-  { key: 'hr_screen', label: 'HR Screen', stageType: 'hr_screen', inputType: 'transcript' },
-  { key: 'task_performance', label: 'Task Performance', stageType: 'task_performance', inputType: 'artifact' },
+  { key: 'hr_screen', label: 'Initial Screening', stageType: 'hr_screen', inputType: 'artifact' },
+  { key: 'hr_interview', label: 'HR Interview', stageType: 'hr_interview', inputType: 'transcript' },
+  { key: 'task_performance', label: 'Task Performance', stageType: 'task_performance', inputType: 'manual_rubric' },
   { key: 'technical', label: 'Technical', stageType: 'technical', inputType: 'transcript' },
-  { key: 'simulation', label: 'Simulation', stageType: 'simulation', inputType: 'transcript' },
+  { key: 'simulation', label: 'Simulation', stageType: 'simulation', inputType: 'manual_rubric' },
   { key: 'client', label: 'Client Interview', stageType: 'client', inputType: 'transcript' },
   { key: 'culture', label: 'Culture Fit', stageType: 'culture', inputType: 'transcript' },
   { key: 'final', label: 'Final / Executive', stageType: 'final', inputType: 'transcript' },
-  { key: 'reference', label: 'Reference Check', stageType: 'reference', inputType: 'transcript' },
+  { key: 'reference', label: 'Reference Check', stageType: 'reference', inputType: 'pass_fail' },
   { key: 'background', label: 'Background Check', stageType: 'background', inputType: 'pass_fail' },
-  { key: 'offer', label: 'Offer', stageType: 'offer', inputType: 'status_only' },
-].map((s, i) => ({ ...s, enabled: false, order: i + 1, weight: 0, passThreshold: 3.0 }));
+  // { key: 'offer', label: 'Offer', stageType: 'offer', inputType: 'status_only' },
+].map((s, i) => ({
+  ...s,
+  enabled: REQUIRED_STAGE_KEYS.has(s.key),
+  order: i + 1,
+  weight: 0,
+  passThreshold: 3.0,
+}));
 
 const INPUT_TYPE_LABEL = {
   transcript: 'Transcript',
   artifact: 'Artifact',
   pass_fail: 'Pass / fail',
   status_only: 'Status only',
+  manual_rubric: 'Manual rubric',
 };
 
 function reindexOrder(stages) {
   return stages.map((s, i) => ({ ...s, order: i + 1 }));
+}
+
+/** Keeps the required screening stages fixed at the start of every pipeline. */
+function pinRequiredStages(stages) {
+  const requiredStages = ['resume_screen', 'hr_screen']
+    .map((key) => stages.find((stage) => stage.key === key))
+    .filter(Boolean)
+    .map((stage) => ({ ...stage, enabled: true }));
+  const optionalStages = stages
+    .filter((stage) => !REQUIRED_STAGE_KEYS.has(stage.key))
+    .sort((a, b) => a.order - b.order);
+
+  return reindexOrder([...requiredStages, ...optionalStages]);
 }
 
 /**
@@ -73,8 +96,8 @@ function equalizeScoredWeights(stages) {
 }
 
 /** One template's editable card: toggle/reorder stages, edit weights & gates, save/default/delete. */
-function TemplateCard({ template, onChanged, onDeleted }) {
-  const [stages, setStages] = useState(() => [...template.stages].sort((a, b) => a.order - b.order));
+function TemplateCard({ template, onChanged, onDeleted, canManage = true }) {
+  const [stages, setStages] = useState(() => pinRequiredStages(template.stages));
   const [autoWeights, setAutoWeights] = useState(template.autoWeights !== false);
   const [saving, setSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -82,6 +105,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
 
   function toggleEnabled(key) {
+    if (REQUIRED_STAGE_KEYS.has(key)) return;
     setStages((prev) => {
       const next = prev.map((s) => (s.key === key ? { ...s, enabled: !s.enabled } : s));
       // In manual mode the admin owns the numbers — toggling a stage must not
@@ -107,14 +131,15 @@ function TemplateCard({ template, onChanged, onDeleted }) {
   }
 
   function changeGate(key, value) {
-    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, passThreshold: Number(value) } : s)));
+    setStages((prev) => prev.map((s) => (s.key === key ? { ...s, passThreshold: value === '' ? '' : Number(value) } : s)));
   }
 
   function moveStage(index, direction) {
     setStages((prev) => {
       const next = [...prev];
       const swapWith = index + direction;
-      if (swapWith < 0 || swapWith >= next.length) return prev;
+      // Resume Screen and HR Screen are permanently the first two stages.
+      if (index < 2 || swapWith < 2 || swapWith >= next.length) return prev;
       [next[index], next[swapWith]] = [next[swapWith], next[index]];
       return reindexOrder(next);
     });
@@ -129,10 +154,10 @@ function TemplateCard({ template, onChanged, onDeleted }) {
       // `stages` state is seeded once and the card never remounts (stable key),
       // so without syncing it back the inputs would keep showing stale numbers
       // until a full page reload.
-      setStages([...res.data.template.stages].sort((a, b) => a.order - b.order));
+      setStages(pinRequiredStages(res.data.template.stages));
       setAutoWeights(res.data.template.autoWeights !== false);
       const scored = res.data.template.stages.filter(
-        (s) => s.enabled && (s.inputType === 'transcript' || s.inputType === 'artifact')
+        (s) => s.enabled && s.inputType !== 'pass_fail' && s.inputType !== 'status_only'
       );
       toast.success(
         scored.length ? `Saved — ${scored.length} scored stage${scored.length === 1 ? '' : 's'}, weights total 100%.` : 'Saved.'
@@ -181,7 +206,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold text-foreground">{template.name}</h3>
                 {template.isDefault && (
-                  <Badge variant="secondary" className="gap-1 bg-[#d21e2b]/10 font-normal text-[#d21e2b] hover:bg-[#d21e2b]/10">
+                  <Badge variant="secondary" className="gap-1 bg-brand/10 font-normal text-brand hover:bg-brand/10">
                     <Star className="h-3 w-3" /> Default
                   </Badge>
                 )}
@@ -198,28 +223,30 @@ function TemplateCard({ template, onChanged, onDeleted }) {
             </div>
           </button>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="flex-shrink-0">
-                <MoreHorizontal />
-                <span className="sr-only">Template actions</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleSetDefault} disabled={template.isDefault}>
-                <Star />
-                {template.isDefault ? 'Already default' : 'Set as default'}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setConfirmDelete(true)}
-                disabled={template.isDefault}
-                className="text-red-600 focus:text-red-600"
-              >
-                <Trash2 />
-                {template.isDefault ? "Can't delete default" : 'Delete template'}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {canManage && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="flex-shrink-0">
+                  <MoreHorizontal />
+                  <span className="sr-only">Template actions</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleSetDefault} disabled={template.isDefault}>
+                  <Star />
+                  {template.isDefault ? 'Already default' : 'Set as default'}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={template.isDefault}
+                  className="text-red-600 focus:text-red-600"
+                >
+                  <Trash2 />
+                  {template.isDefault ? "Can't delete default" : 'Delete template'}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
         {/* ---------- body ---------- */}
@@ -241,13 +268,13 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                     <TableCell className="py-2">
                       <div className="flex flex-col">
                         <button
-                          type="button" onClick={() => moveStage(index, -1)} disabled={index === 0}
+                          type="button" onClick={() => moveStage(index, -1)} disabled={index <= 2}
                           className="text-muted-foreground hover:text-foreground disabled:opacity-20"
                         >
                           <ChevronUp className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          type="button" onClick={() => moveStage(index, 1)} disabled={index === stages.length - 1}
+                          type="button" onClick={() => moveStage(index, 1)} disabled={index < 2 || index === stages.length - 1}
                           className="text-muted-foreground hover:text-foreground disabled:opacity-20"
                         >
                           <ChevronDown className="h-3.5 w-3.5" />
@@ -255,11 +282,19 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                       </div>
                     </TableCell>
                     <TableCell className="py-2">
-                      <Checkbox
-                        checked={s.enabled}
-                        onCheckedChange={() => toggleEnabled(s.key)}
-                        aria-label={`Enable ${s.label}`}
-                      />
+                      <span
+                        className="inline-flex"
+                        title={REQUIRED_STAGE_KEYS.has(s.key)
+                          ? 'Résumé Screen and HR Screen are required and cannot be disabled.'
+                          : undefined}
+                      >
+                        <Checkbox
+                          checked={s.enabled}
+                          onCheckedChange={() => toggleEnabled(s.key)}
+                          disabled={REQUIRED_STAGE_KEYS.has(s.key)}
+                          aria-label={`Enable ${s.label}`}
+                        />
+                      </span>
                     </TableCell>
                     <TableCell className={`py-2 text-sm ${s.enabled ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
                       {s.label}
@@ -273,12 +308,22 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                       {s.inputType === 'status_only' ? (
                         <span className="text-xs text-muted-foreground">—</span>
                       ) : (
-                        <Input
-                          type="number" step="0.1" min="1" max="5"
-                          value={s.passThreshold}
-                          onChange={(e) => changeGate(s.key, e.target.value)}
-                          className="ml-auto h-8 w-20 text-xs"
-                        />
+                        <div className="flex flex-col items-end gap-1">
+                          <Input
+                            type="number" step="1" min="1" max="5"
+                            value={s.passThreshold}
+                            onChange={(e) => changeGate(s.key, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) {
+                                e.preventDefault();
+                              }
+                            }}
+                            className={`ml-auto h-8 w-20 text-xs ${s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold) ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                          />
+                          {(s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold)) && (
+                            <span className="text-[10px] text-red-500 leading-tight whitespace-nowrap">Must be 1-5</span>
+                          )}
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
@@ -316,17 +361,19 @@ function TemplateCard({ template, onChanged, onDeleted }) {
                   </div>
                 </RadioGroup>
               </div>
-              <WeightConfig stages={stages} onChangeWeight={changeWeight} readOnly={autoWeights} />
+              <WeightConfig stages={stages} onChangeWeight={changeWeight} readOnly={autoWeights || !canManage} />
             </div>
 
-            <div className="flex justify-end border-t border-border p-4">
-              <Button
-                onClick={handleSave} disabled={saving}
-                className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
-              >
-                {saving ? 'Saving…' : 'Save changes'}
-              </Button>
-            </div>
+            {canManage && (
+              <div className="flex justify-end border-t border-border p-4">
+                <Button
+                  onClick={handleSave} disabled={saving || stages.some(s => s.passThreshold < 1 || s.passThreshold > 5 || !Number.isInteger(s.passThreshold))}
+                  className="bg-brand text-white hover:bg-brand/90"
+                >
+                  {saving ? 'Saving…' : 'Save changes'}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
@@ -337,7 +384,7 @@ function TemplateCard({ template, onChanged, onDeleted }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{template.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              This can’t be undone. Requisitions already created from this template keep their own
+              This can’t be undone. Job Openings already created from this template keep their own
               copy of the stages, so they aren’t affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -358,8 +405,8 @@ function TemplateCard({ template, onChanged, onDeleted }) {
 }
 
 export default function Pipelines() {
-  const navigate = useNavigate();
-  const [canGoBack] = useState(() => typeof window !== 'undefined' && window.history.state?.idx > 0);
+  const { user } = useAuth();
+  const canManage = canManagePipelines(user); // owner, admin, hiring manager
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -392,7 +439,7 @@ export default function Pipelines() {
     setCreating(true);
     try {
       await api.post('/pipelines', { name: newName, description: newDescription, stages: STAGE_TYPE_DEFAULTS });
-      toast.success('Template created — open it to enable stages.');
+      toast.success('Template created with Résumé Screen and HR Screen enabled.');
       setNewName('');
       setNewDescription('');
       setCreateOpen(false);
@@ -427,20 +474,22 @@ export default function Pipelines() {
       {/* ---------- header ---------- */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="icon" onClick={() => navigate(-1)} disabled={!canGoBack}>
-            <ArrowLeft />
-          </Button>
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">Pipelines</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+              <GitBranch className="h-7 w-7 text-brand" />
+              Hiring Stages
+            </h1>
             <p className="text-sm text-muted-foreground">
               {loading ? 'Loading…' : `${templates.length} template${templates.length === 1 ? '' : 's'}`}
             </p>
           </div>
         </div>
-        <Button className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90" onClick={() => setCreateOpen(true)}>
-          <Plus />
-          New Template
-        </Button>
+        {canManage && (
+          <Button className="bg-brand text-white hover:bg-brand/90" onClick={() => setCreateOpen(true)}>
+            <Plus />
+            New Template
+          </Button>
+        )}
       </div>
 
       {/* ---------- search ---------- */}
@@ -487,15 +536,17 @@ export default function Pipelines() {
                 <GitBranch className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">No pipeline templates yet</p>
+                <p className="text-sm font-medium text-foreground">No hiring process templates yet</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   A template defines the interview stages, their order, gates and weights.
                 </p>
               </div>
-              <Button className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90" onClick={() => setCreateOpen(true)}>
-                <Plus />
-                New Template
-              </Button>
+              {canManage && (
+                <Button className="bg-brand text-white hover:bg-brand/90" onClick={() => setCreateOpen(true)}>
+                  <Plus />
+                  New Template
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : filtered.length === 0 ? (
@@ -507,7 +558,7 @@ export default function Pipelines() {
           </Card>
         ) : (
           paginated.map((t) => (
-            <TemplateCard key={t._id} template={t} onChanged={handleChanged} onDeleted={handleDeleted} />
+            <TemplateCard key={t._id} template={t} onChanged={handleChanged} onDeleted={handleDeleted} canManage={canManage} />
           ))
         )}
       </div>
@@ -538,7 +589,7 @@ export default function Pipelines() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New pipeline template</DialogTitle>
+            <DialogTitle>New Hiring Process template</DialogTitle>
             <DialogDescription>
               Every stage type is included but switched off — enable the ones this role needs after creating.
             </DialogDescription>
@@ -550,7 +601,7 @@ export default function Pipelines() {
               <Input
                 id="tpl-name" value={newName} autoFocus
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Engineering Pipeline"
+                placeholder="e.g. Engineering Hiring Process"
               />
             </div>
             <div className="space-y-1.5">
@@ -564,7 +615,7 @@ export default function Pipelines() {
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={creating} className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90">
+              <Button type="submit" disabled={creating} className="bg-brand text-white hover:bg-brand/90">
                 {creating ? 'Creating…' : 'Create template'}
               </Button>
             </DialogFooter>

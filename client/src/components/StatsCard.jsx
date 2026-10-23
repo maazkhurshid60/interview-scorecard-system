@@ -10,7 +10,7 @@ export default function StatsCard({ label, value, icon: Icon, hint }) {
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-muted-foreground">{label}</span>
-          {Icon && <Icon className="h-5 w-5 text-[#d21e2b]" />}
+          {Icon && <Icon className="h-5 w-5 text-brand" />}
         </div>
         <div className="mt-2 text-2xl font-semibold text-foreground">{value}</div>
         {hint && <div className="mt-1 text-xs text-muted-foreground/70">{hint}</div>}

@@ -13,16 +13,16 @@ const RadioGroupItem = React.forwardRef(({ className, ...props }, ref) => (
   <RadioGroupPrimitive.Item
     ref={ref}
     className={cn(
-      'aspect-square h-4 w-4 rounded-full border border-input text-[#d21e2b] shadow',
-      'focus:outline-none focus-visible:ring-1 focus-visible:ring-[#d21e2b]',
+      'aspect-square h-4 w-4 rounded-full border border-input text-brand shadow',
+      'focus:outline-none focus-visible:ring-1 focus-visible:ring-brand',
       'disabled:cursor-not-allowed disabled:opacity-50',
-      'data-[state=checked]:border-[#d21e2b]',
+      'data-[state=checked]:border-brand',
       className
     )}
     {...props}
   >
     <RadioGroupPrimitive.Indicator className="flex items-center justify-center">
-      <Circle className="h-2 w-2 fill-[#d21e2b] text-[#d21e2b]" />
+      <Circle className="h-2 w-2 fill-brand text-brand" />
     </RadioGroupPrimitive.Indicator>
   </RadioGroupPrimitive.Item>
 ));

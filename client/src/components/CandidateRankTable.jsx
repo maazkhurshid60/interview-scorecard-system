@@ -40,6 +40,7 @@ export default function CandidateRankTable({ ranking, onDecisionRecorded }) {
     const bv = b.weightedTotal ?? -Infinity;
     return sortDesc ? bv - av : av - bv;
   });
+  const shouldScroll = ranking.length > 4;
 
   function openDecisionForm(app) {
     setOpenRowId(app._id);
@@ -119,7 +120,7 @@ export default function CandidateRankTable({ ranking, onDecisionRecorded }) {
           <div className="flex gap-1">
             <button
               type="button" onClick={() => submitDecision(app._id)} disabled={submitting}
-              className="rounded-md bg-[#d21e2b] px-2 py-1 text-xs font-medium text-white hover:bg-[#d21e2b]/90 disabled:opacity-50"
+              className="rounded-md bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand/90 disabled:opacity-50"
             >
               {submitting ? 'Saving...' : 'Confirm'}
             </button>
@@ -136,7 +137,7 @@ export default function CandidateRankTable({ ranking, onDecisionRecorded }) {
     return (
       <button
         type="button" onClick={() => openDecisionForm(app)}
-        className="rounded-md border border-[#d21e2b]/40 bg-white px-2 py-1 text-xs font-medium text-[#d21e2b] hover:bg-[#d21e2b]/5"
+        className="rounded-md border border-brand/40 bg-white px-2 py-1 text-xs font-medium text-brand hover:bg-brand/5"
       >
         Record Decision
       </button>
@@ -146,32 +147,32 @@ export default function CandidateRankTable({ ranking, onDecisionRecorded }) {
   return (
     <>
       {/* md: and up — real table, capped height so 100+ rows don't stretch the page; header stays pinned while rows scroll */}
-      <div className="hidden max-h-[32rem] overflow-x-auto overflow-y-auto md:block">
+      <div className={`hidden overflow-x-auto md:block ${shouldScroll ? 'max-h-[19rem] overflow-y-auto' : ''}`}>
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs uppercase text-gray-400">
-              <th className="sticky top-0 bg-white px-4 py-2">Rank</th>
-              <th className="sticky top-0 bg-white px-4 py-2">Candidate</th>
-              <th className="sticky top-0 cursor-pointer bg-white px-4 py-2" onClick={() => setSortDesc((v) => !v)}>
+            <tr className="border-b border-gray-200 text-center text-xs uppercase text-gray-400">
+              <th className="sticky top-0 bg-white px-4 py-2 text-center">Rank</th>
+              <th className="sticky top-0 bg-white px-4 py-2 text-center">Candidate</th>
+              <th className="sticky top-0 cursor-pointer bg-white px-4 py-2 text-center" onClick={() => setSortDesc((v) => !v)}>
                 Weighted Total {sortDesc ? '↓' : '↑'}
               </th>
-              <th className="sticky top-0 bg-white px-4 py-2">All Gates Passed?</th>
-              <th className="sticky top-0 bg-white px-4 py-2">Disposition</th>
-              <th className="sticky top-0 bg-white px-4 py-2">Final Decision</th>
+              <th className="sticky top-0 bg-white px-4 py-2 text-center">All Gates Passed?</th>
+              <th className="sticky top-0 bg-white px-4 py-2 text-center">Disposition</th>
+              <th className="sticky top-0 bg-white px-4 py-2 text-center">Final Decision</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {sorted.map((app) => (
               <tr key={app._id}>
-                <td className="px-4 py-3 text-gray-500">{app.rank ?? '—'}</td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-2 text-gray-500">{app.rank ?? '—'}</td>
+                <td className="px-4 py-2">
                   <div className="font-medium text-gray-900">{app.candidateId?.name || 'Unknown'}</div>
                   <div className="text-xs text-gray-400">{app.candidateId?.email}</div>
                 </td>
-                <td className="px-4 py-3 font-medium">{formatScore(app.weightedTotal)}</td>
-                <td className="px-4 py-3"><GatesCell app={app} /></td>
-                <td className="px-4 py-3"><DispositionCell app={app} /></td>
-                <td className="px-4 py-3"><DecisionCell app={app} /></td>
+                <td className="px-4 py-2 font-medium">{formatScore(app.weightedTotal)}</td>
+                <td className="px-4 py-2"><GatesCell app={app} /></td>
+                <td className="px-4 py-2"><DispositionCell app={app} /></td>
+                <td className="px-4 py-2"><DecisionCell app={app} /></td>
               </tr>
             ))}
           </tbody>
@@ -187,7 +188,7 @@ export default function CandidateRankTable({ ranking, onDecisionRecorded }) {
         >
           Sort by weighted total {sortDesc ? '↓' : '↑'}
         </button>
-        <div className="max-h-[32rem] space-y-3 overflow-y-auto">
+        <div className={`space-y-3 ${shouldScroll ? 'max-h-[38rem] overflow-y-auto pr-2' : ''}`}>
           {sorted.map((app) => (
             <div key={app._id} className="rounded-lg border border-gray-200 bg-white p-4">
               <div className="flex items-start justify-between gap-3">

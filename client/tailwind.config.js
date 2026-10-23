@@ -7,6 +7,15 @@ export default {
   theme: {
     extend: {
       colors: {
+        // OWNERS TALENT logo colours. Change the theme here (and the HSL variables in src/index.css).
+        brand: {
+          DEFAULT: '#b11d67',   // magenta circle: buttons, links, active menu item
+          dark: '#8f1654',      // hover / pressed
+          light: '#fbeef5',     // soft tint for panels and highlights
+          yellow: '#ffca00',    // figures in the logo: accents only (too light for text on white)
+          'yellow-dark': '#d5a800',
+          ink: '#232323',       // wordmark: main text colour
+        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

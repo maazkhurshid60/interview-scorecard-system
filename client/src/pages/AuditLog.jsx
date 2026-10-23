@@ -1,9 +1,10 @@
 import { Fragment, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { ArrowLeft, Calendar as CalendarIcon, ScrollText, SlidersHorizontal, X } from 'lucide-react';
+import { Calendar as CalendarIcon, ScrollText, SlidersHorizontal, X } from 'lucide-react';
 import api from '../hooks/useApi';
+import { useAuth } from '../context/AuthContext';
+import { canListUsers } from '../lib/permissions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -20,12 +21,14 @@ const ACTIONS = [
   'score_override', 'score_approve', 'question_edit', 'stage_toggle',
   'weight_change', 'disposition_change', 'final_decision',
   'provider_change', 'key_change', 'transcript_upload', 'consent_capture',
-  'retention_purge',
+  'retention_purge', 'requisition_status_change', 'candidate_update',
+  'requisition_duplicated', 'offer_letter_sent', 'requisition_deleted',
 ];
 
 /** Actions that change a hiring outcome get visual weight; the rest stay neutral. */
 const ACTION_TONE = {
-  final_decision: 'bg-[#d21e2b]/10 text-[#d21e2b] hover:bg-[#d21e2b]/10',
+  final_decision: 'bg-brand/10 text-brand hover:bg-brand/10',
+  requisition_deleted: 'bg-red-100 text-red-800 hover:bg-red-100',
   disposition_change: 'bg-amber-100 text-amber-800 hover:bg-amber-100',
   score_override: 'bg-amber-100 text-amber-800 hover:bg-amber-100',
   score_approve: 'bg-green-100 text-green-800 hover:bg-green-100',
@@ -37,8 +40,8 @@ const EMPTY_FILTERS = { requisitionId: '', applicationId: '', userId: '', action
 const ALL = '__all__'; // Radix Select forbids an empty-string item value
 
 export default function AuditLog() {
-  const navigate = useNavigate();
-  const [canGoBack] = useState(() => typeof window !== 'undefined' && window.history.state?.idx > 0);
+  const { user } = useAuth();
+  const showUserFilter = canListUsers(user); // the users list is owner/admin only on the server
   const [requisitions, setRequisitions] = useState([]);
   const [users, setUsers] = useState([]);
   const [applicationOptions, setApplicationOptions] = useState([]);
@@ -70,7 +73,7 @@ export default function AuditLog() {
 
   useEffect(() => {
     api.get('/requisitions').then((res) => setRequisitions(res.data.requisitions));
-    api.get('/users').then((res) => setUsers(res.data.users));
+    if (showUserFilter) api.get('/users').then((res) => setUsers(res.data.users));
     load(1);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -152,11 +155,11 @@ export default function AuditLog() {
     <div>
       {/* ---------- header ---------- */}
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="icon" onClick={() => navigate(-1)} disabled={!canGoBack}>
-          <ArrowLeft />
-        </Button>
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Audit Log</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <ScrollText className="h-7 w-7 text-brand" />
+            Audit Log
+          </h1>
           <p className="text-sm text-muted-foreground">
             {loading ? 'Loading…' : `${total.toLocaleString()} entr${total === 1 ? 'y' : 'ies'}${activeCount ? ' matching filters' : ''}`}
           </p>
@@ -184,11 +187,11 @@ export default function AuditLog() {
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Requisition</Label>
+              <Label className="text-xs text-muted-foreground">Job Opening</Label>
               <Select value={filters.requisitionId || ALL} onValueChange={handleRequisitionFilterChange}>
-                <SelectTrigger><SelectValue placeholder="All requisitions" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="All Job Openings" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>All requisitions</SelectItem>
+                  <SelectItem value={ALL}>All Job Openings</SelectItem>
                   {requisitions.map((r) => <SelectItem key={r._id} value={r._id}>{r.title}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -224,16 +227,18 @@ export default function AuditLog() {
               </Select>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">User</Label>
-              <Select value={filters.userId || ALL} onValueChange={(v) => updateFilter('userId', v)}>
-                <SelectTrigger><SelectValue placeholder="All users" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All users</SelectItem>
-                  {users.map((u) => <SelectItem key={u._id} value={u._id}>{u.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            {showUserFilter && (
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">User</Label>
+                <Select value={filters.userId || ALL} onValueChange={(v) => updateFilter('userId', v)}>
+                  <SelectTrigger><SelectValue placeholder="All users" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>All users</SelectItem>
+                    {users.map((u) => <SelectItem key={u._id} value={u._id}>{u.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Date range</Label>
@@ -262,7 +267,7 @@ export default function AuditLog() {
             <div className="flex items-end">
               <Button
                 onClick={() => load(1)}
-                className="w-full bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90"
+                className="w-full bg-brand text-white hover:bg-brand/90"
               >
                 Apply filters
               </Button>

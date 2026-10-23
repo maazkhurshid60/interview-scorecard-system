@@ -19,14 +19,28 @@ const interviewSchema = new mongoose.Schema({
   meetingMode: { type: String, enum: MEETING_MODES, default: 'online' },
   provider: { type: String, enum: TRANSCRIPT_PROVIDERS, default: 'google_meet' },
   meetingUri: String,          // Created via provider API, or pasted by HR
+  calendarEventId: String,
+  meetingStart: Date,
+  meetingEnd: Date,
   conferenceId: String,        // Provider's record id — maps transcript back to THIS interview
   designatedScorerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  candidateAvailability: {
+    preferredDate: String,
+    startTime: String,
+    endTime: String,
+    notes: String,
+    submittedAt: Date,
+  },
 
   consentObtained: { type: Boolean, default: false },   // HR confirms candidate consent before recording
   transcriptText: String,      // Fetched or manually uploaded
   transcriptStatus: { type: String, enum: TRANSCRIPT_STATUS, default: 'none' },
-  artifactFileUrl: String,     // Cloudinary secure_url — for task_performance / resume_screen stages
-  artifactFilePublicId: String, // Cloudinary public_id — needed to delete the file on retention purge
+  artifactFileUrl: String,     // Cloudinary secure_url, or s3://bucket/key for a private S3 file — for task_performance / resume_screen stages
+  artifactFilePublicId: String, // Cloudinary public_id, or "s3:<key>" — needed to delete the file on retention purge
+  artifactFileName: String,    // Original file name
+  artifactFileSize: Number,    // Size in bytes (before any compression)
+  artifactFileMimeType: String, // e.g. application/pdf
 
   scores: [scoreSchema],
   stageAverage: Number,        // From approvedScore values

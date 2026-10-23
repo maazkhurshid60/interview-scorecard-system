@@ -1,7 +1,7 @@
 {
-  "name": "interview-scorecard-system",
+  "name": "owners-talent",
   "version": "1.0.0",
-  "description": "Internal AI-assisted, stage-gated interview scorecard system for Red Star Technologies HR.",
+  "description": "OWNERS TALENT: internal AI-assisted, stage-gated hiring platform for Red Star Technologies HR.",
   "private": true,
   "scripts": {
     "server": "cd server && node index.js",

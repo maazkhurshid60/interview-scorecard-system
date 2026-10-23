@@ -3,7 +3,7 @@ const Requisition = require('../models/Requisition');
 const Interview = require('../models/Interview');
 const Setting = require('../models/Setting');
 const AuditLog = require('../models/AuditLog');
-const { destroyFile } = require('../config/cloudinary');
+const { deleteFile } = require('./fileStorage');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 let intervalHandle = null;
@@ -27,15 +27,18 @@ async function getRetentionDays() {
 async function purgeInterview(interview) {
   if (interview.artifactFilePublicId) {
     try {
-      await destroyFile(interview.artifactFilePublicId);
+      await deleteFile(interview.artifactFilePublicId);
     } catch (err) {
-      logger.warn(`[RetentionService] Could not delete Cloudinary file ${interview.artifactFilePublicId}: ${err.message}`);
+      logger.warn(`[RetentionService] Could not delete stored file ${interview.artifactFilePublicId}: ${err.message}`);
     }
   }
 
   interview.transcriptText = undefined;
   interview.artifactFileUrl = undefined;
   interview.artifactFilePublicId = undefined;
+  interview.artifactFileName = undefined;
+  interview.artifactFileSize = undefined;
+  interview.artifactFileMimeType = undefined;
   interview.scores.forEach((score) => { score.aiJustification = undefined; });
   interview.markModified('scores');
 

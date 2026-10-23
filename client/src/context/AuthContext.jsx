@@ -1,39 +1,44 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import api, { TOKEN_STORAGE_KEY } from '../hooks/useApi';
+import api, { readHint, setSessionHint, clearSessionHint } from '../hooks/useApi';
 
 const AuthContext = createContext(null);
 
 /**
- * Holds the current session (user + JWT) for the whole app. Persists the
- * token to localStorage so a page refresh doesn't log the user out; on
- * mount, validates any stored token against GET /api/auth/me so a stale or
- * revoked token doesn't silently pretend to be a valid session.
+ * Holds the current user for the whole app. The login itself is kept in
+ * HTTP-only cookies by the API, not in the browser's storage: on load, if this
+ * browser has signed in before, GET /api/auth/me asks the API who is signed in
+ * (renewing the session silently if the short-lived cookie has expired). Public
+ * pages for candidates make no such request.
  */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (!token) {
+    if (!readHint()) {
       setLoading(false);
       return;
     }
-    api.get('/auth/me')
+    api.get('/auth/me', { skipAuthRedirect: true })
       .then((res) => setUser(res.data.user))
-      .catch(() => localStorage.removeItem(TOKEN_STORAGE_KEY))
+      .catch(() => clearSessionHint())
       .finally(() => setLoading(false));
   }, []);
 
   async function login(email, password) {
     const res = await api.post('/auth/login', { email, password });
-    localStorage.setItem(TOKEN_STORAGE_KEY, res.data.token);
+    setSessionHint();
     setUser(res.data.user);
     return res.data.user;
   }
 
-  function logout() {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  async function logout() {
+    try {
+      await api.post('/auth/logout', null, { skipAuthRedirect: true });
+    } catch {
+      // Even if the API cannot be reached, sign out here.
+    }
+    clearSessionHint();
     setUser(null);
   }
 

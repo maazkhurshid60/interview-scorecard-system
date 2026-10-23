@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const {
-  ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError,
+  ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError, OfferLetterError,
 } = require('../utils/errors');
 
 /**
@@ -44,6 +44,9 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
   }
   if (err instanceof ValidationError) {
     return res.status(err.statusCode).json({ ...base, error: err.errorCode, fields: err.fields, message: err.message });
+  }
+  if (err instanceof OfferLetterError) {
+    return res.status(err.statusCode).json({ ...base, error: err.errorCode, message: err.message });
   }
   if (err instanceof ServiceError) {
     return res.status(err.statusCode).json({ ...base, error: err.errorCode, service: err.service, message: 'Could not reach an external service. Please try again.' });

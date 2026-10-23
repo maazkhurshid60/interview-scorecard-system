@@ -75,6 +75,20 @@ class ValidationError extends Error {
   }
 }
 
+/**
+ * An offer letter could not be made from its template (template file missing,
+ * LibreOffice unavailable, conversion failed). The message is written for staff,
+ * so it is shown as it is, even for a 5xx.
+ */
+class OfferLetterError extends Error {
+  constructor(message, statusCode = 500) {
+    super(message);
+    this.name = 'OfferLetterError';
+    this.errorCode = 'OFFER_LETTER_FAILED';
+    this.statusCode = statusCode;
+  }
+}
+
 module.exports = {
-  ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError,
+  ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError, OfferLetterError,
 };

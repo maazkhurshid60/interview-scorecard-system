@@ -20,6 +20,9 @@ client/build/
 .DS_Store
 Thumbs.db
 
+# Offer letter Word templates (real company letters, not for the repo)
+server/templates/offer-letters/
+
 # Local Claude Code tool state (not project-relevant)
 .claude/
 

@@ -10,15 +10,39 @@ const { ApiKeyError, SpendCapError } = require('../utils/errors');
  */
 const SENIOR_ROLE_PATTERN = /\b(senior|chief executive|chief|director|\bvp\b|vice president|head of|president|\bceo\b|\bcfo\b|\bcoo\b|\bcto\b)\b/i;
 
+// const SYSTEM_PROMPT = `You are an expert interview designer helping an internal HR team build a structured, role-specific interview scorecard.
+
+// For each stage provided, generate 5-8 attributes to evaluate a candidate against. Each attribute must have:
+// - "name": a short label (e.g. "Quick Discovery")
+// - "question": the actual question an interviewer should ask
+// - "anchor5": what a score of 5 looks like — concrete, OBSERVABLE behavior (this is a Behaviorally Anchored Rating Scale anchor, not a vague trait)
+// - "redFlags": what a score of 1-2 looks like — concrete, observable red-flag behavior
+
+// Tailor every attribute to the ACTUAL role described in the job description. A "Closer" role gets discovery/objection-handling/closing attributes; an accountant role gets attention-to-detail/compliance/reconciliation attributes. Never reuse generic attributes across unrelated roles.
+
+// Respond ONLY with valid JSON matching this exact shape. No preamble, no markdown fences, no explanation:
+// {
+//   "stages": [
+//     { "stageKey": "hr_screen", "attributes": [
+//         { "name": "...", "question": "...", "anchor5": "...", "redFlags": "..." }
+//     ]}
+//   ]
+// }`;
+
+
+
 const SYSTEM_PROMPT = `You are an expert interview designer helping an internal HR team build a structured, role-specific interview scorecard.
 
-For each stage provided, generate 5-8 attributes to evaluate a candidate against. Each attribute must have:
-- "name": a short label (e.g. "Quick Discovery")
-- "question": the actual question an interviewer should ask
-- "anchor5": what a score of 5 looks like — concrete, OBSERVABLE behavior (this is a Behaviorally Anchored Rating Scale anchor, not a vague trait)
-- "redFlags": what a score of 1-2 looks like — concrete, observable red-flag behavior
+For each stage provided:
+- For "resume_screen" stage ONLY: Generate EXACTLY 1 comprehensive evaluation attribute named "Overall Resume & Qualification Evaluation" assessing whether the candidate's CV meets the Job Description and Initial Screening Criteria. Do not use the application questionnaire for this stage.
+- For "hr_screen" stage: return an empty attributes array. Its scorecard is built directly from the requisition questionnaire and each question's ideal answer.
+- For all other interview stages (technical, simulation, final, etc.): Generate 5-8 role-specific interview questions/attributes to evaluate the candidate during that interview call.
 
-Tailor every attribute to the ACTUAL role described in the job description. A "Closer" role gets discovery/objection-handling/closing attributes; an accountant role gets attention-to-detail/compliance/reconciliation attributes. Never reuse generic attributes across unrelated roles.
+Each attribute must have:
+- "name": a short label
+- "question": the actual evaluation question
+- "anchor5": what a score of 5 looks like — concrete, OBSERVABLE behavior or evidence
+- "redFlags": what a score of 1-2 looks like — concrete red flags
 
 Respond ONLY with valid JSON matching this exact shape. No preamble, no markdown fences, no explanation:
 {
@@ -39,13 +63,7 @@ function buildEmptySkeleton(scoredStages) {
   return { stages: scoredStages.map((s) => ({ stageKey: s.key, attributes: [] })) };
 }
 
-/** Stages per Claude call. A single call covering every stage at once risks the
- * response getting cut off mid-JSON on larger pipelines (proven at 10 stages —
- * output hit the token cap and failed to parse even after the retry nudge,
- * silently losing every attribute for every stage). Chunking keeps each
- * call's expected output comfortably within any reasonable token cap
- * regardless of how many stages a pipeline enables, and isolates a failure to
- * just that chunk instead of the whole scorecard. */
+/** Stages per Claude call. */
 const STAGES_PER_CALL = 3;
 
 function chunk(array, size) {
@@ -57,30 +75,10 @@ function chunk(array, size) {
 /**
  * Generates a role-specific scorecard (questions + BARS attributes) from a
  * requisition's Job Description via Claude.
- *
- * Input: requisition.jobDescription + the requisition's ENABLED stages whose
- * inputType is 'transcript', 'artifact', or 'pass_fail' (status_only stages
- * have no rubric to generate — scoringEngine gives them no gate/weight at
- * all, but pass_fail stages DO need a rubric: scoringEngine expects them to
- * produce a real stageAverage/gate result, just excluded from the weighted
- * total). Uses CLAUDE_MODEL_DEFAULT normally, CLAUDE_MODEL_DEEP
- * when the title/JD reads as a senior/executive role.
- *
- * Calls Claude once per STAGES_PER_CALL-sized batch of stages (see above) and
- * merges the results. A batch that fails falls back to an empty skeleton for
- * just that batch — other, successfully-generated batches are kept.
- *
- * The returned attributes do NOT include attributeId — per spec, the calling
- * controller assigns a stable attributeId to each attribute after generation.
- *
- * @param {{title:string, jobDescription:string, stages:Array}} requisition
- * @returns {Promise<{stages: Array<{stageKey:string, attributes:Array}>}>}
- * @throws {ApiKeyError} if the Claude key is invalid — never silently swallowed.
- * @throws {SpendCapError} if the monthly AI spend cap is already reached.
  */
 async function generateScorecard(requisition) {
   const scoredStages = (requisition.stages || []).filter(
-    (s) => s.enabled && s.inputType !== 'status_only'
+    (s) => s.enabled && !['status_only', 'pass_fail'].includes(s.inputType)
   );
 
   if (scoredStages.length === 0) {
@@ -90,10 +88,34 @@ async function generateScorecard(requisition) {
 
   const isSeniorRole = SENIOR_ROLE_PATTERN.test(requisition.title || '') || SENIOR_ROLE_PATTERN.test((requisition.jobDescription || '').slice(0, 500));
   const models = await getModelIds();
-  const model = isSeniorRole ? models.deep : models.default;
+  //const model = isSeniorRole ? models.deep : models.default;
+  const model = models.default;
 
   const batches = chunk(scoredStages, STAGES_PER_CALL);
   logger.info(`[QuestionGenerator] Generating scorecard for "${requisition.title}" model=${model} stages=${scoredStages.map((s) => s.key).join(',')} batches=${batches.length}`);
+
+  const hasQuestionnaire = Array.isArray(requisition.questionnaire) && requisition.questionnaire.length > 0;
+  const questionnaireBlock = hasQuestionnaire
+    ? `\nApplication Questionnaire Items:\n${requisition.questionnaire.map((q) => {
+      if (typeof q === 'string') return `- ${q}`;
+      const idealStr = q.idealAnswer ? ` | Ideal Answer: ${q.idealAnswer}` : '';
+      return `- Question: ${q.question}${idealStr}`;
+    }).join('\n')}\n`
+    : '';
+
+  const hasCriteria = Array.isArray(requisition.initialScreeningCriteria)
+    ? requisition.initialScreeningCriteria.length > 0
+    : Boolean(requisition.initialScreeningCriteria && requisition.initialScreeningCriteria.trim());
+
+  const criteriaBlock = hasCriteria
+    ? `\nInitial Screening Criteria:\n${Array.isArray(requisition.initialScreeningCriteria)
+      ? requisition.initialScreeningCriteria.map((c) => {
+        if (typeof c === 'string') return `- ${c}`;
+        return `- Criteria: ${c.criteria}${c.requirement ? ` | Requirement: ${c.requirement}` : ''}`;
+      }).join('\n')
+      : requisition.initialScreeningCriteria
+    }\n`
+    : '';
 
   const resultStages = [];
   for (const batch of batches) {
@@ -101,9 +123,9 @@ async function generateScorecard(requisition) {
 
 Job Description:
 ${requisition.jobDescription}
-
+${criteriaBlock}${questionnaireBlock}
 Stages to generate attributes for:
-${batch.map((s) => `- stageKey: "${s.key}" (${s.label})`).join('\n')}`;
+${batch.map((s) => `- stageKey: "${s.key}" (${s.label}, inputType: ${s.inputType})`).join('\n')}`;
 
     try {
       // ~250 tokens per attribute (name/question/anchor5/redFlags) x up to 8
@@ -129,6 +151,22 @@ ${batch.map((s) => `- stageKey: "${s.key}" (${s.label})`).join('\n')}`;
       resultStages.push(...buildEmptySkeleton(batch).stages);
     }
   }
+
+  ['hr_screen', 'hr_interview'].forEach((stageKey) => {
+    const stageObj = resultStages.find((stage) => stage.stageKey === stageKey);
+    if (stageObj && hasQuestionnaire) {
+      stageObj.attributes = requisition.questionnaire.map((item, index) => {
+        const question = typeof item === 'string' ? item : item.question;
+        const idealAnswer = typeof item === 'object' ? item.idealAnswer : '';
+        return {
+          name: `Question ${index + 1}`,
+          question,
+          anchor5: idealAnswer || 'Fully addresses the question with a relevant, specific answer.',
+          redFlags: 'Does not answer the question, or provides an unclear or irrelevant response.',
+        };
+      });
+    }
+  });
 
   return { stages: resultStages };
 }

@@ -48,6 +48,11 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
   }
 
   function removeAttribute(stageIndex, attrIndex) {
+    const stage = stages[stageIndex];
+    if (stage && stage.attributes.length <= 1) {
+      toast.error('Each stage must have at least one question.');
+      return;
+    }
     setStages((prev) => {
       const next = [...prev];
       next[stageIndex] = { ...next[stageIndex], attributes: next[stageIndex].attributes.filter((_, i) => i !== attrIndex) };
@@ -56,6 +61,11 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
   }
 
   async function handleSave() {
+    const hasEmptyStage = stages.some((s) => !s.attributes || s.attributes.length === 0);
+    if (hasEmptyStage) {
+      toast.error('Each stage must have at least one question.');
+      return;
+    }
     const hasEmptyName = stages.some((s) => s.attributes.some((a) => !a.name?.trim()));
     if (hasEmptyName) {
       toast.error('Every attribute needs a name before saving.');
@@ -98,8 +108,9 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
                         <button
                           type="button"
                           onClick={() => removeAttribute(stageIndex, attrIndex)}
-                          className="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                          title="Remove attribute"
+                          disabled={stage.attributes.length <= 1}
+                          className="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:cursor-not-allowed"
+                          title={stage.attributes.length <= 1 ? "Each stage must have at least one question" : "Remove attribute"}
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -111,8 +122,8 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
                           <textarea
                             value={attr.question || ''}
                             onChange={(e) => updateAttribute(stageIndex, attrIndex, 'question', e.target.value)}
-                            rows={2}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-gray-500 focus:outline-none"
+                            rows={6}
+                            className="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-xs focus:border-gray-500 focus:outline-none overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                           />
                         </div>
                         <div>
@@ -120,8 +131,8 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
                           <textarea
                             value={attr.anchor5 || ''}
                             onChange={(e) => updateAttribute(stageIndex, attrIndex, 'anchor5', e.target.value)}
-                            rows={2}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-gray-500 focus:outline-none"
+                            rows={6}
+                            className="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-xs focus:border-gray-500 focus:outline-none overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                           />
                         </div>
                         <div>
@@ -129,8 +140,8 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
                           <textarea
                             value={attr.redFlags || ''}
                             onChange={(e) => updateAttribute(stageIndex, attrIndex, 'redFlags', e.target.value)}
-                            rows={2}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-gray-500 focus:outline-none"
+                            rows={6}
+                            className="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-xs focus:border-gray-500 focus:outline-none overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                           />
                         </div>
                       </div>
@@ -156,7 +167,7 @@ export default function ScorecardEditor({ scorecard, stageLabels, onSave, saving
         type="button"
         onClick={handleSave}
         disabled={saving}
-        className="rounded-md bg-[#d21e2b] px-4 py-2 text-sm font-medium text-white hover:bg-[#d21e2b]/90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {saving ? 'Saving...' : 'Save Scorecard'}
       </button>

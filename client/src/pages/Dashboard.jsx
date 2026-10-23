@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Briefcase, Users, DollarSign, Activity, Plus, ChevronRight, UserPlus,
+  Briefcase, Users, DollarSign, Activity, Plus, ChevronRight, UserPlus, ArrowUpRight, LayoutDashboard,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import api from '../hooks/useApi';
+import { useAuth } from '../context/AuthContext';
+import { canSeeAiSpend, canViewAuditLog, canManageRequisitions, canManageCandidates } from '../lib/permissions';
+import { fetchRequisitionsList, fetchSettingsList } from '../hooks/queries';
 import StatsCard from '../components/StatsCard';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -16,8 +19,9 @@ dayjs.extend(relativeTime);
 
 const STATUS_BADGE = {
   open: 'bg-green-100 text-green-800 hover:bg-green-100',
-  on_hold: 'bg-amber-100 text-amber-800 hover:bg-amber-100',
+  paused: 'bg-amber-100 text-amber-800 hover:bg-amber-100',
   closed: 'bg-gray-100 text-gray-600 hover:bg-gray-100',
+  draft: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
 };
 
 /** Reads a scalar Setting out of the /settings payload, tolerating a missing row. */
@@ -32,6 +36,11 @@ function settingValue(settings, key, fallback) {
  * against the configured cap, and the most recent audit activity.
  */
 export default function Dashboard() {
+  const { user } = useAuth();
+  const showAiSpend = canSeeAiSpend(user); // AI spend and the cap are owner/admin only; asking for them as anyone else is refused
+  const canViewAudit = canViewAuditLog(user); // Audit log is owner/admin only
+  const canManageReqs = canManageRequisitions(user);
+  const canManageCands = canManageCandidates(user);
   const [loading, setLoading] = useState(true);
   const [openRequisitions, setOpenRequisitions] = useState([]);
   const [candidatesInFlight, setCandidatesInFlight] = useState(0);
@@ -46,10 +55,10 @@ export default function Dashboard() {
     async function load() {
       try {
         const [requisitionsRes, usageRes, auditRes, settingsRes] = await Promise.all([
-          api.get('/requisitions', { params: { status: 'open' } }),
-          api.get('/settings/ai-usage'),
-          api.get('/audit', { params: { limit: 6 } }),
-          api.get('/settings'),
+          fetchRequisitionsList('open'), // from the shared cache when it is still fresh
+          showAiSpend ? api.get('/settings/ai-usage') : null,
+          canViewAudit ? api.get('/audit', { params: { limit: 6 } }) : null,
+          showAiSpend ? fetchSettingsList() : null,
         ]);
         if (cancelled) return;
 
@@ -63,18 +72,24 @@ export default function Dashboard() {
           requisitions.reduce((sum, r) => sum + (r.candidateStats?.inProgress || 0), 0)
         );
 
-        const currentMonthKey = dayjs().format('YYYY-MM');
-        setSpendThisMonth(
-          usageRes.data.rows
-            .filter((row) => row.month === currentMonthKey)
-            .reduce((sum, row) => sum + row.totalCostUsd, 0)
-        );
+        if (usageRes) {
+          const currentMonthKey = dayjs().format('YYYY-MM');
+          setSpendThisMonth(
+            usageRes.data.rows
+              .filter((row) => row.month === currentMonthKey)
+              .reduce((sum, row) => sum + row.totalCostUsd, 0)
+          );
+        }
 
-        setRecentActivity(auditRes.data.entries);
-        setAuditTotal(auditRes.data.total ?? auditRes.data.entries.length);
+        if (canViewAudit && auditRes?.data) {
+          setRecentActivity(auditRes.data.entries || []);
+          setAuditTotal(auditRes.data.total ?? auditRes.data.entries?.length ?? 0);
+        }
 
-        const cap = Number(settingValue(settingsRes.data.settings, 'monthlyAiSpendCapUsd', NaN));
-        setSpendCap(Number.isFinite(cap) ? cap : null);
+        if (settingsRes) {
+          const cap = Number(settingValue(settingsRes.data.settings, 'monthlyAiSpendCapUsd', NaN));
+          setSpendCap(Number.isFinite(cap) ? cap : null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -82,7 +97,7 @@ export default function Dashboard() {
 
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [showAiSpend]);
 
   const totalCandidates = openRequisitions.reduce((sum, r) => sum + (r.candidateStats?.total || 0), 0);
   const capHint = spendCap ? `of a $${spendCap} monthly cap` : undefined;
@@ -92,24 +107,31 @@ export default function Dashboard() {
       {/* ---------- header ---------- */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Dashboard</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <LayoutDashboard className="h-7 w-7 text-brand" />
+            Dashboard
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Overview of hiring activity across all open requisitions.
+            Overview of hiring activity across all active job openings.
           </p>
         </div>
         <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link to="/candidates">
-              <UserPlus />
-              Add candidate
-            </Link>
-          </Button>
-          <Button asChild className="bg-[#d21e2b] text-white hover:bg-[#d21e2b]/90">
-            <Link to="/requisitions">
-              <Plus />
-              New requisition
-            </Link>
-          </Button>
+          {canManageCands && (
+            <Button asChild variant="outline">
+              <Link to="/candidates">
+                <UserPlus />
+                Add candidate
+              </Link>
+            </Button>
+          )}
+          {canManageReqs && (
+            <Button asChild className="bg-brand text-white hover:bg-brand/90">
+              <Link to="/requisitions">
+                <Plus />
+                New job opening
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -127,34 +149,38 @@ export default function Dashboard() {
           ))}
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className={`mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 ${showAiSpend ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
           <StatsCard
-            label="Open Requisitions" value={openRequisitions.length} icon={Briefcase}
+            label="Active Job Openings" value={openRequisitions.length} icon={Briefcase}
             hint={totalCandidates > 0 ? `${totalCandidates} candidates attached` : 'No candidates attached yet'}
           />
           <StatsCard
-            label="Candidates in Flight" value={candidatesInFlight} icon={Users}
+            label="Candidates in Progress" value={candidatesInFlight} icon={Users}
             hint="Active applications, no final decision yet"
           />
-          <StatsCard
-            label="AI Spend This Month" value={`$${spendThisMonth.toFixed(2)}`} icon={DollarSign}
-            hint={capHint}
-          />
-          <StatsCard
-            label="Audit Entries" value={auditTotal} icon={Activity}
-            hint="Every score, override and decision on record"
-          />
+          {showAiSpend && (
+            <StatsCard
+              label="AI Spend This Month" value={`$${spendThisMonth.toFixed(2)}`} icon={DollarSign}
+              hint={capHint}
+            />
+          )}
+          {canViewAudit && (
+            <StatsCard
+              label="Audit Entries" value={auditTotal} icon={Activity}
+              hint="Every score, override and decision on record"
+            />
+          )}
         </div>
       )}
 
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className={`mt-8 grid grid-cols-1 gap-6 ${canViewAudit ? 'lg:grid-cols-2' : ''}`}>
         {/* ---------- open requisitions ---------- */}
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0">
-            <CardTitle>Open Requisitions</CardTitle>
-            {!loading && openRequisitions.length > 5 && (
-              <Link to="/requisitions" className="text-xs font-medium text-[#d21e2b] hover:underline">
-                View all {openRequisitions.length}
+            <CardTitle>Job Openings</CardTitle>
+            {!loading && (
+              <Link to="/requisitions" className="text-xs font-semibold text-brand hover:underline flex items-center gap-0.5">
+                View all ({openRequisitions.length}) <ArrowUpRight className="h-3.5 w-3.5" />
               </Link>
             )}
           </CardHeader>
@@ -164,13 +190,13 @@ export default function Dashboard() {
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="flex items-center justify-between">
                     <Skeleton className="h-4 w-44" />
-                    <Skeleton className="h-5 w-14 rounded-full" />
+                    <Skeleton className="h-5 w-16 rounded-full" />
                   </div>
                 ))}
               </div>
             ) : openRequisitions.length === 0 ? (
               <div className="px-6 pb-8 pt-2 text-center">
-                <p className="text-sm text-muted-foreground">No open requisitions yet.</p>
+                <p className="text-sm text-muted-foreground">No job opening yet.</p>
                 <Button asChild variant="outline" size="sm" className="mt-3">
                   <Link to="/requisitions">Create the first one</Link>
                 </Button>
@@ -183,7 +209,7 @@ export default function Dashboard() {
                     <li key={r._id}>
                       <Link
                         to={`/requisitions/${r._id}`}
-                        className="flex items-center justify-between gap-3 px-6 py-3 transition-colors hover:bg-[#d21e2b]/5"
+                        className="flex items-center justify-between gap-3 px-6 py-3 transition-colors hover:bg-brand/5"
                       >
                         <div className="min-w-0">
                           <div className="truncate text-sm font-medium text-foreground">{r.title}</div>
@@ -209,15 +235,16 @@ export default function Dashboard() {
         </Card>
 
         {/* ---------- recent activity ---------- */}
-        <Card>
-          <CardHeader className="flex-row items-center justify-between space-y-0">
-            <CardTitle>Recent Activity</CardTitle>
-            {!loading && recentActivity.length > 0 && (
-              <Link to="/audit-log" className="text-xs font-medium text-[#d21e2b] hover:underline">
-                View audit log
-              </Link>
-            )}
-          </CardHeader>
+        {canViewAudit && (
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>Recent Activity</CardTitle>
+              {!loading && (
+                <Link to="/audit-log" className="text-xs font-semibold text-brand hover:underline flex items-center gap-0.5">
+                  View audit log <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              )}
+            </CardHeader>
           <CardContent className="p-0">
             {loading ? (
               <div className="space-y-4 px-6 pb-6">
@@ -255,7 +282,8 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
-      </div>
+      )}
     </div>
-  );
+  </div>
+);
 }

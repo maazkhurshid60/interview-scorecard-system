@@ -4,6 +4,29 @@ const logger = require('../utils/logger');
 const { asyncHandler, normalizeWeights } = require('../utils/helpers');
 const { ValidationError } = require('../utils/errors');
 
+const REQUIRED_STAGE_KEYS = ['resume_screen', 'hr_screen'];
+
+/** Ensures every pipeline contains and enables the baseline screening stages. */
+function assertRequiredStages(stages) {
+  const missingOrDisabled = REQUIRED_STAGE_KEYS.filter((key) => {
+    const stage = stages.find((item) => item.key === key);
+    return !stage || !stage.enabled;
+  });
+  if (missingOrDisabled.length > 0) {
+    throw new ValidationError(
+      ['stages'],
+      'Résumé Screen and HR Screen are required stages and must remain enabled.'
+    );
+  }
+}
+
+/** Pins the required stages to positions 1 and 2, preserving the order of all others. */
+function orderRequiredStages(stages) {
+  const required = REQUIRED_STAGE_KEYS.map((key) => stages.find((stage) => stage.key === key));
+  const otherStages = stages.filter((stage) => !REQUIRED_STAGE_KEYS.includes(stage.key));
+  return [...required, ...otherStages].map((stage, index) => ({ ...stage, order: index + 1 }));
+}
+
 /**
  * Rebuilds the template's free-text description as a live summary of its
  * currently enabled, scored stages — e.g. "HR Screen (22%) -> Technical/Ops
@@ -106,12 +129,14 @@ const create = asyncHandler(async (req, res) => {
   if (!name || !Array.isArray(stages) || stages.length === 0) {
     throw new ValidationError(['name', 'stages'], 'name and a non-empty stages array are required.');
   }
+  assertRequiredStages(stages);
   // Same rule as update(): in auto mode the even split IS the weighting.
   // Without this, creating a template whose stages carry uneven seed weights
   // would leave some enabled scored stages stranded at 0% — normalizing alone
   // can never lift a zero.
   const autoMode = autoWeights === undefined ? true : !!autoWeights;
-  const normalizedStages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(stages) : stages);
+  const orderedStages = orderRequiredStages(stages);
+  const normalizedStages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(orderedStages) : orderedStages);
   const template = await PipelineTemplate.create({
     name, description, stages: normalizedStages, autoWeights: autoMode,
   });
@@ -126,7 +151,7 @@ const create = asyncHandler(async (req, res) => {
  */
 const update = asyncHandler(async (req, res) => {
   const template = await PipelineTemplate.findById(req.params.id);
-  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Pipeline template not found.' });
+  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
 
   const { name, description, stages, autoWeights } = req.body;
   if (name !== undefined) template.name = name;
@@ -137,6 +162,7 @@ const update = asyncHandler(async (req, res) => {
   const autoMode = template.autoWeights !== false;
 
   if (Array.isArray(stages)) {
+    assertRequiredStages(stages);
     const oldEnabled = {};
     const oldWeights = {};
     template.stages.forEach((s) => { oldEnabled[s.key] = s.enabled; oldWeights[s.key] = s.weight; });
@@ -147,7 +173,8 @@ const update = asyncHandler(async (req, res) => {
     // posted — stale zeros, a brand-new stage key, or an unchanged enabled set,
     // none of which a toggle-only check would catch. Manual mode leaves the
     // admin's numbers alone and merely normalizes them to 100%.
-    template.stages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(stages) : stages);
+    const orderedStages = orderRequiredStages(stages);
+    template.stages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(orderedStages) : orderedStages);
     template.description = describeTemplateStages(template.stages);
 
     const enabledChanged = stages.some((s) => oldEnabled[s.key] !== undefined && oldEnabled[s.key] !== s.enabled);
@@ -158,14 +185,14 @@ const update = asyncHandler(async (req, res) => {
       await AuditLog.create({
         action: 'stage_toggle', userId: req.user._id, targetType: 'pipelineTemplate', targetId: template._id.toString(),
         oldValue: oldEnabled, newValue: Object.fromEntries(template.stages.map((s) => [s.key, s.enabled])),
-        reason: 'Stage enabled/disabled via pipeline template edit.',
+        reason: 'Stage enabled/disabled via hiring process template edit.',
       });
     }
     if (weightsChanged) {
       await AuditLog.create({
         action: 'weight_change', userId: req.user._id, targetType: 'pipelineTemplate', targetId: template._id.toString(),
         oldValue: oldWeights, newValue: Object.fromEntries(template.stages.map((s) => [s.key, s.weight])),
-        reason: 'Stage weights re-normalized via pipeline template edit.',
+        reason: 'Stage weights re-normalized via hiring process template edit.',
       });
     }
   } else if (autoMode) {
@@ -183,7 +210,7 @@ const update = asyncHandler(async (req, res) => {
 /** PUT /api/pipelines/:id/default — flags this template as the default (unsets all others). */
 const setDefault = asyncHandler(async (req, res) => {
   const template = await PipelineTemplate.findById(req.params.id);
-  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Pipeline template not found.' });
+  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
 
   await PipelineTemplate.updateMany({ _id: { $ne: template._id } }, { $set: { isDefault: false } });
   template.isDefault = true;
@@ -196,13 +223,13 @@ const setDefault = asyncHandler(async (req, res) => {
 /** DELETE /api/pipelines/:id — refuses to delete the current default (set another default first). */
 const remove = asyncHandler(async (req, res) => {
   const template = await PipelineTemplate.findById(req.params.id);
-  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Pipeline template not found.' });
+  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
   if (template.isDefault) {
     throw new ValidationError(['isDefault'], 'Cannot delete the default template — set another template as default first.');
   }
   await PipelineTemplate.findByIdAndDelete(req.params.id);
-  logger.info(`[Pipeline] Deleted template ${req.params.id} by user=${req.user._id}`);
-  res.json({ message: 'Pipeline template deleted.' });
+  logger.info(`[Hiring process] Deleted template ${req.params.id} by user=${req.user._id}`);
+  res.json({ message: 'Hiring process template deleted.' });
 });
 
 module.exports = { list, create, update, setDefault, remove };

@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 /**
  * Editable weight inputs for a pipeline's enabled, scored stages (transcript/
  * artifact input types — pass_fail/status_only stages have no weight).
@@ -14,7 +16,8 @@
  * }} props
  */
 export default function WeightConfig({ stages, onChangeWeight, readOnly }) {
-  const scoredStages = stages.filter((s) => s.enabled && (s.inputType === 'transcript' || s.inputType === 'artifact'));
+  const [localValues, setLocalValues] = useState({});
+  const scoredStages = stages.filter((s) => s.enabled && s.inputType !== 'pass_fail' && s.inputType !== 'status_only');
 
   if (scoredStages.length === 0) {
     return <p className="text-sm text-gray-500">No enabled scored stages to weight.</p>;
@@ -24,25 +27,46 @@ export default function WeightConfig({ stages, onChangeWeight, readOnly }) {
   // percentage independently before summing can show 99%/101% even when the
   // underlying weights are already fine (e.g. 18.52 + 64.82 + 16.67 rounds
   // per-stage to 19 + 65 + 17 = 101, but the true total is ~100.01).
-  const liveSum = Math.round(scoredStages.reduce((sum, s) => sum + s.weight, 0) * 100);
+  const liveSum = Math.round(scoredStages.reduce((sum, s) => sum + (s.weight || 0), 0) * 100);
 
   return (
     <div className="space-y-2">
-      {scoredStages.map((s) => (
-        <div key={s.key} className="flex items-center gap-3">
-          <span className="w-40 flex-shrink-0 text-sm text-gray-700">{s.label}</span>
-          <input
-            type="number"
-            min="0"
-            max="100"
-            value={Math.round(s.weight * 100)}
-            onChange={(e) => onChangeWeight(s.key, Number(e.target.value) || 0)}
-            disabled={readOnly}
-            className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
-          />
-          <span className="text-sm text-gray-400">%</span>
-        </div>
-      ))}
+      {scoredStages.map((s) => {
+        const roundedVal = Math.round((s.weight || 0) * 100);
+        const displayVal = localValues[s.key] !== undefined ? localValues[s.key] : roundedVal;
+
+        return (
+          <div key={s.key} className="flex items-center gap-3">
+            <span className="w-40 flex-shrink-0 text-sm text-gray-700">{s.label}</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={displayVal}
+              onChange={(e) => {
+                const val = e.target.value;
+                setLocalValues((prev) => ({ ...prev, [s.key]: val }));
+                if (val !== '') {
+                  const num = Math.min(100, Math.max(0, Number(val)));
+                  onChangeWeight(s.key, num);
+                } else {
+                  onChangeWeight(s.key, 0);
+                }
+              }}
+              onBlur={() => {
+                setLocalValues((prev) => {
+                  const next = { ...prev };
+                  delete next[s.key];
+                  return next;
+                });
+              }}
+              disabled={readOnly}
+              className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+            />
+            <span className="text-sm text-gray-400">%</span>
+          </div>
+        );
+      })}
       <div className={`text-xs ${liveSum === 100 ? 'text-gray-400' : 'text-amber-600'}`}>
         {readOnly
           ? `Current sum: ${liveSum}% — split evenly across ${scoredStages.length} enabled stage${scoredStages.length === 1 ? '' : 's'}`

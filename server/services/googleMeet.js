@@ -1,5 +1,6 @@
 const { google } = require('googleapis');
 const logger = require('../utils/logger');
+const { getCalendarTimeZone } = require('../utils/calendarTimeZone');
 const { withRetry } = require('../utils/retry');
 const { getSecrets } = require('../utils/secrets');
 const { ValidationError } = require('../utils/errors');
@@ -27,6 +28,62 @@ async function getMeetClient() {
   return google.meet({ version: 'v2', auth: await getOAuthClient() });
 }
 
+async function getCalendarClient() {
+  return google.calendar({ version: 'v3', auth: await getOAuthClient() });
+}
+
+/**
+ * Logs the identifiers and artifact metadata needed to diagnose a Meet
+ * transcript that appears in Drive but is not returned by the Meet API.
+ * Tokens, attendees, and transcript text are deliberately never logged.
+ */
+async function logTranscriptDiagnostics(interview, conferenceRecordName, transcripts) {
+  const diagnostic = {
+    interviewId: String(interview._id),
+    storedConferenceId: interview.conferenceId || null,
+    calendarEventId: interview.calendarEventId || null,
+    resolvedConferenceRecord: conferenceRecordName || null,
+    transcriptCount: transcripts?.length || 0,
+    transcripts: (transcripts || []).map((item) => ({
+      name: item.name,
+      state: item.state,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      documentId: item.docsDestination?.document || null,
+      exportUri: item.docsDestination?.exportUri || null,
+    })),
+  };
+
+  try {
+    const auth = await getOAuthClient();
+    const accessToken = await auth.getAccessToken();
+    if (accessToken?.token) {
+      const tokenInfo = await auth.getTokenInfo(accessToken.token);
+      diagnostic.oauthScopes = tokenInfo.scopes || [];
+    }
+  } catch (err) {
+    diagnostic.oauthScopeCheck = `unavailable: ${err.message}`;
+  }
+
+  if (interview.calendarEventId) {
+    try {
+      const calendar = await getCalendarClient();
+      const { data: event } = await calendar.events.get({
+        calendarId: 'primary',
+        eventId: interview.calendarEventId,
+        fields: 'id,conferenceData(conferenceId,entryPoints(entryPointType,uri))',
+      });
+      diagnostic.calendarConferenceId = event.conferenceData?.conferenceId || null;
+      diagnostic.calendarMeetUri = (event.conferenceData?.entryPoints || [])
+        .find((entry) => entry.entryPointType === 'video')?.uri || null;
+    } catch (err) {
+      diagnostic.calendarEventCheck = `unavailable: ${err.message}`;
+    }
+  }
+
+  logger.info(`[GoogleMeet][TranscriptDiagnostics] ${JSON.stringify(diagnostic)}`);
+}
+
 /**
  * Creates a Google Meet space via the Meet REST API.
  *
@@ -43,12 +100,94 @@ async function getMeetClient() {
  * @throws {import('../utils/errors').RateLimitError} if 429 persists (Meet API ~60 req/min/project).
  * @throws {import('../utils/errors').ServiceError} on persistent network failure.
  */
-async function createMeeting(interview) {
-  const meet = await getMeetClient();
-  logger.info('[GoogleMeet] Creating a new Meet space.');
-  const { data } = await withRetry('GoogleMeet', () => meet.spaces.create({ requestBody: {} }));
-  logger.info(`[GoogleMeet] Space created: ${data.name} uri=${data.meetingUri}`);
-  return { meetingUri: data.meetingUri, conferenceId: data.name };
+async function createMeeting(interview, details = {}) {
+  const { startTime, endTime, localStartTime, localEndTime, candidateEmail, candidateName, requisitionTitle, stageLabel } = details;
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  if (!startTime || !endTime || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+    throw new ValidationError(['meetingStart', 'meetingEnd'], 'Choose a valid meeting start and end time.');
+  }
+  if (start.getTime() < Date.now() - 2 * 60 * 1000) {
+    throw new ValidationError(['meetingStart'], 'The meeting start time must be in the future.');
+  }
+  if (end.getTime() - start.getTime() > 60 * 60 * 1000) {
+    throw new ValidationError(['meetingEnd'], 'Interview duration cannot be longer than 1 hour.');
+  }
+
+  const calendar = await getCalendarClient();
+  // Calendar must interpret the selected wall-clock time in the organizer's
+  // calendar timezone. A browser can be set to a different timezone (for
+  // example, Pacific time), which would otherwise move a Pakistan meeting to
+  // the following day in Google Calendar.
+  const timeZone = getCalendarTimeZone()
+    || details.timeZone
+    || Intl.DateTimeFormat().resolvedOptions().timeZone
+    || 'UTC';
+  // A timestamp ending in Z is an absolute UTC instant. Supplying it alongside
+  // a timezone can make Calendar display a different calendar day. Prefer the
+  // local date/time selected by the recruiter and let Calendar apply its IANA
+  // timezone. Keep the UTC timestamps above for validation and persistence.
+  const localDateTime = (value, fallback) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value || '')
+    ? value
+    : fallback.toISOString();
+  const additionalAttendeeEmails = Array.isArray(details.additionalAttendeeEmails)
+    ? details.additionalAttendeeEmails.map((email) => String(email || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const invalidEmail = additionalAttendeeEmails.find((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+  if (invalidEmail) throw new ValidationError(['additionalAttendeeEmails'], `Invalid attendee email: ${invalidEmail}`);
+  if (additionalAttendeeEmails.length > 50) {
+    throw new ValidationError(['additionalAttendeeEmails'], 'You can invite up to 50 additional attendees.');
+  }
+  const attendeeEmails = [...new Set([candidateEmail, ...additionalAttendeeEmails]
+    .map((email) => String(email || '').trim().toLowerCase())
+    .filter(Boolean))];
+  const { data } = await withRetry('GoogleCalendar', () => calendar.events.insert({
+    calendarId: 'primary',
+    conferenceDataVersion: 1,
+    sendUpdates: attendeeEmails.length > 0 ? 'all' : 'none',
+    requestBody: {
+      summary: `${candidateName || 'Candidate'} — ${stageLabel || 'Interview'} — ${requisitionTitle || 'Interview'}`,
+      description: `Interview with ${candidateName || 'candidate'}.`,
+      start: { dateTime: localDateTime(localStartTime, start), timeZone },
+      end: { dateTime: localDateTime(localEndTime, end), timeZone },
+      attendees: attendeeEmails.map((email) => ({ email })),
+      conferenceData: { createRequest: { requestId: `interview-${interview._id}-${Date.now()}` } },
+    },
+  }));
+  const entryPoint = (data.conferenceData?.entryPoints || []).find((entry) => entry.entryPointType === 'video');
+  if (!data.id || !entryPoint?.uri) throw new Error('Google Calendar did not return a Meet link.');
+
+  logger.info(`[GoogleMeet] Calendar event created: ${data.id} uri=${entryPoint.uri}`);
+  return {
+    meetingUri: entryPoint.uri,
+    conferenceId: data.conferenceData?.conferenceId ? `meetingCode:${data.conferenceData.conferenceId}` : undefined,
+    calendarEventId: data.id,
+    // Google returns the canonical event times after applying the organizer's
+    // calendar timezone. Persist those values so app displays and email
+    // notifications always match the Calendar event.
+    meetingStart: data.start?.dateTime ? new Date(data.start.dateTime) : start,
+    meetingEnd: data.end?.dateTime ? new Date(data.end.dateTime) : end,
+  };
+}
+
+async function cancelMeeting(interview) {
+  if (!interview.calendarEventId) return { cancelled: false };
+  try {
+    const calendar = await getCalendarClient();
+    await withRetry('GoogleCalendar', () => calendar.events.delete({
+      calendarId: 'primary', eventId: interview.calendarEventId, sendUpdates: 'all',
+    }));
+    logger.info(`[GoogleMeet] Calendar event cancelled: ${interview.calendarEventId}`);
+  } catch (err) {
+    const status = err.code || err.status || err.response?.status;
+    const message = err.message || '';
+    if (status === 404 || status === 410 || message.includes('Resource has been deleted') || message.includes('Not Found')) {
+      logger.info(`[GoogleMeet] Calendar event ${interview.calendarEventId} was already deleted directly in Google Calendar.`);
+    } else {
+      logger.warn(`[GoogleMeet] Error cancelling event ${interview.calendarEventId}: ${err.message}. Clearing local reference.`);
+    }
+  }
+  return { cancelled: true };
 }
 
 /**
@@ -64,6 +203,15 @@ async function findConferenceRecordForSpace(meet, spaceName) {
   const records = data.conferenceRecords || [];
   if (records.length === 0) return null;
   // Most recent call in this space (records aren't guaranteed pre-sorted).
+  return records.sort((a, b) => new Date(b.startTime) - new Date(a.startTime))[0];
+}
+
+async function findConferenceRecordForMeetingCode(meet, meetingCode) {
+  const { data } = await withRetry('GoogleMeet', () => meet.conferenceRecords.list({
+    filter: `space.meeting_code="${meetingCode}"`,
+  }));
+  const records = data.conferenceRecords || [];
+  if (records.length === 0) return null;
   return records.sort((a, b) => new Date(b.startTime) - new Date(a.startTime))[0];
 }
 
@@ -145,7 +293,9 @@ async function fetchTranscript(interview) {
 
   if (!conferenceRecordName) {
     logger.info(`[GoogleMeet] Looking up conference record for ${stored}`);
-    const record = await findConferenceRecordForSpace(meet, stored);
+    const record = stored.startsWith('meetingCode:')
+      ? await findConferenceRecordForMeetingCode(meet, stored.slice('meetingCode:'.length))
+      : await findConferenceRecordForSpace(meet, stored);
     if (!record) {
       logger.info('[GoogleMeet] No conference record yet — call hasn\'t happened or hasn\'t synced. status=pending');
       return { status: 'pending' };
@@ -157,6 +307,7 @@ async function fetchTranscript(interview) {
     parent: conferenceRecordName,
   }));
   const transcripts = transcriptsData.transcripts || [];
+  await logTranscriptDiagnostics(interview, conferenceRecordName, transcripts);
   if (transcripts.length === 0) {
     logger.info(`[GoogleMeet] Conference record ${conferenceRecordName} has no transcript artifact yet. status=pending`);
     return { status: 'pending', resolvedConferenceId: conferenceRecordName };
@@ -181,4 +332,4 @@ async function fetchTranscript(interview) {
   return { status: 'ready', text: lines.join('\n'), resolvedConferenceId: conferenceRecordName };
 }
 
-module.exports = { createMeeting, fetchTranscript };
+module.exports = { createMeeting, cancelMeeting, fetchTranscript };

@@ -1,3 +1,5 @@
+const Application = require('../models/Application');
+const Setting = require('../models/Setting');
 const logger = require('../utils/logger');
 const { callClaude, getModelIds } = require('./claudeClient');
 const { STAGE_MODEL_TIER } = require('../utils/constants');
@@ -16,23 +18,68 @@ Respond ONLY with a valid JSON array, no other text, no markdown fences, no prea
 
 /**
  * Resolves the actual Claude model id to use for a given stage type, via
- * the tier mapping in constants.js. Model ids come from an admin-editable
- * Setting (Settings page dropdown) falling back to .env — never hardcoded.
+ * the configurable stageModelTiers Setting falling back to constants.js.
  * @param {string} stageType
  * @returns {Promise<string>}
  */
 async function resolveModelForStage(stageType) {
-  const tier = STAGE_MODEL_TIER[stageType] || 'default';
+  let stageModelTiers = STAGE_MODEL_TIER;
+  try {
+    const doc = await Setting.findOne({ key: 'stageModelTiers' });
+    if (doc?.value && typeof doc.value === 'object') {
+      stageModelTiers = doc.value;
+    }
+  } catch (err) {
+    logger.warn(`[AIScorer] Failed to read stageModelTiers setting: ${err.message}`);
+  }
+  const tier = stageModelTiers[stageType] || STAGE_MODEL_TIER[stageType] || 'cheap';
   const models = await getModelIds();
   return models[tier];
 }
 
-function buildUserPrompt(transcriptText, attributes) {
+function buildUserPrompt(transcriptText, attributes, stageType, requisition, application) {
   const rubric = attributes.map((a) => (
     `attributeId: "${a.attributeId}"\nname: ${a.name}\nquestion: ${a.question || '(none)'}\nwhat a 5 looks like: ${a.anchor5 || '(none)'}\nred flags (1-2): ${a.redFlags || '(none)'}`
   )).join('\n\n');
 
-  return `TRANSCRIPT:\n${transcriptText}\n\n---\nRUBRIC (score every attribute below):\n\n${rubric}`;
+  let contextHeader = 'INTERVIEW TRANSCRIPT:';
+  let requisitionContext = '';
+
+  const isManual = application?.source === 'manual';
+
+  // Public applications are evaluated as two distinct stages: the resume stage
+  // uses CV + role criteria, while HR uses only the questionnaire responses.
+  if (stageType === 'resume_screen') {
+    contextHeader = 'CANDIDATE RESUME TEXT:';
+    if (requisition) {
+      let criteriaText = '';
+      if (Array.isArray(requisition.initialScreeningCriteria) && requisition.initialScreeningCriteria.length > 0) {
+        criteriaText = requisition.initialScreeningCriteria.map((c) => {
+          if (typeof c === 'string') return `- ${c}`;
+          let text = `- Criteria: ${c.criteria}${c.requirement ? ` | Requirement: ${c.requirement}` : ''}`;
+          if (c.allowVirtualUniversityOngoing) {
+            text += `\n  [SPECIAL POLICY FOR THIS JOB]: Candidates with an ongoing / in-progress degree from Virtual University (or online/distance learning) satisfy the education requirement for full-time work. Do NOT fail or penalize candidates solely because their Virtual University degree is in progress.`;
+          }
+          if (c.criteria === 'Experience' && (c.minimumValue === '0' || String(c.requirement).includes('Minimum: 0'))) {
+            text += `\n  [EXPERIENCE SCORING RULE]: Minimum experience is set to 0 years. Candidates with 0 years of experience, fresh graduates, interns, or candidates with experience measured in months (e.g. 3 to 6 months) SATISFY the minimum experience requirement. Do NOT penalize or fail candidates for having less than 1 year of experience when minimum experience is 0.`;
+          }
+          return text;
+        }).join('\n');
+      } else if (typeof requisition.initialScreeningCriteria === 'string' && requisition.initialScreeningCriteria.trim()) {
+        criteriaText = requisition.initialScreeningCriteria;
+      }
+
+      requisitionContext = `POSITION TITLE: ${requisition.title || ''}\n\nJOB DESCRIPTION:\n${requisition.jobDescription || ''}\n\n${criteriaText ? `INITIAL SCREENING CRITERIA:\n${criteriaText}\n\n` : ''}---\n`;
+    }
+  } else if ((stageType === 'hr_screen' || stageType === 'hr_interview') && requisition) {
+    contextHeader = isManual ? 'HR INTERVIEW TRANSCRIPT:' : 'APPLICATION QUESTIONNAIRE RESPONSES:';
+    requisitionContext = `POSITION TITLE: ${requisition.title || ''}\n\nJOB DESCRIPTION:\n${requisition.jobDescription || ''}\n\nEVALUATION GUIDELINES FOR QUESTIONNAIRE RESPONSES:
+- For questions with a required Ideal Answer benchmark: Score candidate's response primarily against that provided Ideal Answer benchmark.
+- For questions without a required Ideal Answer (or where Ideal Answer is empty): Score candidate's response against the Job Description context and position requirements (evaluating if the candidate's response is clear, professional, and meets what the role requires).
+Do not use the candidate CV or Initial Screening Criteria for this stage.\n\n---\n`;
+  }
+
+  return `${requisitionContext}${contextHeader}\n${transcriptText}\n\n---\nRUBRIC (score every attribute below):\n\n${rubric}`;
 }
 
 /**
@@ -55,17 +102,23 @@ function buildUserPrompt(transcriptText, attributes) {
  * @param {string} params.stageType - The stage's stageType (selects the model tier).
  * @param {Array<{attributeId:string, name:string, question?:string, anchor5?:string, redFlags?:string}>} params.attributes
  *   The scorecard's rubric attributes for this stage.
+ * @param {object} [params.requisition] - Optional requisition document for full context.
+ * @param {object} [params.application] - Optional application document for candidate source context.
  * @returns {Promise<{interview: import('mongoose').Document, message?: string}>}
  * @throws {import('../utils/errors').ApiKeyError} on 401/403 — never scored on a bad key.
  * @throws {import('../utils/errors').SpendCapError} if the monthly AI spend cap is reached.
  * @throws {import('../utils/errors').RateLimitError} if 429 persists through retries.
  * @throws {import('../utils/errors').ServiceError} on persistent network failure.
  */
-async function scoreInterview({ interview, stageType, attributes }) {
+async function scoreInterview({ interview, stageType, attributes, requisition, application }) {
+  if (!application && interview.applicationId) {
+    application = await Application.findById(interview.applicationId);
+  }
+
   const transcriptText = (interview.transcriptText || '').trim();
   const wordCount = transcriptText ? transcriptText.split(/\s+/).filter(Boolean).length : 0;
 
-  if (wordCount < MIN_TRANSCRIPT_WORDS) {
+  if (wordCount < MIN_TRANSCRIPT_WORDS && stageType !== 'hr_screen' && stageType !== 'hr_interview') {
     interview.transcriptStatus = 'failed';
     await interview.save();
     const message = `Transcript is empty or too short to score (${wordCount} words, need at least ${MIN_TRANSCRIPT_WORDS}). Please re-upload a complete transcript.`;
@@ -79,7 +132,7 @@ async function scoreInterview({ interview, stageType, attributes }) {
   const { text, inputTokens, outputTokens, costUsd } = await callClaude({
     model,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildUserPrompt(transcriptText, attributes) }],
+    messages: [{ role: 'user', content: buildUserPrompt(transcriptText, attributes, stageType, requisition, application) }],
     maxTokens: 4096,
     expectJson: true,
   });
