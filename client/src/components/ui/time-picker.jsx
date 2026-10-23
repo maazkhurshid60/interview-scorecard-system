@@ -94,7 +94,10 @@ export function TimePicker({ value = '10:00', onChange, className, allowEmpty = 
             {/* Hours Column */}
             <div className="flex flex-col items-center gap-1.5 flex-1">
               <span className="text-[10px] uppercase text-slate-400 font-bold tracking-wider">Hour</span>
-              <div className="h-36 overflow-y-auto w-full flex flex-col gap-1 items-center [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <div
+                className="h-36 w-full overflow-y-auto overscroll-contain touch-pan-y flex flex-col gap-1 items-center [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                onWheel={(event) => event.stopPropagation()}
+              >
                 {hours.map((h) => (
                   <Button
                     key={h}
@@ -121,7 +124,10 @@ export function TimePicker({ value = '10:00', onChange, className, allowEmpty = 
             {/* Minutes Column */}
             <div className="flex flex-col items-center gap-1.5 flex-1">
               <span className="text-[10px] uppercase text-slate-400 font-bold tracking-wider">Minute</span>
-              <div className="h-36 overflow-y-auto w-full flex flex-col gap-1 items-center [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <div
+                className="h-36 w-full overflow-y-auto overscroll-contain touch-pan-y flex flex-col gap-1 items-center [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                onWheel={(event) => event.stopPropagation()}
+              >
                 {minutes.map((m) => (
                   <Button
                     key={m}
