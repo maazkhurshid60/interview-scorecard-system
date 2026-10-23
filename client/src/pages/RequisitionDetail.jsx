@@ -623,11 +623,6 @@ export default function RequisitionDetail() {
                 <div key={`${criterion.criteria}-${index}`} className="rounded-lg border p-3">
                   <p className="text-sm font-medium">{criterion.criteria}</p>
                   <p className="mt-1 text-sm text-muted-foreground">{criterion.requirement || `${criterion.minimumValue || '—'} to ${criterion.maximumValue || '—'}`}</p>
-                  {criterion.allowVirtualUniversityOngoing && (
-                    <Badge variant="secondary" className="mt-2 text-[11px] bg-emerald-50 text-emerald-700 border-emerald-200">
-                      Virtual University ongoing degree allowed
-                    </Badge>
-                  )}
                 </div>
               )) : <p className="text-sm text-muted-foreground">No screening criteria configured.</p>}
             </div>

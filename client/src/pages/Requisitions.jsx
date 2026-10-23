@@ -1383,21 +1383,9 @@ export default function Requisitions() {
                       <div className="space-y-1"><Label className="text-xs">Maximum qualification <span className="text-red-500">*</span></Label><Select value={form.initialScreeningCriteria.find((item) => item.criteria === screeningCriteriaConfig.education.label)?.maximumValue || undefined} onValueChange={(value) => setForm((current) => ({ ...current, initialScreeningCriteria: current.initialScreeningCriteria.map((item) => item.criteria === screeningCriteriaConfig.education.label ? { ...item, maximumValue: value } : item) }))}><SelectTrigger><SelectValue placeholder="Select maximum" /></SelectTrigger><SelectContent>{screeningCriteriaConfig.education.options.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></div>
                     </div>
                     <div className="space-y-1"><Label className="text-xs">Relevant field / major <span className="text-red-500">*</span></Label><Input placeholder="e.g. Computer Science, Software Engineering, HRM" value={form.initialScreeningCriteria.find((item) => item.criteria === screeningCriteriaConfig.education.label)?.relevantField || ''} onChange={(e) => setForm((current) => ({ ...current, initialScreeningCriteria: current.initialScreeningCriteria.map((item) => item.criteria === screeningCriteriaConfig.education.label ? { ...item, relevantField: e.target.value } : item) }))} /></div>
-                    <div className="flex items-center gap-2 pt-1">
-                      <Checkbox
-                        id="allow-vu-ongoing"
-                        checked={Boolean(form.initialScreeningCriteria.find((item) => item.criteria === screeningCriteriaConfig.education.label)?.allowVirtualUniversityOngoing)}
-                        onCheckedChange={(checked) => setForm((current) => ({
-                          ...current,
-                          initialScreeningCriteria: current.initialScreeningCriteria.map((item) => (
-                            item.criteria === screeningCriteriaConfig.education.label ? { ...item, allowVirtualUniversityOngoing: Boolean(checked) } : item
-                          ))
-                        }))}
-                      />
-                      <Label htmlFor="allow-vu-ongoing" className="text-xs text-slate-700 font-normal cursor-pointer">
-                        Allow ongoing / in-progress degree for Virtual University (or distance learning) candidates
-                      </Label>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Select “Undergraduate (currently studying)” as the minimum qualification to allow candidates who are still completing a relevant undergraduate degree.
+                    </p>
                   </div>
 
                   <div className="rounded-lg border border-slate-200 bg-white p-3.5 space-y-3">
