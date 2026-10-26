@@ -368,19 +368,13 @@ export default function Users() {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2.5">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-brand">
-              <UserCog className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                Users & Roles
-              </h1>
-              <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-                Manage team accounts, assign roles, and review security access permissions.
-              </p>
-            </div>
-          </div>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <UserCog className="h-7 w-7 text-brand" />
+            Users & Roles
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage team accounts, assign roles, and review security access permissions.
+          </p>
         </div>
 
         <div className="flex items-center gap-2.5 self-start sm:self-auto">
