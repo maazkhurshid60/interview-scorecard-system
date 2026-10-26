@@ -19,6 +19,7 @@ const transcriptProvider = require('../services/transcriptProvider');
 const { scoreInterview } = require('../services/aiScorer');
 const slackNotifier = require('../services/slackNotifier');
 const emailNotifier = require('../services/emailNotifier');
+const { renderEmail } = require('../utils/renderEmail');
 const { getSecrets } = require('../utils/secrets');
 const { extractArtifactText } = require('../utils/textExtractor');
 const { getCaptchaConfig, verifyCaptcha } = require('../services/captchaService');
@@ -28,6 +29,23 @@ const { recomputeAndPersist, getOrCreateNextInterview } = require('./scoringCont
 function logParsedText(interviewId, source, text) {
   const value = String(text || '');
   logger.info(`[Interview] Parsed ${source} text for ${interviewId} (${value.length} chars):\n${value}`);
+}
+
+/**
+ * The meeting's date, time zone and length as readable text, for the emails. A part we do not know is ''
+ * (the email template then leaves that line out).
+ * @param {import('mongoose').Document} interview
+ * @returns {{dateTime:string, timeZone:string, duration:string}}
+ */
+function describeMeetingTime(interview) {
+  const timeZone = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Karachi';
+  const dateTime = interview.meetingStart
+    ? new Intl.DateTimeFormat('en-PK', { dateStyle: 'full', timeStyle: 'short', timeZone }).format(new Date(interview.meetingStart))
+    : '';
+  const duration = interview.meetingEnd && interview.meetingStart
+    ? `${Math.round((new Date(interview.meetingEnd) - new Date(interview.meetingStart)) / 60000)} minutes`
+    : '';
+  return { dateTime, timeZone, duration };
 }
 
 /**
@@ -48,6 +66,7 @@ async function emailMeetingLinkToCandidate(interview) {
     }
     const requisition = await Requisition.findById(interview.requisitionId);
     const stageConfig = requisition?.stages.find((s) => s.key === interview.stageKey);
+    const { dateTime, timeZone, duration } = describeMeetingTime(interview);
     return await enqueueEmail({
       type: 'meeting-link',
       to: candidate.email,
@@ -57,6 +76,9 @@ async function emailMeetingLinkToCandidate(interview) {
         requisitionTitle: requisition?.title || 'your role',
         stageLabel: stageConfig?.label || interview.stageKey,
         meetingUri: interview.meetingUri,
+        interviewDateTime: dateTime,
+        interviewTimeZone: timeZone,
+        interviewDuration: duration,
       },
     });
   } catch (err) {
@@ -85,50 +107,18 @@ async function emailCalendarHost(interview, action) {
     const candidateName = application?.candidateId?.name || 'Candidate';
     const stageLabel = stage?.label || interview.stageKey;
     const isCancelled = action === 'cancelled';
-    const timeZone = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Karachi';
-    const meetingTime = interview.meetingStart
-      ? new Intl.DateTimeFormat('en-PK', {
-        dateStyle: 'full', timeStyle: 'short', timeZone,
-      }).format(new Date(interview.meetingStart))
-      : 'Not specified';
+    const { dateTime, timeZone, duration } = describeMeetingTime(interview);
 
-    const message = {
-      to: hostEmail,
-      subject: `${isCancelled ? 'Cancelled' : 'Scheduled'}: ${candidateName} — ${stageLabel}`,
-      text: isCancelled
-        ? [
-          'Hello,',
-          '',
-          'This is to confirm that the following interview has been cancelled.',
-          '',
-          `Candidate: ${candidateName}`,
-          `Position: ${requisition?.title || 'Interview'}`,
-          `Interview stage: ${stageLabel}`,
-          `Previously scheduled: ${meetingTime} (${timeZone})`,
-          '',
-          'The Google Calendar event has been removed and the candidate has been notified.',
-          '',
-          'Regards,',
-          'Red Star Technologies Hiring Team',
-        ].join('\n')
-        : [
-          'Hello,',
-          '',
-          'This is to confirm that an interview has been scheduled in your Google Calendar.',
-          '',
-          `Candidate: ${candidateName}`,
-          `Position: ${requisition?.title || 'Interview'}`,
-          `Interview stage: ${stageLabel}`,
-          `Date and time: ${meetingTime} (${timeZone})`,
-          `Duration: ${interview.meetingEnd && interview.meetingStart ? `${Math.round((new Date(interview.meetingEnd) - new Date(interview.meetingStart)) / 60000)} minutes` : 'Not specified'}`,
-          `Google Meet link: ${interview.meetingUri || 'Not available'}`,
-          '',
-          'The candidate has been invited through Google Calendar. Please review the event on your calendar before the interview.',
-          '',
-          'Regards,',
-          'Red Star Technologies Hiring Team',
-        ].join('\n'),
-    };
+    const { subject, text } = renderEmail(isCancelled ? 'interviewCancelledNotice' : 'interviewScheduledNotice', {
+      candidateName,
+      jobTitle: requisition?.title || 'Interview',
+      stage: stageLabel,
+      dateTime,
+      timeZone,
+      duration,
+      meetingLink: interview.meetingUri,
+    });
+    const message = { to: hostEmail, subject, text };
     const result = await enqueueEmail({ type: 'plain', to: hostEmail, payload: message });
     if (result.queued) {
       logger.info(`[Interview] Calendar host notification (${action}) queued for ${hostEmail} for ${interview._id}.`);
