@@ -500,11 +500,13 @@ export default function RequisitionDetail() {
         </div>
       </div>
 
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2 sm:flex-1 sm:justify-start">
+      {/* On a phone: status and the action icons share the first row, the tabs get their own full-width row below.
+          From sm up: status, tabs and actions sit on one row, as before. */}
+      <div className="mt-4 flex flex-wrap items-center gap-3 sm:flex-nowrap sm:justify-between">
+        <div className="order-1 flex min-w-0 flex-1 items-center gap-2 sm:justify-start">
           <span className="text-sm text-muted-foreground">Status</span>
           <Select value={requisition.status} onValueChange={handleStatusChange} disabled={savingStatus || !canManage}>
-            <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-full max-w-[11rem] text-xs sm:h-8 sm:w-36"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="open">Open</SelectItem>
               <SelectItem value="paused">Paused</SelectItem>
@@ -514,17 +516,19 @@ export default function RequisitionDetail() {
           </Select>
         </div>
 
-        <div className="flex justify-center">
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList>
-              <TabsTrigger value="job">Job Opening</TabsTrigger>
-              <TabsTrigger value="candidates">Candidates</TabsTrigger>
-              <TabsTrigger value="scorecard">Scorecard</TabsTrigger>
+        {/* Full width on a phone, the three tabs sharing it equally (a little taller to tap, tighter text so
+            "Job Opening" fits at 320px); the compact centred bar from sm up. */}
+        <div className="order-3 flex w-full sm:order-2 sm:w-auto sm:justify-center">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full sm:w-auto">
+            <TabsList className="h-10 w-full sm:h-9 sm:w-auto">
+              <TabsTrigger value="job" className="flex-1 px-2 text-[13px] sm:flex-none sm:px-3 sm:text-sm">Job Opening</TabsTrigger>
+              <TabsTrigger value="candidates" className="flex-1 px-2 text-[13px] sm:flex-none sm:px-3 sm:text-sm">Candidates</TabsTrigger>
+              <TabsTrigger value="scorecard" className="flex-1 px-2 text-[13px] sm:flex-none sm:px-3 sm:text-sm">Scorecard</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
 
-        <div className="flex items-center gap-2 sm:flex-1 sm:justify-end">
+        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3 sm:flex-1 sm:justify-end">
           {canManage && (
             <Button
               type="button"
@@ -533,7 +537,7 @@ export default function RequisitionDetail() {
               title="Edit job opening"
               aria-label="Edit job opening"
               onClick={() => navigate(`/requisitions/${requisition._id}/edit`, { state: fromJobState(requisition._id) })}
-              className="h-8 w-8 text-slate-600 hover:text-slate-900 border-slate-300"
+              className="h-9 w-9 text-slate-600 hover:text-slate-900 border-slate-300 sm:h-8 sm:w-8"
             >
               <Pencil className="h-4 w-4" />
             </Button>
@@ -555,7 +559,7 @@ export default function RequisitionDetail() {
                 toast.success('Public candidate application link copied to clipboard!');
               }}
               disabled={!canStartNewWork}
-              className="h-8 w-8 text-brand hover:text-brand"
+              className="h-9 w-9 text-brand hover:text-brand sm:h-8 sm:w-8"
             >
               <Link2 className="h-4 w-4" />
             </Button>
@@ -569,7 +573,7 @@ export default function RequisitionDetail() {
               title="Delete job opening"
               aria-label="Delete job opening"
               onClick={() => setDeleteOpen(true)}
-              className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700 border-red-200"
+              className="h-9 w-9 text-red-600 hover:bg-red-50 hover:text-red-700 border-red-200 sm:h-8 sm:w-8"
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -671,10 +675,12 @@ export default function RequisitionDetail() {
               {pagination.total} candidate{pagination.total === 1 ? '' : 's'} {hasActiveCandidateFilter ? 'match the current filters' : 'attached to this job opening'}
             </p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {/* Phone: the search box has the first row; the AI Decision filter and the two icon buttons share the second.
+              From sm up: one row in the order filter, search, icons. */}
+          <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-between text-xs sm:w-44">
+                  <Button type="button" variant="outline" size="sm" className="order-2 h-9 min-w-0 flex-1 justify-between text-xs sm:order-1 sm:h-8 sm:w-44 sm:flex-none">
                     AI Decision ({dispositionFilters.length}/4)
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
@@ -716,13 +722,13 @@ export default function RequisitionDetail() {
                 </DropdownMenuContent>
               </DropdownMenu>
               */}
-              <div className="relative w-full sm:w-56">
+              <div className="relative order-1 w-full sm:order-2 sm:w-56">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={candidateSearch}
                   onChange={(e) => handleCandidateSearchChange(e.target.value)}
                   placeholder="Search by name or email…"
-                  className="h-8 pl-8 pr-8 text-xs"
+                  className="h-9 pl-8 pr-8 text-xs sm:h-8"
                 />
                 {candidateSearch && (
                   <button
@@ -738,7 +744,7 @@ export default function RequisitionDetail() {
                 type="button"
                 variant="outline"
                 size="icon"
-                className="h-8 w-8"
+                className="order-3 h-9 w-9 sm:h-8 sm:w-8"
                 onClick={() => navigate('/candidates')}
                 title="Add candidate to this job opening"
                 aria-label="Add candidate to this job opening"
@@ -749,7 +755,7 @@ export default function RequisitionDetail() {
                 type="button"
                 variant="outline"
                 size="icon"
-                className="h-8 w-8"
+                className="order-3 h-9 w-9 sm:h-8 sm:w-8"
                 onClick={() => navigate(`/requisitions/${id}/candidates`)}
                 title="View candidates for this job opening"
                 aria-label="View candidates for this job opening"

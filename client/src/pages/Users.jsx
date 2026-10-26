@@ -368,19 +368,13 @@ export default function Users() {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2.5">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-brand">
-              <UserCog className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                Users & Roles
-              </h1>
-              <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-                Manage team accounts, assign roles, and review security access permissions.
-              </p>
-            </div>
-          </div>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <UserCog className="h-7 w-7 text-brand" />
+            Users & Roles
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage team accounts, assign roles, and review security access permissions.
+          </p>
         </div>
 
         <div className="flex items-center gap-2.5 self-start sm:self-auto">
@@ -498,18 +492,21 @@ export default function Users() {
       {/* Tabs for Directory vs Permissions Matrix */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
-          <TabsList className="bg-muted/70 p-1">
-            <TabsTrigger value="directory" className="gap-2 text-xs">
-              <UsersIcon className="h-3.5 w-3.5" />
-              <span>User Directory</span>
-              <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px]">
+          {/* Phone: the bar is the full width, each tab takes half, icons are dropped and the second label is
+              shortened so both fit even at 320px. From sm up: the usual compact bar with full labels. */}
+          <TabsList className="h-10 w-full bg-muted/70 p-1 sm:h-9 sm:w-auto">
+            <TabsTrigger value="directory" className="min-w-0 flex-1 gap-2 px-2 text-xs sm:flex-none sm:px-3">
+              <UsersIcon className="hidden h-3.5 w-3.5 sm:block" />
+              <span className="truncate">User Directory</span>
+              <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[10px] sm:ml-1">
                 {loading ? '…' : users.length}
               </Badge>
             </TabsTrigger>
-            <TabsTrigger value="roles" className="gap-2 text-xs">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Roles & Permissions Guide</span>
-              <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px]">
+            <TabsTrigger value="roles" className="min-w-0 flex-1 gap-2 px-2 text-xs sm:flex-none sm:px-3">
+              <ShieldCheck className="hidden h-3.5 w-3.5 sm:block" />
+              <span className="truncate sm:hidden">Roles Guide</span>
+              <span className="hidden sm:inline">Roles & Permissions Guide</span>
+              <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[10px] sm:ml-1">
                 5
               </Badge>
             </TabsTrigger>
