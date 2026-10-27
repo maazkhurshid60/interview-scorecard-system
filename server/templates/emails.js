@@ -113,6 +113,22 @@ Please complete your onboarding form using the link below:
 ${SIGN_OFF}`,
   },
 
+  // To the candidate, when staff cancel a scheduled interview.
+  interviewCancelled: {
+    details: ['name', 'jobTitle', 'date', 'time'],
+    subject: 'Interview Cancelled – {jobTitle} | RedStar Technologies',
+    body: `Dear {name},
+
+We regret to inform you that your interview for the position of {jobTitle}, scheduled for {date} at {time}, has been cancelled.
+
+We apologize for any inconvenience and appreciate your understanding.
+
+Best regards,
+HR Department
+Red Star Technologies
+hr@redstartechs.com`,
+  },
+
   // To the HR calendar mailbox, when an interview is scheduled with Google Calendar.
   interviewScheduledNotice: {
     details: ['candidateName', 'jobTitle', 'stage', 'dateTime', 'timeZone', 'duration', 'meetingLink'],

@@ -28,6 +28,7 @@ const KEEP_FAILED_SECONDS = 90 * 24 * 60 * 60;
 /** Which template sends each kind of email. Looked up when sending, so the templates stay in emailNotifier. */
 const SENDERS = {
   'meeting-link': (payload) => emailNotifier.sendMeetingLinkEmail(payload),
+  'interview-cancelled': (payload) => emailNotifier.sendInterviewCancelledEmail(payload),
   'offer-letter': (payload, attachment) => emailNotifier.sendOfferEmail({ ...payload, attachment }),
   'application-confirmation': (payload) => emailNotifier.sendApplicationConfirmationEmail(payload),
   'password-reset': (payload) => emailNotifier.sendPasswordResetEmail(payload),

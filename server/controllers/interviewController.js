@@ -94,6 +94,39 @@ async function emailMeetingLinkToCandidate(interview) {
 }
 
 /**
+ * Queues an email telling the candidate their scheduled interview has been cancelled (it is sent in the background).
+ * Needs the interview's date and time for the wording, so an interview that was never scheduled (for example a link
+ * pasted by hand) gets no email. Never throws: a missing candidate email or a queueing failure is reported in the
+ * return value, so cancelling the meeting still succeeds.
+ * @param {object} interview the interview, before its meeting details are cleared
+ * @returns {Promise<{queued:boolean, reason?:string}>}
+ */
+async function emailInterviewCancelledToCandidate(interview) {
+  try {
+    const { date, time } = describeMeetingTime(interview);
+    if (!date || !time) return { queued: false, reason: 'The interview had no scheduled time, so no cancellation email was sent.' };
+    const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
+    const candidate = application?.candidateId;
+    if (!candidate?.email) return { queued: false, reason: 'No candidate email on file.' };
+    const requisition = await requisitionRepo.findById(interview.requisitionId);
+    return await enqueueEmail({
+      type: 'interview-cancelled',
+      to: candidate.email,
+      payload: {
+        candidateEmail: candidate.email,
+        candidateName: candidate.name,
+        requisitionTitle: requisition?.title || 'your role',
+        interviewDate: date,
+        interviewTime: time,
+      },
+    });
+  } catch (err) {
+    logger.warn(`[Interview] Could not queue the cancellation email for ${interview._id}: ${err.message}`);
+    return { queued: false, reason: 'Could not queue the email — the meeting was still cancelled.' };
+  }
+}
+
+/**
  * Google Calendar does not send an invitation to the owner of the calendar
  * hosting the event. Send that account an explicit confirmation instead.
  * GOOGLE_CALENDAR_HOST_EMAIL overrides GMAIL_USER when those accounts differ.
@@ -370,6 +403,7 @@ const cancelMeeting = asyncHandler(async (req, res) => {
   const hostEmailResult = interview.calendarEventId
     ? await emailCalendarHost(interview, 'cancelled')
     : null;
+  const candidateEmailResult = await emailInterviewCancelledToCandidate(interview); // before the meeting details are cleared
 
   interview.meetingUri = undefined;
   interview.conferenceId = undefined;
@@ -391,6 +425,8 @@ const cancelMeeting = asyncHandler(async (req, res) => {
     hostEmailQueued: hostEmailResult?.queued,
     hostEmailReason: hostEmailResult?.reason,
     hostEmail: hostEmailResult?.hostEmail,
+    candidateEmailQueued: candidateEmailResult.queued,
+    candidateEmailReason: candidateEmailResult.reason,
   });
 });
 

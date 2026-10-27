@@ -95,6 +95,21 @@ async function sendMeetingLinkEmail({ candidateEmail, candidateName, requisition
 }
 
 /**
+ * Emails a candidate that their scheduled interview has been cancelled.
+ * @param {{candidateEmail:string, candidateName:string, requisitionTitle:string, interviewDate:string, interviewTime:string}} params
+ * @returns {Promise<{sent:boolean, reason?:string}>}
+ */
+async function sendInterviewCancelledEmail({ candidateEmail, candidateName, requisitionTitle, interviewDate, interviewTime }) {
+  const { subject, text } = renderEmail('interviewCancelled', {
+    name: candidateName || 'Candidate',
+    jobTitle: requisitionTitle,
+    date: interviewDate,
+    time: interviewTime,
+  });
+  return sendEmail({ to: candidateEmail, subject, text });
+}
+
+/**
  * Emails a candidate their formal job offer letter. In production the PDF itself
  * is attached (stored files are private, so a link would not open for the
  * candidate); on staging / local the email carries a link instead.
@@ -150,4 +165,4 @@ function shouldAttachOfferLetter() {
   return process.env.NODE_ENV === 'production';
 }
 
-export { sendEmail, shouldAttachOfferLetter, sendMeetingLinkEmail, sendOfferEmail, sendApplicationConfirmationEmail, sendPasswordResetEmail, sendAvailabilityRequestEmail, sendOnboardingFormEmail };
+export { sendEmail, shouldAttachOfferLetter, sendMeetingLinkEmail, sendInterviewCancelledEmail, sendOfferEmail, sendApplicationConfirmationEmail, sendPasswordResetEmail, sendAvailabilityRequestEmail, sendOnboardingFormEmail };
