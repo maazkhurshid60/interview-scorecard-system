@@ -5,7 +5,6 @@ import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
-import { assertCalendarMeetingCancelled } from '../utils/meetingLifecycle.js';
 import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
 import { FINAL_DECISIONS } from '../utils/constants.js';
 import { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } from '../services/scoringEngine.js';
@@ -161,7 +160,6 @@ async function getOrCreateNextInterview(application, requisition, currentStageKe
 const approve = asyncHandler(async (req, res) => {
   const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
-  assertCalendarMeetingCancelled(interview, 'approve or re-approve this stage');
 
   const requisitionForType = await requisitionRepo.findById(interview.requisitionId);
   assertRequisitionNotClosed(requisitionForType, 'approve interview scores');
@@ -535,7 +533,6 @@ const passFail = asyncHandler(async (req, res) => {
       message: 'Interview not found.',
     });
   }
-  assertCalendarMeetingCancelled(interview, 'save this stage decision');
 
   const requisition = await requisitionRepo.findById(interview.requisitionId);
 

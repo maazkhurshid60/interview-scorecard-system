@@ -35,9 +35,9 @@ function draftsFromInterview(interview, attributes) {
  * whatever the server actually saved (never show a number that wasn't
  * persisted, e.g. after Approve silently discards an unsaved edit).
  *
- * @param {{interview: object, attributes?: Array<{attributeId:string, name:string, question:string}>, passThreshold: number, meetingActive?: boolean, onUpdated: (interview: object, stageAverage?: number, passed?: boolean) => void}} props
+ * @param {{interview: object, attributes?: Array<{attributeId:string, name:string, question:string}>, passThreshold: number, onUpdated: (interview: object, stageAverage?: number, passed?: boolean) => void}} props
  */
-export default function ScoreReviewTable({ interview, attributes, passThreshold, meetingActive = false, onUpdated }) {
+export default function ScoreReviewTable({ interview, attributes, passThreshold, onUpdated }) {
   const attributeById = Object.fromEntries((attributes || []).map((a) => [a.attributeId, a]));
   const [drafts, setDrafts] = useState(() => draftsFromInterview(interview, attributes));
   const [saving, setSaving] = useState(false);
@@ -275,12 +275,6 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
         </div>
       )}
 
-      {meetingActive && (
-        <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
-          Cancel the active Google Calendar meeting before approving or re-approving this stage.
-        </div>
-      )}
-
       <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm">
           {stageAverage != null ? (
@@ -298,7 +292,7 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
         <div className="flex gap-2">
           {isManualStage ? (
             <button
-              type="button" onClick={handleManualSaveAndApprove} disabled={meetingActive || approving || saving}
+              type="button" onClick={handleManualSaveAndApprove} disabled={approving || saving}
               className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {approving ? 'Saving & Approving...' : isApproved ? 'Re-approve Stage Scores' : 'Save & Approve Stage'}
@@ -312,7 +306,7 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
                 {saving ? 'Saving...' : 'Save Overrides'}
               </button>
               <button
-                type="button" onClick={handleApprove} disabled={meetingActive || approving}
+                type="button" onClick={handleApprove} disabled={approving}
                 className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {approving ? 'Approving...' : isApproved ? 'Re-approve Stage' : 'Approve Stage'}

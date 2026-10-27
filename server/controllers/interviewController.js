@@ -7,7 +7,6 @@ import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
 import { ValidationError, TranscriptNotReadyError } from '../utils/errors.js';
-import { assertCalendarMeetingCancelled } from '../utils/meetingLifecycle.js';
 import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
 import { uploadFile, deleteFile } from '../services/fileStorage.js';
 import { assertPdfUpload } from '../utils/uploadValidation.js';
@@ -153,8 +152,6 @@ async function assertPriorStagesApproved(requisition, applicationId, stageKey) {
       err.statusCode = 409;
       throw err;
     }
-    const label = ordered.find((s) => s.key === key)?.label || key;
-    assertCalendarMeetingCancelled(interview, `start the ${label} stage`);
   }
 }
 
@@ -630,7 +627,6 @@ const googleOAuthCallback = asyncHandler(async (req, res) => {
 const sendOffer = asyncHandler(async (req, res) => {
   const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
-  assertCalendarMeetingCancelled(interview, 'complete this stage');
 
   assertPdfUpload(req.file, { field: 'offerLetter', label: 'offer letter' });
 
