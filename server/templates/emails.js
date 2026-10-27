@@ -74,29 +74,42 @@ hr@redstartechs.com`,
   // To the candidate, when a recruiter sends the offer letter. The PDF is attached in production.
   offerLetterAttached: {
     details: ['name', 'jobTitle'],
-    subject: 'Job Offer – {jobTitle}',
+    subject: 'Job Offer – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Congratulations! We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
+Congratulations!
 
-Please find your offer letter attached to this email as a PDF. Kindly review it and confirm your acceptance.
+We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
 
-${SIGN_OFF}`,
+Please review your attached offer letter.
+
+Kindly confirm your acceptance.
+
+We look forward to welcoming you to our team.
+
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // The same email outside production, where the letter is a download link instead of an attachment.
   offerLetterLink: {
     details: ['name', 'jobTitle', 'offerLetterLink'],
-    subject: 'Job Offer – {jobTitle}',
+    subject: 'Job Offer – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Congratulations! We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
+Congratulations!
 
-You can view and download your offer letter here: {offerLetterLink}
+We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
 
-Kindly review it and confirm your acceptance.
+Please review your offer letter using the link below:
+{offerLetterLink}
 
-${SIGN_OFF}`,
+Kindly confirm your acceptance.
+
+We look forward to welcoming you to our team.
+
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a recruiter sends the onboarding form.
