@@ -1,5 +1,4 @@
-import Department from '../models/Department.js';
-import Requisition from '../models/Requisition.js';
+import * as departments from '../repositories/departmentRepository.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
@@ -9,39 +8,7 @@ import logger from '../utils/logger.js';
  * Returns all departments sorted by name, along with counts of associated job openings.
  */
 const list = asyncHandler(async (req, res) => {
-  const departments = await Department.find()
-    .sort({ name: 1 })
-    .lean();
-
-  // Aggregate job counts for all departments
-  const counts = await Requisition.aggregate([
-    { $match: { departmentId: { $ne: null } } },
-    {
-      $group: {
-        _id: '$departmentId',
-        totalJobs: { $sum: 1 },
-        openJobs: {
-          $sum: { $cond: [{ $eq: ['$status', 'open'] }, 1, 0] },
-        },
-      },
-    },
-  ]);
-
-  const countMap = new Map();
-  counts.forEach((c) => {
-    countMap.set(String(c._id), { totalJobs: c.totalJobs, openJobs: c.openJobs });
-  });
-
-  const enriched = departments.map((dept) => {
-    const stats = countMap.get(String(dept._id)) || { totalJobs: 0, openJobs: 0 };
-    return {
-      ...dept,
-      totalJobs: stats.totalJobs,
-      openJobs: stats.openJobs,
-    };
-  });
-
-  res.json({ departments: enriched });
+  res.json({ departments: await departments.listWithJobCounts() });
 });
 
 /**
@@ -56,15 +23,12 @@ const create = asyncHandler(async (req, res) => {
     throw new ValidationError(['name'], 'Department name is required.');
   }
 
-  const existing = await Department.findOne({
-    name: { $regex: `^${cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
-  });
-
+  const existing = await departments.findByName(cleanName);
   if (existing) {
     throw new ValidationError(['name'], `A department named "${existing.name}" already exists.`);
   }
 
-  const department = await Department.create({
+  const department = await departments.create({
     name: cleanName,
     description: String(description || '').trim(),
     createdBy: req.user?._id,
@@ -74,7 +38,7 @@ const create = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     department: {
-      ...department.toObject(),
+      ...department,
       totalJobs: 0,
       openJobs: 0,
     },
@@ -87,12 +51,13 @@ const create = asyncHandler(async (req, res) => {
  * Updates an existing department.
  */
 const update = asyncHandler(async (req, res) => {
-  const department = await Department.findById(req.params.id);
-  if (!department) {
+  const current = await departments.findById(req.params.id);
+  if (!current) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Department not found.' });
   }
 
   const { name, description } = req.body;
+  const changes = {};
 
   if (name !== undefined) {
     const cleanName = String(name || '').trim();
@@ -100,34 +65,26 @@ const update = asyncHandler(async (req, res) => {
       throw new ValidationError(['name'], 'Department name cannot be empty.');
     }
 
-    const existing = await Department.findOne({
-      _id: { $ne: department._id },
-      name: { $regex: `^${cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
-    });
-
+    const existing = await departments.findByName(cleanName, { exceptId: current._id });
     if (existing) {
       throw new ValidationError(['name'], `Another department named "${existing.name}" already exists.`);
     }
 
-    department.name = cleanName;
+    changes.name = cleanName;
   }
 
   if (description !== undefined) {
-    department.description = String(description || '').trim();
+    changes.description = String(description || '').trim();
   }
 
-  await department.save();
+  const department = await departments.update(current._id, changes);
   logger.info(`[Department] Updated department "${department.name}" (${department._id}) by user=${req.user?._id}`);
 
-  // Fetch current job stats
-  const [totalJobs, openJobs] = await Promise.all([
-    Requisition.countDocuments({ departmentId: department._id }),
-    Requisition.countDocuments({ departmentId: department._id, status: 'open' }),
-  ]);
+  const { totalJobs, openJobs } = await departments.countJobs(department._id);
 
   res.json({
     department: {
-      ...department.toObject(),
+      ...department,
       totalJobs,
       openJobs,
     },
@@ -140,25 +97,16 @@ const update = asyncHandler(async (req, res) => {
  * Deletes a department and unsets the departmentId from all associated requisitions.
  */
 const remove = asyncHandler(async (req, res) => {
-  const department = await Department.findById(req.params.id);
-  if (!department) {
+  const removed = await departments.removeAndUnlinkJobs(req.params.id);
+  if (!removed) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Department not found.' });
   }
 
-  const deptName = department.name;
-
-  // Unassign from any requisitions that used this department
-  const unassignResult = await Requisition.updateMany(
-    { departmentId: department._id },
-    { $unset: { departmentId: 1 } }
-  );
-
-  await department.deleteOne();
-  logger.info(`[Department] Deleted department "${deptName}" (${department._id}); unlinked ${unassignResult.modifiedCount} requisitions by user=${req.user?._id}`);
+  logger.info(`[Department] Deleted department "${removed.name}" (${req.params.id}); unlinked ${removed.unlinkedJobs} requisitions by user=${req.user?._id}`);
 
   res.json({
-    message: `Department "${deptName}" deleted successfully.`,
-    unassignedJobs: unassignResult.modifiedCount,
+    message: `Department "${removed.name}" deleted successfully.`,
+    unassignedJobs: removed.unlinkedJobs,
   });
 });
 
