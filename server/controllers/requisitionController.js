@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Requisition from '../models/Requisition.js';
-import PipelineTemplate from '../models/PipelineTemplate.js';
+import * as pipelines from '../repositories/pipelineTemplateRepository.js';
 import Scorecard from '../models/Scorecard.js';
 import Application from '../models/Application.js';
 import Candidate from '../models/Candidate.js';
@@ -386,7 +386,7 @@ const create = asyncHandler(async (req, res) => {
     status: 'open',
   }).select('_id title').lean();
 
-  const template = await PipelineTemplate.findById(pipelineTemplateId);
+  const template = await pipelines.findById(pipelineTemplateId);
   if (!template) {
     throw new ValidationError(['pipelineTemplateId'], 'No hiring process template found with that id.');
   }
@@ -654,7 +654,7 @@ const update = asyncHandler(async (req, res) => {
 
   if (title !== undefined) requisition.title = normalizeJobTitle(title);
   if (pipelineTemplateId !== undefined && mongoose.isValidObjectId(pipelineTemplateId)) {
-    const template = await PipelineTemplate.findById(pipelineTemplateId);
+    const template = await pipelines.findById(pipelineTemplateId);
     if (template) {
       requisition.pipelineTemplateId = template._id;
       requisition.pipelineTemplateName = template.name;

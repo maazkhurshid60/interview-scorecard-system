@@ -7,7 +7,7 @@ import logger from '../utils/logger.js';
 import { DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS, DEFAULT_COST_RATE_TABLE } from '../utils/constants.js';
 
 import User from '../models/User.js';
-import PipelineTemplate from '../models/PipelineTemplate.js';
+import * as pipelines from '../repositories/pipelineTemplateRepository.js';
 import * as settingRepo from '../repositories/settingRepository.js';
 
 /**
@@ -75,7 +75,7 @@ async function seedDemoUsers() {
 }
 
 async function seedDefaultPipeline() {
-  const existing = await PipelineTemplate.findOne({ isDefault: true });
+  const existing = await pipelines.findDefault();
   if (existing) {
     logger.info(
       `[Seed] Default hiring process template already exists ("${existing.name}"), skipping.`,
@@ -83,7 +83,7 @@ async function seedDefaultPipeline() {
     return existing;
   }
 
-  const template = await PipelineTemplate.create({
+  const template = await pipelines.create({
     name: "Standard Hiring Stages",
     description:
       "Initial Screening (10%) -> HR Interview (15%) -> Sales Simulation (25%) -> Technical/Ops (25%) -> Final/CEO (15%).",
