@@ -1,5 +1,5 @@
-const logger = require('../utils/logger');
-const { normalizeOrigin } = require('../utils/allowedOrigins');
+import logger from '../utils/logger.js';
+import { normalizeOrigin } from '../utils/allowedOrigins.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -27,4 +27,4 @@ function createOriginGuard(allowedOrigins) {
   };
 }
 
-module.exports = { createOriginGuard };
+export { createOriginGuard };

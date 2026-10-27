@@ -1,7 +1,7 @@
-const jwt = require('jsonwebtoken');
-const logger = require('../utils/logger');
-const User = require('../models/User');
-const { ACCESS_COOKIE } = require('../services/sessionService');
+import jwt from 'jsonwebtoken';
+import logger from '../utils/logger.js';
+import User from '../models/User.js';
+import { ACCESS_COOKIE } from '../services/sessionService.js';
 
 /**
  * Finds the access token on a request: an explicit "Authorization: Bearer ..."
@@ -67,4 +67,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { requireAuth, requireRole };
+export { requireAuth, requireRole };

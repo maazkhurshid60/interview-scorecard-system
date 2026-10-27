@@ -1,6 +1,6 @@
-const logger = require('../utils/logger');
-const Setting = require('../models/Setting');
-const googleMeet = require('./googleMeet');
+import logger from '../utils/logger.js';
+import Setting from '../models/Setting.js';
+import * as googleMeet from './googleMeet.js';
 
 /** Stub for a not-yet-implemented provider — Zoom/Fathom are wired in Phase 2. */
 function notEnabledStub(name) {
@@ -70,4 +70,4 @@ async function fetchTranscript(interview) {
   return impl.fetchTranscript(interview);
 }
 
-module.exports = { createMeeting, cancelMeeting, fetchTranscript };
+export { createMeeting, cancelMeeting, fetchTranscript };

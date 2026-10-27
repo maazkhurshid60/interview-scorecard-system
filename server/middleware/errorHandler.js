@@ -1,8 +1,6 @@
-const crypto = require('crypto');
-const logger = require('../utils/logger');
-const {
-  ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError, OfferLetterError,
-} = require('../utils/errors');
+import crypto from 'crypto';
+import logger from '../utils/logger.js';
+import { ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError, OfferLetterError } from '../utils/errors.js';
 
 /**
  * Global error-handling middleware. Every controller action is wrapped in
@@ -91,4 +89,4 @@ function notFoundHandler(req, res) {
   });
 }
 
-module.exports = { errorHandler, notFoundHandler };
+export { errorHandler, notFoundHandler };

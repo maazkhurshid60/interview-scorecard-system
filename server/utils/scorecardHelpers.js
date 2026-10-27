@@ -1,4 +1,4 @@
-const crypto = require('crypto');
+import crypto from 'crypto';
 
 /**
  * Uses each application question and its ideal answer / JD context as the
@@ -54,4 +54,4 @@ function assignMissingAttributeIds(stages) {
   });
 }
 
-module.exports = { syncHrQuestionnaireRubric, assignMissingAttributeIds };
+export { syncHrQuestionnaireRubric, assignMissingAttributeIds };

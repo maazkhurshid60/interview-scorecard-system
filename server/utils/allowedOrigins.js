@@ -45,4 +45,4 @@ function getAllowedOrigins(env = process.env) {
   return { origins, ignored, source };
 }
 
-module.exports = { getAllowedOrigins, normalizeOrigin, DEFAULT_ORIGIN };
+export { getAllowedOrigins, normalizeOrigin, DEFAULT_ORIGIN };

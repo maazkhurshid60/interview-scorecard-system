@@ -1,29 +1,29 @@
-const { google } = require('googleapis');
-const Interview = require('../models/Interview');
-const Application = require('../models/Application');
-const Requisition = require('../models/Requisition');
-const Scorecard = require('../models/Scorecard');
-const AuditLog = require('../models/AuditLog');
-require('../models/Candidate'); // registers the Candidate model for populate('candidateId')
-const logger = require('../utils/logger');
-const { asyncHandler, getEnabledStagesSorted } = require('../utils/helpers');
-const { ValidationError, TranscriptNotReadyError } = require('../utils/errors');
-const { assertCalendarMeetingCancelled } = require('../utils/meetingLifecycle');
-const { assertRequisitionOpen, assertRequisitionNotClosed } = require('../utils/requisitionStatus');
-const { uploadFile, deleteFile } = require('../services/fileStorage');
-const { assertPdfUpload } = require('../utils/uploadValidation');
-const { enqueueEmail, cancelPendingEmails } = require('../services/emailQueue');
-const { getCalendarTimeZone } = require('../utils/calendarTimeZone');
-const { destroyFileIfUnreferenced } = require('../services/fileReferenceCleanup');
-const transcriptProvider = require('../services/transcriptProvider');
-const { scoreInterview } = require('../services/aiScorer');
-const slackNotifier = require('../services/slackNotifier');
-const emailNotifier = require('../services/emailNotifier');
-const { renderEmail } = require('../utils/renderEmail');
-const { getSecrets } = require('../utils/secrets');
-const { extractArtifactText } = require('../utils/textExtractor');
-const { getCaptchaConfig, verifyCaptcha } = require('../services/captchaService');
-const { recomputeAndPersist, getOrCreateNextInterview } = require('./scoringController');
+import { google } from 'googleapis';
+import Interview from '../models/Interview.js';
+import Application from '../models/Application.js';
+import Requisition from '../models/Requisition.js';
+import Scorecard from '../models/Scorecard.js';
+import AuditLog from '../models/AuditLog.js';
+import '../models/Candidate.js'; // registers the Candidate model for populate('candidateId')
+import logger from '../utils/logger.js';
+import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
+import { ValidationError, TranscriptNotReadyError } from '../utils/errors.js';
+import { assertCalendarMeetingCancelled } from '../utils/meetingLifecycle.js';
+import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
+import { uploadFile, deleteFile } from '../services/fileStorage.js';
+import { assertPdfUpload } from '../utils/uploadValidation.js';
+import { enqueueEmail, cancelPendingEmails } from '../services/emailQueue.js';
+import { getCalendarTimeZone } from '../utils/calendarTimeZone.js';
+import { destroyFileIfUnreferenced } from '../services/fileReferenceCleanup.js';
+import * as transcriptProvider from '../services/transcriptProvider.js';
+import { scoreInterview } from '../services/aiScorer.js';
+import * as slackNotifier from '../services/slackNotifier.js';
+import * as emailNotifier from '../services/emailNotifier.js';
+import { renderEmail } from '../utils/renderEmail.js';
+import { getSecrets } from '../utils/secrets.js';
+import { extractArtifactText } from '../utils/textExtractor.js';
+import { getCaptchaConfig, verifyCaptcha } from '../services/captchaService.js';
+import { recomputeAndPersist, getOrCreateNextInterview } from './scoringController.js';
 
 /** Temporary diagnostic: remove after transcript parsing is verified. */
 function logParsedText(interviewId, source, text) {
@@ -835,8 +835,4 @@ const submitPublicAvailability = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = {
-  list, getOne, create, createMeeting, cancelMeeting, sendMeetingEmail, recordConsent, fetchTranscript,
-  uploadTranscript, uploadArtifact, score, googleOAuthCallback, sendOffer, getOrCreateNextInterview,
-  requestAvailability, getPublicAvailability, submitPublicAvailability,
-};
+export { list, getOne, create, createMeeting, cancelMeeting, sendMeetingEmail, recordConsent, fetchTranscript, uploadTranscript, uploadArtifact, score, googleOAuthCallback, sendOffer, getOrCreateNextInterview, requestAvailability, getPublicAvailability, submitPublicAvailability };

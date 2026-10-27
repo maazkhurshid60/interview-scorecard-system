@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { STAGE_PROGRESS_STATUS, DISPOSITIONS, FINAL_DECISIONS } = require('../utils/constants');
+import mongoose from 'mongoose';
+import { STAGE_PROGRESS_STATUS, DISPOSITIONS, FINAL_DECISIONS } from '../utils/constants.js';
 
 const applicationSchema = new mongoose.Schema({
   candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate', required: true, index: true },
@@ -71,4 +71,4 @@ const applicationSchema = new mongoose.Schema({
 
 applicationSchema.index({ requisitionId: 1, weightedTotal: -1 });
 
-module.exports = mongoose.model('Application', applicationSchema);
+export default mongoose.model('Application', applicationSchema);

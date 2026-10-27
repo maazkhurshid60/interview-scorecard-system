@@ -1,8 +1,8 @@
-const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const RefreshToken = require('../models/RefreshToken');
-const logger = require('../utils/logger');
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
+import RefreshToken from '../models/RefreshToken.js';
+import logger from '../utils/logger.js';
 
 /**
  * Login sessions = two HTTP-only cookies (scripts on the page cannot read them):
@@ -168,8 +168,4 @@ async function revokeAllForUser(userId) {
   await RefreshToken.updateMany({ userId, revokedAt: null }, { revokedAt: new Date() });
 }
 
-module.exports = {
-  ACCESS_COOKIE, REFRESH_COOKIE, REUSE_GRACE_MS,
-  getSessionConfig, signAccessToken, setSessionCookies, clearSessionCookies,
-  startSession, refreshSession, revokeSessionByCookie, revokeAllForUser,
-};
+export { ACCESS_COOKIE, REFRESH_COOKIE, REUSE_GRACE_MS, getSessionConfig, signAccessToken, setSessionCookies, clearSessionCookies, startSession, refreshSession, revokeSessionByCookie, revokeAllForUser };

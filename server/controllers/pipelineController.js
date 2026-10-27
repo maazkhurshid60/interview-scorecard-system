@@ -1,8 +1,8 @@
-const PipelineTemplate = require('../models/PipelineTemplate');
-const AuditLog = require('../models/AuditLog');
-const logger = require('../utils/logger');
-const { asyncHandler, normalizeWeights } = require('../utils/helpers');
-const { ValidationError } = require('../utils/errors');
+import PipelineTemplate from '../models/PipelineTemplate.js';
+import AuditLog from '../models/AuditLog.js';
+import logger from '../utils/logger.js';
+import { asyncHandler, normalizeWeights } from '../utils/helpers.js';
+import { ValidationError } from '../utils/errors.js';
 
 const REQUIRED_STAGE_KEYS = ['resume_screen', 'hr_screen'];
 
@@ -232,4 +232,4 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ message: 'Hiring process template deleted.' });
 });
 
-module.exports = { list, create, update, setDefault, remove };
+export { list, create, update, setDefault, remove };

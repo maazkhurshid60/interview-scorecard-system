@@ -1,5 +1,5 @@
-const IORedis = require('ioredis');
-const logger = require('../utils/logger');
+import IORedis from 'ioredis';
+import logger from '../utils/logger.js';
 
 /**
  * The Redis connection every BullMQ queue and worker uses (see services/emailQueue.js and
@@ -66,4 +66,4 @@ async function whenReady(queue, ms = 3000) {
 /** BullMQ rejects job ids that contain ":" or are plain numbers, so a readable key such as "a:123" is made safe. */
 const safeJobId = (key) => `k-${String(key).replace(/:/g, '-')}`;
 
-module.exports = { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady };
+export { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady };

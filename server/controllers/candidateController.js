@@ -1,18 +1,18 @@
-const mongoose = require('mongoose');
-const Candidate = require('../models/Candidate');
-const Application = require('../models/Application');
-const Interview = require('../models/Interview');
-const AuditLog = require('../models/AuditLog');
-const Requisition = require('../models/Requisition');
-const logger = require('../utils/logger');
-const { asyncHandler } = require('../utils/helpers');
-const { ValidationError } = require('../utils/errors');
-const { assertRequisitionOpen } = require('../utils/requisitionStatus');
-const { uploadFile, deleteFile } = require('../services/fileStorage');
-const { assertPdfUpload } = require('../utils/uploadValidation');
-const { destroyFileIfUnreferenced } = require('../services/fileReferenceCleanup');
-const transcriptProvider = require('../services/transcriptProvider');
-const { enqueueEmail } = require('../services/emailQueue');
+import mongoose from 'mongoose';
+import Candidate from '../models/Candidate.js';
+import Application from '../models/Application.js';
+import Interview from '../models/Interview.js';
+import AuditLog from '../models/AuditLog.js';
+import Requisition from '../models/Requisition.js';
+import logger from '../utils/logger.js';
+import { asyncHandler } from '../utils/helpers.js';
+import { ValidationError } from '../utils/errors.js';
+import { assertRequisitionOpen } from '../utils/requisitionStatus.js';
+import { uploadFile, deleteFile } from '../services/fileStorage.js';
+import { assertPdfUpload } from '../utils/uploadValidation.js';
+import { destroyFileIfUnreferenced } from '../services/fileReferenceCleanup.js';
+import * as transcriptProvider from '../services/transcriptProvider.js';
+import { enqueueEmail } from '../services/emailQueue.js';
 
 const PHONE_NUMBER_PATTERN = /^\d{11}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -489,6 +489,6 @@ const bulkAttach = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { list, create, bulkCreate, bulkAttach, getOne, update, apply, removeFromRequisition, remove, sendOnboardingForm };
+export { list, create, bulkCreate, bulkAttach, getOne, update, apply, removeFromRequisition, remove, sendOnboardingForm };
 
 

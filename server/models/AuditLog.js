@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { AUDIT_ACTIONS } = require('../utils/constants');
+import mongoose from 'mongoose';
+import { AUDIT_ACTIONS } from '../utils/constants.js';
 
 
 const auditLogSchema = new mongoose.Schema({
@@ -19,4 +19,4 @@ const auditLogSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now, index: true },
 });
 
-module.exports = mongoose.model('AuditLog', auditLogSchema);
+export default mongoose.model('AuditLog', auditLogSchema);

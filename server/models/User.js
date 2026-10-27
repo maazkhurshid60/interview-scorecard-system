@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { USER_ROLES } = require('../utils/constants');
+import mongoose from 'mongoose';
+import { USER_ROLES } from '../utils/constants.js';
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -20,4 +20,4 @@ const userSchema = new mongoose.Schema({
   active: { type: Boolean, default: true },
 }, { timestamps: true });
 
-module.exports = mongoose.model('User', userSchema);
+export default mongoose.model('User', userSchema);

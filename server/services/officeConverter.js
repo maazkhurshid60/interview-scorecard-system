@@ -1,9 +1,9 @@
-const { execFile } = require('child_process');
-const fs = require('fs');
-const fsp = require('fs/promises');
-const os = require('os');
-const path = require('path');
-const logger = require('../utils/logger');
+import { execFile } from 'child_process';
+import fs from 'fs';
+import fsp from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import logger from '../utils/logger.js';
 
 /**
  * Turns a Word file into a PDF with LibreOffice running without a window.
@@ -92,4 +92,4 @@ function isConverterAvailable() {
   return findLibreOffice() !== null;
 }
 
-module.exports = { convert, isConverterAvailable, ConverterUnavailableError };
+export { convert, isConverterAvailable, ConverterUnavailableError };

@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { MEETING_MODES, TRANSCRIPT_PROVIDERS, TRANSCRIPT_STATUS, INTERVIEW_STATUS } = require('../utils/constants');
+import mongoose from 'mongoose';
+import { MEETING_MODES, TRANSCRIPT_PROVIDERS, TRANSCRIPT_STATUS, INTERVIEW_STATUS } from '../utils/constants.js';
 
 const scoreSchema = new mongoose.Schema({
   attributeId: { type: String, required: true },
@@ -50,4 +50,4 @@ const interviewSchema = new mongoose.Schema({
   aiCostUsd: Number,
 }, { timestamps: true });
 
-module.exports = mongoose.model('Interview', interviewSchema);
+export default mongoose.model('Interview', interviewSchema);

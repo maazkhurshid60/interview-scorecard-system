@@ -1,32 +1,32 @@
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
-const express = require('express');
-const cookieParser = require('cookie-parser');
-const cors = require('cors');
-const helmet = require('helmet');
-const compression = require('compression');
-const morgan = require('morgan');
+import './config/env.js';
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import morgan from 'morgan';
 
-const connectDB = require('./config/db');
-const logger = require('./utils/logger');
-const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
-const { startRetentionSchedule } = require('./services/retentionService');
-const { startApplicationProcessor, closeApplicationProcessor } = require('./services/applicationProcessor');
-const { startEmailQueue, closeEmailQueue } = require('./services/emailQueue');
-const { getAllowedOrigins, normalizeOrigin } = require('./utils/allowedOrigins');
-const { createOriginGuard } = require('./middleware/originGuard');
-const { getCaptchaConfig } = require('./services/captchaService');
+import connectDB from './config/db.js';
+import logger from './utils/logger.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { startRetentionSchedule } from './services/retentionService.js';
+import { startApplicationProcessor, closeApplicationProcessor } from './services/applicationProcessor.js';
+import { startEmailQueue, closeEmailQueue } from './services/emailQueue.js';
+import { getAllowedOrigins, normalizeOrigin } from './utils/allowedOrigins.js';
+import { createOriginGuard } from './middleware/originGuard.js';
+import { getCaptchaConfig } from './services/captchaService.js';
 
-const authRoutes = require('./routes/auth');
-const requisitionRoutes = require('./routes/requisitions');
-const pipelineRoutes = require('./routes/pipelines');
-const candidateRoutes = require('./routes/candidates');
-const interviewRoutes = require('./routes/interviews');
-const scoringRoutes = require('./routes/scoring');
-const settingsRoutes = require('./routes/settings');
-const auditRoutes = require('./routes/audit');
-const userRoutes = require('./routes/users');
-const departmentRoutes = require('./routes/departments');
-const fileRoutes = require('./routes/files');
+import authRoutes from './routes/auth.js';
+import requisitionRoutes from './routes/requisitions.js';
+import pipelineRoutes from './routes/pipelines.js';
+import candidateRoutes from './routes/candidates.js';
+import interviewRoutes from './routes/interviews.js';
+import scoringRoutes from './routes/scoring.js';
+import settingsRoutes from './routes/settings.js';
+import auditRoutes from './routes/audit.js';
+import userRoutes from './routes/users.js';
+import departmentRoutes from './routes/departments.js';
+import fileRoutes from './routes/files.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -144,4 +144,4 @@ async function start() {
 
 start();
 
-module.exports = app;
+export default app;

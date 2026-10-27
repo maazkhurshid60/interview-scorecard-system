@@ -1,8 +1,8 @@
-const { Queue, Worker, UnrecoverableError } = require('bullmq');
-const Application = require('../models/Application');
-const logger = require('../utils/logger');
-const emailNotifier = require('./emailNotifier');
-const { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } = require('../queues/redis');
+import { Queue, Worker, UnrecoverableError } from 'bullmq';
+import Application from '../models/Application.js';
+import logger from '../utils/logger.js';
+import * as emailNotifier from './emailNotifier.js';
+import { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } from '../queues/redis.js';
 
 /**
  * Background email queue, run by BullMQ (on Redis).
@@ -255,4 +255,4 @@ async function closeEmailQueue() {
   queueConnection = null;
 }
 
-module.exports = { enqueueEmail, cancelPendingEmails, processEmailJob, startEmailQueue, closeEmailQueue, MAX_ATTEMPTS, BACKOFF_MS };
+export { enqueueEmail, cancelPendingEmails, processEmailJob, startEmailQueue, closeEmailQueue, MAX_ATTEMPTS, BACKOFF_MS };

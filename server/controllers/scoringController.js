@@ -1,22 +1,22 @@
-const Interview = require('../models/Interview');
-const Application = require('../models/Application');
-const Requisition = require('../models/Requisition');
-require('../models/Candidate'); // registers the Candidate model for populate('candidateId')
-const AuditLog = require('../models/AuditLog');
-const logger = require('../utils/logger');
-const { asyncHandler, getEnabledStagesSorted } = require('../utils/helpers');
-const { ValidationError } = require('../utils/errors');
-const { assertCalendarMeetingCancelled } = require('../utils/meetingLifecycle');
-const { assertRequisitionOpen, assertRequisitionNotClosed } = require('../utils/requisitionStatus');
-const { FINAL_DECISIONS } = require('../utils/constants');
-const { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } = require('../services/scoringEngine');
-const slackNotifier = require('../services/slackNotifier');
-const emailNotifier = require('../services/emailNotifier');
-const { enqueueEmail, cancelPendingEmails } = require('../services/emailQueue');
-const { uploadFile, deleteFile } = require('../services/fileStorage');
-const { assertPdfUpload } = require('../utils/uploadValidation');
-const { generateOfferLetter } = require('../services/offerLetterService');
-const { listTemplates } = require('../services/offerLetterTemplates');
+import Interview from '../models/Interview.js';
+import Application from '../models/Application.js';
+import Requisition from '../models/Requisition.js';
+import '../models/Candidate.js'; // registers the Candidate model for populate('candidateId')
+import AuditLog from '../models/AuditLog.js';
+import logger from '../utils/logger.js';
+import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
+import { ValidationError } from '../utils/errors.js';
+import { assertCalendarMeetingCancelled } from '../utils/meetingLifecycle.js';
+import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
+import { FINAL_DECISIONS } from '../utils/constants.js';
+import { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } from '../services/scoringEngine.js';
+import * as slackNotifier from '../services/slackNotifier.js';
+import * as emailNotifier from '../services/emailNotifier.js';
+import { enqueueEmail, cancelPendingEmails } from '../services/emailQueue.js';
+import { uploadFile, deleteFile } from '../services/fileStorage.js';
+import { assertPdfUpload } from '../utils/uploadValidation.js';
+import { generateOfferLetter } from '../services/offerLetterService.js';
+import { listTemplates } from '../services/offerLetterTemplates.js';
 
 /**
  * Recomputes an application's weightedTotal / allGatesPassed / disposition
@@ -697,8 +697,7 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
   if (passed && firstStageKey) {
     application.disposition = null;
     application.currentStageKey = firstStageKey;
-    
-    const Interview = require('../models/Interview');
+
     const isHrStage = firstStageKey === 'hr_interview' || firstStage?.stageType === 'hr_interview' || String(firstStageKey).toLowerCase().includes('hr_interview');
     let existing = await Interview.findOne({ applicationId: application._id, stageKey: firstStageKey });
     if (!existing) {
@@ -748,5 +747,5 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
   res.json({ application, nextInterviewId });
 });
 
-module.exports = { approve, override, recompute, decision, sendOfferLetter, getOfferLetterTemplates, previewOfferLetter, passFail, overrideInitialScreening, recomputeAndPersist, getOrCreateNextInterview };
+export { approve, override, recompute, decision, sendOfferLetter, getOfferLetterTemplates, previewOfferLetter, passFail, overrideInitialScreening, recomputeAndPersist, getOrCreateNextInterview };
 

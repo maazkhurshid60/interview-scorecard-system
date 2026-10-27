@@ -1,6 +1,6 @@
-const express = require('express');
-const pipelineController = require('../controllers/pipelineController');
-const { requireAuth, requireRole } = require('../middleware/auth');
+import express from 'express';
+import * as pipelineController from '../controllers/pipelineController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -14,4 +14,4 @@ router.patch('/:id', canManagePipelines, pipelineController.update);
 router.put('/:id/default', canManagePipelines, pipelineController.setDefault);
 router.delete('/:id', canManagePipelines, pipelineController.remove);
 
-module.exports = router;
+export default router;

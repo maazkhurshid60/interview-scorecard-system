@@ -1,6 +1,6 @@
-const axios = require('axios');
-const logger = require('../utils/logger');
-const { getSecrets } = require('../utils/secrets');
+import axios from 'axios';
+import logger from '../utils/logger.js';
+import { getSecrets } from '../utils/secrets.js';
 
 /** Base URL of the frontend, used to build "review this" links in notifications. */
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
@@ -86,4 +86,4 @@ async function notifySpendWarning({ monthKey, spend, capUsd }) {
   await sendMessage(text);
 }
 
-module.exports = { notifyTranscriptReady, notifyFinalDecision, notifyCandidateStuck, notifySpendWarning };
+export { notifyTranscriptReady, notifyFinalDecision, notifyCandidateStuck, notifySpendWarning };

@@ -1,4 +1,4 @@
-const Setting = require('../models/Setting');
+import Setting from '../models/Setting.js';
 
 /** Every credential an admin can override from Settings, instead of editing .env + redeploying. */
 const SECRET_SETTING_KEYS = [
@@ -44,4 +44,4 @@ function maskSecret(value) {
   return `${'•'.repeat(Math.min(str.length - 4, 12))}${str.slice(-4)}`;
 }
 
-module.exports = { getSecrets, maskSecret, SECRET_SETTING_KEYS };
+export { getSecrets, maskSecret, SECRET_SETTING_KEYS };

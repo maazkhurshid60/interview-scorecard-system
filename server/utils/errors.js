@@ -89,6 +89,4 @@ class OfferLetterError extends Error {
   }
 }
 
-module.exports = {
-  ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError, OfferLetterError,
-};
+export { ApiKeyError, RateLimitError, SpendCapError, ServiceError, TranscriptNotReadyError, ValidationError, OfferLetterError };

@@ -1,6 +1,6 @@
-const path = require('path');
-const { PDFParse } = require('pdf-parse');
-const mammoth = require('mammoth');
+import path from 'path';
+import { PDFParse } from 'pdf-parse';
+import mammoth from 'mammoth';
 
 const SUPPORTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
 
@@ -36,4 +36,4 @@ async function extractArtifactText(buffer, originalFilename) {
   throw new Error(`Unsupported artifact file type "${ext}" — only .txt, .md, .pdf, .docx are supported.`);
 }
 
-module.exports = { extractArtifactText, SUPPORTED_EXTENSIONS };
+export { extractArtifactText, SUPPORTED_EXTENSIONS };

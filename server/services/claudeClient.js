@@ -1,11 +1,11 @@
-const axios = require('axios');
-const logger = require('../utils/logger');
-const Setting = require('../models/Setting');
-const { withRetry } = require('../utils/retry');
-const { SpendCapError } = require('../utils/errors');
-const { round, currentMonthRange } = require('../utils/helpers');
-const { DEFAULT_COST_RATE_TABLE } = require('../utils/constants');
-const { getSecrets } = require('../utils/secrets');
+import axios from 'axios';
+import logger from '../utils/logger.js';
+import Setting from '../models/Setting.js';
+import { withRetry } from '../utils/retry.js';
+import { SpendCapError } from '../utils/errors.js';
+import { round, currentMonthRange } from '../utils/helpers.js';
+import { DEFAULT_COST_RATE_TABLE } from '../utils/constants.js';
+import { getSecrets } from '../utils/secrets.js';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -86,8 +86,7 @@ async function checkSpendCap() {
     if (!warnedMonths.includes(monthKey)) {
       logger.warn(`[ClaudeClient] Monthly AI spend $${round(spend, 2)} crossed ${warnPercent}% of the $${capUsd} cap.`);
       try {
-        // eslint-disable-next-line global-require
-        const slackNotifier = require('./slackNotifier');
+        const slackNotifier = await import('./slackNotifier.js');
         await slackNotifier.notifySpendWarning({ monthKey, spend, capUsd });
       } catch (err) {
         logger.warn(`[ClaudeClient] Spend warning notification failed: ${err.message}`);
@@ -222,4 +221,4 @@ async function callClaude({ model, system, messages, maxTokens, expectJson }) {
   return { text, inputTokens, outputTokens, costUsd };
 }
 
-module.exports = { callClaude, getModelIds };
+export { callClaude, getModelIds };

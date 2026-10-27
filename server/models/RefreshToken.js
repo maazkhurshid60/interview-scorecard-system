@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 /**
  * One row per issued refresh token. The token itself (a random secret kept in
@@ -26,4 +26,4 @@ const refreshTokenSchema = new mongoose.Schema({
 // MongoDB deletes each row automatically once its expiry time has passed.
 refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-module.exports = mongoose.model('RefreshToken', refreshTokenSchema);
+export default mongoose.model('RefreshToken', refreshTokenSchema);

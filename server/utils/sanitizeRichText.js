@@ -1,4 +1,4 @@
-const sanitizeHtml = require('sanitize-html');
+import sanitizeHtml from 'sanitize-html';
 
 /**
  * Cleans the rich text of a job description before it is stored.
@@ -51,4 +51,4 @@ function cleanRichText(value) {
   return sanitizeHtml(value, OPTIONS);
 }
 
-module.exports = { cleanRichText };
+export { cleanRichText };

@@ -1,4 +1,4 @@
-const { ValidationError } = require('./errors');
+import { ValidationError } from './errors.js';
 
 /** Largest PDF the app accepts (résumés, interview files, offer letters). Override with MAX_UPLOAD_PDF_MB. */
 const MAX_PDF_MB = Number(process.env.MAX_UPLOAD_PDF_MB) > 0 ? Number(process.env.MAX_UPLOAD_PDF_MB) : 5;
@@ -46,4 +46,4 @@ function assertPdfUpload(file, { field = 'file', label = 'file', required = true
   return { name: file.originalname, size, mimeType: 'application/pdf' };
 }
 
-module.exports = { assertPdfUpload, MAX_PDF_BYTES, MAX_PDF_MB, PDF_MAGIC };
+export { assertPdfUpload, MAX_PDF_BYTES, MAX_PDF_MB, PDF_MAGIC };

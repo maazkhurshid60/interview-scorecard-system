@@ -1,7 +1,7 @@
-const nodemailer = require('nodemailer');
-const logger = require('../utils/logger');
-const { getSecrets } = require('../utils/secrets');
-const { renderEmail } = require('../utils/renderEmail');
+import nodemailer from 'nodemailer';
+import logger from '../utils/logger.js';
+import { getSecrets } from '../utils/secrets.js';
+import { renderEmail } from '../utils/renderEmail.js';
 
 let cachedTransporter = null;
 let cachedForUser = null;
@@ -152,4 +152,4 @@ function shouldAttachOfferLetter() {
   return process.env.NODE_ENV === 'production';
 }
 
-module.exports = { sendEmail, shouldAttachOfferLetter, sendMeetingLinkEmail, sendOfferEmail, sendApplicationConfirmationEmail, sendPasswordResetEmail, sendAvailabilityRequestEmail, sendOnboardingFormEmail };
+export { sendEmail, shouldAttachOfferLetter, sendMeetingLinkEmail, sendOfferEmail, sendApplicationConfirmationEmail, sendPasswordResetEmail, sendAvailabilityRequestEmail, sendOnboardingFormEmail };

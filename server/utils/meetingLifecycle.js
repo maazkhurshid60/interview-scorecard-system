@@ -1,4 +1,4 @@
-const { ValidationError } = require('./errors');
+import { ValidationError } from './errors.js';
 
 /** Prevent completion while a managed Google Calendar meeting is still active. */
 function assertCalendarMeetingCancelled(interview, action) {
@@ -7,4 +7,4 @@ function assertCalendarMeetingCancelled(interview, action) {
   }
 }
 
-module.exports = { assertCalendarMeetingCancelled };
+export { assertCalendarMeetingCancelled };

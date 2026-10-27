@@ -1,6 +1,6 @@
-const logger = require('../utils/logger');
-const { callClaude, getModelIds } = require('./claudeClient');
-const { ApiKeyError, SpendCapError } = require('../utils/errors');
+import logger from '../utils/logger.js';
+import { callClaude, getModelIds } from './claudeClient.js';
+import { ApiKeyError, SpendCapError } from '../utils/errors.js';
 
 /**
  * Rough signal for "use the deeper model" — senior/leadership roles get
@@ -171,4 +171,4 @@ ${batch.map((s) => `- stageKey: "${s.key}" (${s.label}, inputType: ${s.inputType
   return { stages: resultStages };
 }
 
-module.exports = { generateScorecard };
+export { generateScorecard };

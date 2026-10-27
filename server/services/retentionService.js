@@ -1,9 +1,9 @@
-const logger = require('../utils/logger');
-const Requisition = require('../models/Requisition');
-const Interview = require('../models/Interview');
-const Setting = require('../models/Setting');
-const AuditLog = require('../models/AuditLog');
-const { deleteFile } = require('./fileStorage');
+import logger from '../utils/logger.js';
+import Requisition from '../models/Requisition.js';
+import Interview from '../models/Interview.js';
+import Setting from '../models/Setting.js';
+import AuditLog from '../models/AuditLog.js';
+import { deleteFile } from './fileStorage.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 let intervalHandle = null;
@@ -130,4 +130,4 @@ function stopRetentionSchedule() {
   }
 }
 
-module.exports = { startRetentionSchedule, stopRetentionSchedule, runRetentionSweep };
+export { startRetentionSchedule, stopRetentionSchedule, runRetentionSweep };

@@ -1,6 +1,6 @@
-const express = require('express');
-const auditController = require('../controllers/auditController');
-const { requireAuth, requireRole } = require('../middleware/auth');
+import express from 'express';
+import * as auditController from '../controllers/auditController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -9,4 +9,4 @@ router.use(requireRole(['owner', 'admin']));
 
 router.get('/', auditController.list);
 
-module.exports = router;
+export default router;
