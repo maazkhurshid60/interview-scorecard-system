@@ -105,12 +105,20 @@ ${SIGN_OFF}`,
     subject: 'Onboarding Form – Red Star Technologies',
     body: `Dear {name},
 
-Welcome to Red Star Technologies! We are thrilled to have you join our team. The onboarding form outlines the key information, policies and tools you need to settle in smoothly, and we are committed to supporting your success.
+Welcome to Red Star Technologies!
 
-Please complete your onboarding form using the link below:
-{onboardingLink}
+To complete your onboarding process, kindly fill out the onboarding form using the link below.
 
-${SIGN_OFF}`,
+Onboarding Form: {onboardingLink}
+
+Please ensure all required information is accurate and submitted before the deadline.
+
+We look forward to having you on our team.
+
+Best regards,
+HR Department
+RedStar Technologies
+hr@redstartechs.com`,
   },
 
   // To the candidate, when staff cancel a scheduled interview.
