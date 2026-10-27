@@ -35,7 +35,7 @@ hr@redstartechs.com`,
   // To the candidate, when a recruiter asks for their interview availability.
   availabilityRequest: {
     details: ['name', 'jobTitle', 'stage', 'availabilityLink'],
-    subject: 'Interview Availability Request – {jobTitle} ({stage})',
+    subject: 'Interview Availability Request – {jobTitle} ({stage}) | RedStar Technologies',
     body: `Dear {name},
 
 Thank you for your interest in the {jobTitle} position at Red Star Technologies. We would like to schedule your {stage} interview.
@@ -45,7 +45,8 @@ Please use the link below to select the dates and times that suit you best:
 
 Once we receive your availability, we will confirm the interview time with you.
 
-${SIGN_OFF}`,
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a meeting link is sent or sent again by hand.
