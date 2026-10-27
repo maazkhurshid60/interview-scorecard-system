@@ -19,14 +19,17 @@ export default {
   // To the candidate, right after they apply through the public job link.
   applicationReceived: {
     details: ['name', 'jobTitle'],
-    subject: 'Application Received – {jobTitle}',
+    subject: 'Application Received – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Thank you for applying for the {jobTitle} position at Red Star Technologies. We have received your application and our hiring team will review it carefully.
+Thank you for your interest in joining Red Star Technologies and for applying for the position of {jobTitle}.
 
-If your profile matches our requirements, we will contact you with the next steps.
+We have successfully received your application. Our recruitment team will review your profile, and if your qualifications and experience align with our requirements, we will contact you regarding the next steps in the hiring process.
 
-${SIGN_OFF}`,
+We appreciate your interest in becoming part of our team and thank you for considering Red Star Technologies as your next career opportunity.
+
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a recruiter asks for their interview availability.
