@@ -1,5 +1,6 @@
-import Application from '../models/Application.js';
-import Setting from '../models/Setting.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 import logger from '../utils/logger.js';
 import { callClaude, getModelIds } from './claudeClient.js';
 import { STAGE_MODEL_TIER } from '../utils/constants.js';
@@ -25,9 +26,9 @@ Respond ONLY with a valid JSON array, no other text, no markdown fences, no prea
 async function resolveModelForStage(stageType) {
   let stageModelTiers = STAGE_MODEL_TIER;
   try {
-    const doc = await Setting.findOne({ key: 'stageModelTiers' });
-    if (doc?.value && typeof doc.value === 'object') {
-      stageModelTiers = doc.value;
+    const configured = await settingRepo.getValue('stageModelTiers');
+    if (configured && typeof configured === 'object') {
+      stageModelTiers = configured;
     }
   } catch (err) {
     logger.warn(`[AIScorer] Failed to read stageModelTiers setting: ${err.message}`);
@@ -98,13 +99,13 @@ Do not use the candidate CV or Initial Screening Criteria for this stage.\n\n---
  * returned to the caller to surface, not persisted).
  *
  * @param {object} params
- * @param {import('mongoose').Document} params.interview - Must have transcriptText set.
+ * @param {object} params.interview - Must have transcriptText set.
  * @param {string} params.stageType - The stage's stageType (selects the model tier).
  * @param {Array<{attributeId:string, name:string, question?:string, anchor5?:string, redFlags?:string}>} params.attributes
  *   The scorecard's rubric attributes for this stage.
  * @param {object} [params.requisition] - Optional requisition document for full context.
  * @param {object} [params.application] - Optional application document for candidate source context.
- * @returns {Promise<{interview: import('mongoose').Document, message?: string}>}
+ * @returns {Promise<{interview: object, message?: string}>}
  * @throws {import('../utils/errors').ApiKeyError} on 401/403 — never scored on a bad key.
  * @throws {import('../utils/errors').SpendCapError} if the monthly AI spend cap is reached.
  * @throws {import('../utils/errors').RateLimitError} if 429 persists through retries.
@@ -112,7 +113,7 @@ Do not use the candidate CV or Initial Screening Criteria for this stage.\n\n---
  */
 async function scoreInterview({ interview, stageType, attributes, requisition, application }) {
   if (!application && interview.applicationId) {
-    application = await Application.findById(interview.applicationId);
+    application = await applicationRepo.findById(interview.applicationId);
   }
 
   const transcriptText = (interview.transcriptText || '').trim();
@@ -120,7 +121,7 @@ async function scoreInterview({ interview, stageType, attributes, requisition, a
 
   if (wordCount < MIN_TRANSCRIPT_WORDS && stageType !== 'hr_screen' && stageType !== 'hr_interview') {
     interview.transcriptStatus = 'failed';
-    await interview.save();
+    await interviewRepo.save(interview);
     const message = `Transcript is empty or too short to score (${wordCount} words, need at least ${MIN_TRANSCRIPT_WORDS}). Please re-upload a complete transcript.`;
     logger.warn(`[AIScorer] Interview ${interview._id}: ${message}`);
     return { interview, message };
@@ -163,7 +164,7 @@ async function scoreInterview({ interview, stageType, attributes, requisition, a
   };
   interview.aiCostUsd = (interview.aiCostUsd || 0) + costUsd;
 
-  await interview.save();
+  await interviewRepo.save(interview);
   logger.info(`[AIScorer] Interview ${interview._id} scored. costUsd=${costUsd}`);
 
   return { interview };

@@ -1,5 +1,5 @@
-import PipelineTemplate from '../models/PipelineTemplate.js';
-import AuditLog from '../models/AuditLog.js';
+import * as pipelines from '../repositories/pipelineTemplateRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, normalizeWeights } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
@@ -119,7 +119,7 @@ function normalizeTemplateStages(stages) {
 
 /** GET /api/pipelines — list all templates. */
 const list = asyncHandler(async (req, res) => {
-  const templates = await PipelineTemplate.find().sort({ name: 1 });
+  const templates = await pipelines.listAll();
   res.json({ templates });
 });
 
@@ -137,7 +137,7 @@ const create = asyncHandler(async (req, res) => {
   const autoMode = autoWeights === undefined ? true : !!autoWeights;
   const orderedStages = orderRequiredStages(stages);
   const normalizedStages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(orderedStages) : orderedStages);
-  const template = await PipelineTemplate.create({
+  const template = await pipelines.create({
     name, description, stages: normalizedStages, autoWeights: autoMode,
   });
   logger.info(`[Pipeline] Created template "${name}" (${template._id}) by user=${req.user._id}`);
@@ -150,22 +150,23 @@ const create = asyncHandler(async (req, res) => {
  * enabled, scored stages after any change, and toggles/weight edits are audited.
  */
 const update = asyncHandler(async (req, res) => {
-  const template = await PipelineTemplate.findById(req.params.id);
-  if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
+  const current = await pipelines.findById(req.params.id);
+  if (!current) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
 
   const { name, description, stages, autoWeights } = req.body;
-  if (name !== undefined) template.name = name;
-  if (description !== undefined) template.description = description;
+  const changes = {};
+  if (name !== undefined) changes.name = name;
+  if (description !== undefined) changes.description = description;
 
-  if (autoWeights !== undefined) template.autoWeights = !!autoWeights;
+  if (autoWeights !== undefined) changes.autoWeights = !!autoWeights;
   // Legacy templates predate this field; absent means auto.
-  const autoMode = template.autoWeights !== false;
+  const autoMode = (changes.autoWeights ?? current.autoWeights) !== false;
 
   if (Array.isArray(stages)) {
     assertRequiredStages(stages);
     const oldEnabled = {};
     const oldWeights = {};
-    template.stages.forEach((s) => { oldEnabled[s.key] = s.enabled; oldWeights[s.key] = s.weight; });
+    current.stages.forEach((s) => { oldEnabled[s.key] = s.enabled; oldWeights[s.key] = s.weight; });
 
     // In auto mode the even split IS the weighting, so it's re-derived on every
     // save rather than only when a toggle is detected. That keeps the invariant
@@ -174,47 +175,44 @@ const update = asyncHandler(async (req, res) => {
     // none of which a toggle-only check would catch. Manual mode leaves the
     // admin's numbers alone and merely normalizes them to 100%.
     const orderedStages = orderRequiredStages(stages);
-    template.stages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(orderedStages) : orderedStages);
-    template.description = describeTemplateStages(template.stages);
+    const normalizedStages = normalizeTemplateStages(autoMode ? equalizeScoredWeights(orderedStages) : orderedStages);
+    changes.stages = normalizedStages.map((s) => ({ ...s, enabled: s.enabled ?? true })); // as in the model, a stage with no `enabled` counts as enabled
+    changes.description = describeTemplateStages(changes.stages);
 
     const enabledChanged = stages.some((s) => oldEnabled[s.key] !== undefined && oldEnabled[s.key] !== s.enabled);
 
-    const weightsChanged = template.stages.some((s) => oldWeights[s.key] !== undefined && oldWeights[s.key] !== s.weight);
+    const weightsChanged = changes.stages.some((s) => oldWeights[s.key] !== undefined && oldWeights[s.key] !== s.weight);
 
     if (enabledChanged) {
-      await AuditLog.create({
-        action: 'stage_toggle', userId: req.user._id, targetType: 'pipelineTemplate', targetId: template._id.toString(),
-        oldValue: oldEnabled, newValue: Object.fromEntries(template.stages.map((s) => [s.key, s.enabled])),
+      await auditLog.record({
+        action: 'stage_toggle', userId: req.user._id, targetType: 'pipelineTemplate', targetId: current._id,
+        oldValue: oldEnabled, newValue: Object.fromEntries(changes.stages.map((s) => [s.key, s.enabled])),
         reason: 'Stage enabled/disabled via hiring process template edit.',
       });
     }
     if (weightsChanged) {
-      await AuditLog.create({
-        action: 'weight_change', userId: req.user._id, targetType: 'pipelineTemplate', targetId: template._id.toString(),
-        oldValue: oldWeights, newValue: Object.fromEntries(template.stages.map((s) => [s.key, s.weight])),
+      await auditLog.record({
+        action: 'weight_change', userId: req.user._id, targetType: 'pipelineTemplate', targetId: current._id,
+        oldValue: oldWeights, newValue: Object.fromEntries(changes.stages.map((s) => [s.key, s.weight])),
         reason: 'Stage weights re-normalized via hiring process template edit.',
       });
     }
   } else if (autoMode) {
     // Mode flipped to auto without a stages payload — still re-balance, so the
     // stored weights can never disagree with the mode they're saved under.
-    template.stages = normalizeTemplateStages(equalizeScoredWeights(template.stages));
-    template.description = describeTemplateStages(template.stages);
+    changes.stages = normalizeTemplateStages(equalizeScoredWeights(current.stages));
+    changes.description = describeTemplateStages(changes.stages);
   }
 
-  await template.save();
+  const template = await pipelines.update(current._id, changes);
   logger.info(`[Pipeline] Updated template ${template._id} by user=${req.user._id}`);
   res.json({ template });
 });
 
 /** PUT /api/pipelines/:id/default — flags this template as the default (unsets all others). */
 const setDefault = asyncHandler(async (req, res) => {
-  const template = await PipelineTemplate.findById(req.params.id);
+  const template = await pipelines.makeDefault(req.params.id);
   if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
-
-  await PipelineTemplate.updateMany({ _id: { $ne: template._id } }, { $set: { isDefault: false } });
-  template.isDefault = true;
-  await template.save();
 
   logger.info(`[Pipeline] Set ${template._id} ("${template.name}") as the default template.`);
   res.json({ template });
@@ -222,12 +220,12 @@ const setDefault = asyncHandler(async (req, res) => {
 
 /** DELETE /api/pipelines/:id — refuses to delete the current default (set another default first). */
 const remove = asyncHandler(async (req, res) => {
-  const template = await PipelineTemplate.findById(req.params.id);
+  const template = await pipelines.findById(req.params.id);
   if (!template) return res.status(404).json({ error: 'NOT_FOUND', message: 'Hiring process template not found.' });
   if (template.isDefault) {
     throw new ValidationError(['isDefault'], 'Cannot delete the default template — set another template as default first.');
   }
-  await PipelineTemplate.findByIdAndDelete(req.params.id);
+  await pipelines.remove(req.params.id);
   logger.info(`[Hiring process] Deleted template ${req.params.id} by user=${req.user._id}`);
   res.json({ message: 'Hiring process template deleted.' });
 });

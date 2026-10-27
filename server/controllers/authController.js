@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import User from '../models/User.js';
+import * as userRepo from '../repositories/userRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, sanitizeUser } from '../utils/helpers.js';
 import { enqueueEmail } from '../services/emailQueue.js';
@@ -39,7 +39,7 @@ const login = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION_ERROR', fields: ['email', 'password'], message: 'Email and password are required.' });
   }
 
-  const user = await User.findOne({ email: email.toLowerCase().trim() });
+  const user = await userRepo.findByEmail(email.toLowerCase().trim());
   if (!user || !user.active) {
     logger.warn(`[Auth] Login failed for ${email}: no such active user.`);
     return res.status(401).json({ error: 'AUTH_ERROR', message: 'Invalid email or password.' });
@@ -99,12 +99,13 @@ const forgotPassword = asyncHandler(async (req, res) => {
   if (!email) return res.status(400).json({ error: 'VALIDATION_ERROR', fields: ['email'], message: 'Enter your email address.' });
   if (!canRequestPasswordReset(req.ip || 'unknown')) return res.json({ message: RESET_RESPONSE });
 
-  const user = await User.findOne({ email, active: true }).select('+passwordResetTokenHash +passwordResetExpiresAt');
+  const user = await userRepo.findActiveByEmail(email);
   if (user) {
     const rawToken = crypto.randomBytes(32).toString('hex');
-    user.passwordResetTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    user.passwordResetExpiresAt = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
-    await user.save();
+    await userRepo.savePasswordResetToken(user._id, {
+      tokenHash: crypto.createHash('sha256').update(rawToken).digest('hex'),
+      expiresAt: new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000),
+    });
 
     const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/+$/, '');
     const resetUrl = `${clientUrl}/reset-password?token=${encodeURIComponent(rawToken)}`;
@@ -140,23 +141,18 @@ const resetPassword = asyncHandler(async (req, res) => {
   }
 
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const user = await User.findOne({
-    passwordResetTokenHash: tokenHash,
-    passwordResetExpiresAt: { $gt: new Date() },
-    active: true,
-  }).select('+passwordResetTokenHash +passwordResetExpiresAt');
+  const user = await userRepo.findByResetToken(tokenHash);
   if (!user) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', fields: ['token'], message: 'This password-reset link is invalid or has expired. Please request a new one.' });
   }
 
-  user.passwordHash = await bcrypt.hash(password, 12);
-  user.passwordResetTokenHash = undefined;
-  user.passwordResetExpiresAt = undefined;
-  // JWT `iat` is second-precision. Moving this back one second lets the new
+  // JWT `iat` is second-precision. Moving passwordChangedAt back one second lets the new
   // login immediately after a reset work while invalidating normal older
   // sessions.
-  user.passwordChangedAt = new Date(Date.now() - 1000);
-  await user.save();
+  await userRepo.completePasswordReset(user._id, {
+    passwordHash: await bcrypt.hash(password, 12),
+    passwordChangedAt: new Date(Date.now() - 1000),
+  });
   await sessions.revokeAllForUser(user._id); // signs the account out on every device
   logger.info(`[Auth] Password reset completed for user=${user._id}.`);
   return res.json({ message: 'Password updated. You can now sign in.' });

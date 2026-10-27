@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import logger from '../utils/logger.js';
-import User from '../models/User.js';
+import * as userRepo from '../repositories/userRepository.js';
 import { ACCESS_COOKIE } from '../services/sessionService.js';
 
 /**
@@ -29,7 +29,7 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'AUTH_ERROR', message: 'Invalid or expired token.' });
     }
 
-    const user = await User.findById(payload.sub);
+    const user = await userRepo.findById(payload.sub);
     if (!user || !user.active) {
       return res.status(401).json({ error: 'AUTH_ERROR', message: 'User not found or inactive.' });
     }

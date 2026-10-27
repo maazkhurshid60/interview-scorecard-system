@@ -1,9 +1,9 @@
-import mongoose from 'mongoose';
-import Candidate from '../models/Candidate.js';
-import Application from '../models/Application.js';
-import Interview from '../models/Interview.js';
-import AuditLog from '../models/AuditLog.js';
-import Requisition from '../models/Requisition.js';
+import { isValidId } from '../repositories/ids.js';
+import * as candidateRepo from '../repositories/candidateRepository.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
@@ -47,42 +47,28 @@ function validatePhone(phone, required = false) {
  * only way to find out is to attempt an attach and read the 409.
  */
 const list = asyncHandler(async (req, res) => {
-  const query = {};
-  if (req.query.search && req.query.search.trim()) {
-    const searchRegex = new RegExp(req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    query.$or = [{ name: searchRegex }, { email: searchRegex }, { phone: searchRegex }];
-  }
-
+  let ids; // undefined: every candidate; a list: only those
   if (req.query.requisitionId && req.query.requisitionId !== 'all') {
-    if (!mongoose.isValidObjectId(req.query.requisitionId)) {
-      query._id = { $in: [] };
-    } else {
-      const candidateIds = await Application.distinct('candidateId', { requisitionId: req.query.requisitionId });
-      query._id = { $in: candidateIds };
-    }
+    ids = isValidId(req.query.requisitionId)
+      ? await applicationRepo.listCandidateIdsForRequisition(req.query.requisitionId)
+      : [];
   }
 
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
-  const total = await Candidate.countDocuments(query);
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const requestedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const page = Math.min(requestedPage, totalPages);
-  const sort = req.query.sort === 'oldest' ? { createdAt: 1 } : { createdAt: -1 };
-  const candidates = await Candidate.find(query).sort(sort).skip((page - 1) * limit).limit(limit).lean();
+  const { candidates, total, page, totalPages } = await candidateRepo.listPage({
+    search: req.query.search,
+    ids,
+    limit,
+    page: Math.max(1, parseInt(req.query.page, 10) || 1),
+    oldestFirst: req.query.sort === 'oldest',
+  });
 
-  const applications = await Application.find({ candidateId: { $in: candidates.map((c) => c._id) } })
-    .select('candidateId requisitionId currentStageKey disposition')
-    .lean();
-  const requisitions = await Requisition.find({ _id: { $in: applications.map((a) => a.requisitionId) } })
-    .select('title status')
-    .lean();
+  const applications = await applicationRepo.listSummariesForCandidates(candidates.map((c) => c._id));
+  const requisitions = await requisitionRepo.listTitlesAndStatuses(applications.map((a) => a.requisitionId));
   const requisitionById = new Map(requisitions.map((r) => [String(r._id), r]));
 
-  const requisitionIds = await Application.distinct('requisitionId');
-  const requisitionOptions = await Requisition.find({ _id: { $in: requisitionIds } })
-    .select('title')
-    .sort({ title: 1 })
-    .lean();
+  const requisitionIds = await applicationRepo.listRequisitionIdsWithApplications();
+  const requisitionOptions = await requisitionRepo.listTitles(requisitionIds);
 
   const byCandidate = new Map();
   applications.forEach((a) => {
@@ -114,7 +100,7 @@ const create = asyncHandler(async (req, res) => {
   if (!name) throw new ValidationError(['name'], 'name is required.');
   const validatedEmail = validateEmail(email);
   const validatedPhone = validatePhone(phone);
-  const duplicate = await Candidate.findOne({ email: validatedEmail });
+  const duplicate = await candidateRepo.findByEmail(validatedEmail);
   if (duplicate) throw new ValidationError(['email'], 'A candidate with this email address already exists.');
   assertPdfUpload(req.file, { field: 'resume', label: 'résumé', required: false });
 
@@ -132,7 +118,7 @@ const create = asyncHandler(async (req, res) => {
     resumeFileMimeType = uploaded.mimeType;
   }
 
-  const candidate = await Candidate.create({
+  const candidate = await candidateRepo.create({
     name,
     email: validatedEmail,
     phone: validatedPhone,
@@ -162,9 +148,8 @@ const bulkCreate = asyncHandler(async (req, res) => {
     throw new ValidationError(['candidates'], `A maximum of ${MAX_BULK_IMPORT_ROWS} candidates can be imported at once.`);
   }
 
-  const existingCandidates = await Candidate.find({ email: { $exists: true, $ne: '' } }).select('email').lean();
-  const existingEmails = new Set(existingCandidates
-    .map((candidate) => String(candidate.email || '').trim().toLowerCase())
+  const existingEmails = new Set((await candidateRepo.listEmails())
+    .map((email) => String(email || '').trim().toLowerCase())
     .filter(Boolean));
   const fileEmails = new Set();
   const candidatesToCreate = [];
@@ -196,7 +181,7 @@ const bulkCreate = asyncHandler(async (req, res) => {
     candidatesToCreate.push({ name, email, phone, notes });
   });
 
-  const created = candidatesToCreate.length > 0 ? await Candidate.insertMany(candidatesToCreate) : [];
+  const created = candidatesToCreate.length > 0 ? await candidateRepo.createMany(candidatesToCreate) : [];
   logger.info(`[Candidate] Bulk import: created=${created.length}, skipped=${skipped.length}.`);
   res.status(201).json({
     createdCount: created.length,
@@ -208,32 +193,33 @@ const bulkCreate = asyncHandler(async (req, res) => {
 
 /** GET /api/candidates/:id */
 const getOne = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id);
+  const candidate = await candidateRepo.findById(req.params.id);
   if (!candidate) return res.status(404).json({ error: 'NOT_FOUND', message: 'Candidate not found.' });
   res.json({ candidate });
 });
 
 /** PATCH /api/candidates/:id */
 const update = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id);
+  const candidate = await candidateRepo.findById(req.params.id);
   if (!candidate) return res.status(404).json({ error: 'NOT_FOUND', message: 'Candidate not found.' });
 
   const { name, email, phone, notes } = req.body;
   const oldValue = {
     name: candidate.name, email: candidate.email || '', phone: candidate.phone || '', notes: candidate.notes || '',
   };
+  const changes = {};
   if (name !== undefined) {
     if (!String(name).trim()) throw new ValidationError(['name'], 'Name is required.');
-    candidate.name = String(name).trim();
+    changes.name = String(name).trim();
   }
   if (email !== undefined) {
     const cleanEmail = validateEmail(email);
-    const duplicate = await Candidate.findOne({ email: cleanEmail, _id: { $ne: candidate._id } });
+    const duplicate = await candidateRepo.findByEmail(cleanEmail, { exceptId: candidate._id });
     if (duplicate) throw new ValidationError(['email'], 'Another candidate already uses this email address.');
-    candidate.email = cleanEmail;
+    changes.email = cleanEmail;
   }
-  if (phone !== undefined) candidate.phone = validatePhone(phone);
-  if (notes !== undefined) candidate.notes = notes;
+  if (phone !== undefined) changes.phone = validatePhone(phone);
+  if (notes !== undefined) changes.notes = notes;
 
   let resumeReplaced = false;
   let replacedResumePublicId = null;
@@ -241,29 +227,31 @@ const update = asyncHandler(async (req, res) => {
     assertPdfUpload(req.file, { field: 'resume', label: 'résumé' });
     const oldPublicId = candidate.resumeFilePublicId;
     const uploaded = await uploadFile({ file: req.file, folder: 'resumes' });
-    candidate.resumeFileUrl = uploaded.url;
-    candidate.resumeFilePublicId = uploaded.publicId;
-    candidate.resumeFileName = uploaded.name;
-    candidate.resumeFileSize = uploaded.size;
-    candidate.resumeFileMimeType = uploaded.mimeType;
+    Object.assign(changes, {
+      resumeFileUrl: uploaded.url,
+      resumeFilePublicId: uploaded.publicId,
+      resumeFileName: uploaded.name,
+      resumeFileSize: uploaded.size,
+      resumeFileMimeType: uploaded.mimeType,
+    });
     resumeReplaced = true;
     replacedResumePublicId = oldPublicId;
   }
 
-  await candidate.save();
+  const updated = await candidateRepo.update(candidate._id, changes);
   if (replacedResumePublicId) {
     destroyFileIfUnreferenced(replacedResumePublicId)
       .catch((err) => logger.warn(`[Candidate] Could not clean up old résumé ${replacedResumePublicId}: ${err.message}`));
   }
-  await AuditLog.create({
+  await auditLog.record({
     action: 'candidate_update', userId: req.user._id,
-    targetType: 'candidate', targetId: candidate._id.toString(),
+    targetType: 'candidate', targetId: updated._id,
     oldValue, newValue: {
-      name: candidate.name, email: candidate.email || '', phone: candidate.phone || '', notes: candidate.notes || '', resumeReplaced,
+      name: updated.name, email: updated.email || '', phone: updated.phone || '', notes: updated.notes || '', resumeReplaced,
     },
     reason: 'Candidate profile updated.',
   });
-  res.json({ candidate });
+  res.json({ candidate: updated });
 });
 
 /**
@@ -273,17 +261,17 @@ const update = asyncHandler(async (req, res) => {
  * the same candidate+requisition pair.
  */
 const apply = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id);
+  const candidate = await candidateRepo.findById(req.params.id);
   if (!candidate) return res.status(404).json({ error: 'NOT_FOUND', message: 'Candidate not found.' });
 
   const { requisitionId } = req.body;
   if (!requisitionId) throw new ValidationError(['requisitionId'], 'requisitionId is required.');
 
-  const requisition = await Requisition.findById(requisitionId);
+  const requisition = await requisitionRepo.findById(requisitionId);
   if (!requisition) throw new ValidationError(['requisitionId'], 'No requisition found with that id.');
   assertRequisitionOpen(requisition, 'attach a candidate');
 
-  const existing = await Application.findOne({ candidateId: candidate._id, requisitionId });
+  const existing = await applicationRepo.findByCandidateAndRequisition(candidate._id, requisitionId);
   if (existing) {
     return res.status(409).json({
       error: 'VALIDATION_ERROR',
@@ -295,7 +283,7 @@ const apply = asyncHandler(async (req, res) => {
   const enabledStages = requisition.stages.filter((s) => s.enabled).sort((a, b) => a.order - b.order);
   const firstStageKey = enabledStages[0]?.key || null;
 
-  const application = await Application.create({
+  const application = await applicationRepo.create({
     candidateId: candidate._id,
     requisitionId,
     currentStageKey: firstStageKey,
@@ -314,20 +302,15 @@ const apply = asyncHandler(async (req, res) => {
  * for that application are removed so no further in-app work can occur.
  */
 const removeFromRequisition = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id);
+  const candidate = await candidateRepo.findById(req.params.id);
   if (!candidate) return res.status(404).json({ error: 'NOT_FOUND', message: 'Candidate not found.' });
 
-  const application = await Application.findOne({
-    candidateId: candidate._id,
-    requisitionId: req.params.requisitionId,
-  });
+  const application = await applicationRepo.findByCandidateAndRequisition(candidate._id, req.params.requisitionId);
   if (!application) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'This candidate is not attached to that requisition.' });
   }
 
-  const interviews = await Interview.find({ applicationId: application._id })
-    .select('artifactFilePublicId calendarEventId provider')
-    .lean();
+  const interviews = await interviewRepo.listFileAndMeetingInfo(application._id);
   const artifactIds = [...new Set(interviews.map((interview) => interview.artifactFilePublicId).filter(Boolean))];
 
   // Calendar-based Meet invitations must be cancelled before their database
@@ -343,9 +326,9 @@ const removeFromRequisition = asyncHandler(async (req, res) => {
 
   // Delete database references first. File cleanup then preserves anything
   // still referenced by the candidate profile or another interview.
-  await AuditLog.deleteMany({ applicationId: application._id });
-  const interviewResult = await Interview.deleteMany({ applicationId: application._id });
-  await application.deleteOne();
+  await auditLog.removeForApplication(application._id);
+  const interviewsDeleted = await interviewRepo.removeByApplication(application._id);
+  await applicationRepo.remove(application._id);
 
   const cleanupResults = await Promise.allSettled([
     ...artifactIds.map(destroyFileIfUnreferenced),
@@ -357,10 +340,10 @@ const removeFromRequisition = asyncHandler(async (req, res) => {
     .filter((result) => result.status === 'rejected')
     .forEach((result) => logger.warn(`[Candidate] Could not clean up removed application artifact: ${result.reason?.message || result.reason}`));
 
-  logger.info(`[Candidate] Removed ${candidate._id} from requisition ${req.params.requisitionId}: application=${application._id}, interviews=${interviewResult.deletedCount}, files=${deletedFiles}.`);
+  logger.info(`[Candidate] Removed ${candidate._id} from requisition ${req.params.requisitionId}: application=${application._id}, interviews=${interviewsDeleted}, files=${deletedFiles}.`);
   res.json({
     message: 'Candidate removed from this requisition.',
-    deleted: { applications: 1, interviews: interviewResult.deletedCount, files: deletedFiles },
+    deleted: { applications: 1, interviews: interviewsDeleted, files: deletedFiles },
   });
 });
 
@@ -371,14 +354,12 @@ const removeFromRequisition = asyncHandler(async (req, res) => {
  * cannot leave an apparently-deleted candidate with personal files behind.
  */
 const remove = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id);
+  const candidate = await candidateRepo.findById(req.params.id);
   if (!candidate) return res.status(404).json({ error: 'NOT_FOUND', message: 'Candidate not found.' });
 
-  const applications = await Application.find({ candidateId: candidate._id }).select('_id offerLetterPublicId').lean();
+  const applications = await applicationRepo.listOfferLettersForCandidate(candidate._id);
   const applicationIds = applications.map((application) => application._id);
-  const interviews = await Interview.find({ applicationId: { $in: applicationIds } })
-    .select('artifactFilePublicId')
-    .lean();
+  const interviews = await interviewRepo.listArtifactFileIds(applicationIds);
 
   const fileIds = [...new Set([
     candidate.resumeFilePublicId,
@@ -387,15 +368,15 @@ const remove = asyncHandler(async (req, res) => {
   ].filter(Boolean))];
   await Promise.all(fileIds.map((publicId) => deleteFile(publicId)));
 
-  await AuditLog.deleteMany({ applicationId: { $in: applicationIds } });
-  const interviewResult = await Interview.deleteMany({ applicationId: { $in: applicationIds } });
-  const applicationResult = await Application.deleteMany({ _id: { $in: applicationIds } });
-  await candidate.deleteOne();
+  await auditLog.removeForApplications(applicationIds);
+  const interviewsDeleted = await interviewRepo.removeByApplications(applicationIds);
+  const applicationsDeleted = await applicationRepo.removeMany(applicationIds);
+  await candidateRepo.remove(candidate._id);
 
-  logger.info(`[Candidate] Permanently deleted ${candidate._id}: applications=${applicationResult.deletedCount}, interviews=${interviewResult.deletedCount}, cloudinaryFiles=${fileIds.length}.`);
+  logger.info(`[Candidate] Permanently deleted ${candidate._id}: applications=${applicationsDeleted}, interviews=${interviewsDeleted}, cloudinaryFiles=${fileIds.length}.`);
   res.json({
     message: 'Candidate and all related records were deleted.',
-    deleted: { applications: applicationResult.deletedCount, interviews: interviewResult.deletedCount, cloudinaryFiles: fileIds.length },
+    deleted: { applications: applicationsDeleted, interviews: interviewsDeleted, cloudinaryFiles: fileIds.length },
   });
 });
 
@@ -407,15 +388,8 @@ const sendOnboardingForm = asyncHandler(async (req, res) => {
   }
 
   // Mark it pending BEFORE queueing, so the queue's later "sent" update cannot be overwritten.
-  const hasApplication = applicationId && mongoose.isValidObjectId(applicationId);
-  if (hasApplication) {
-    const application = await Application.findById(applicationId);
-    if (application) {
-      application.onboardingFormDeliveryStatus = 'pending';
-      application.onboardingFormSentAt = null;
-      await application.save();
-    }
-  }
+  const hasApplication = applicationId && isValidId(applicationId);
+  if (hasApplication) await applicationRepo.markOnboardingFormPending(applicationId);
 
   // The email is sent in the background; the queue marks the application "sent" once it really goes out.
   const result = await enqueueEmail({
@@ -445,18 +419,15 @@ const bulkAttach = asyncHandler(async (req, res) => {
     throw new ValidationError(['requisitionId'], 'Requisition ID is required.');
   }
 
-  const requisition = await Requisition.findById(requisitionId);
+  const requisition = await requisitionRepo.findById(requisitionId);
   if (!requisition) throw new ValidationError(['requisitionId'], 'Job opening not found.');
 
-  const candidates = await Candidate.find({ _id: { $in: candidateIds } }).select('_id name').lean();
+  const candidates = await candidateRepo.findNamesByIds(candidateIds);
   if (candidates.length === 0) throw new ValidationError(['candidateIds'], 'No valid candidates found.');
 
-  const existingApps = await Application.find({
-    candidateId: { $in: candidates.map((c) => c._id) },
-    requisitionId,
-  }).select('candidateId').lean();
-
-  const existingCandidateIds = new Set(existingApps.map((a) => String(a.candidateId)));
+  const existingCandidateIds = new Set(
+    (await applicationRepo.listAttachedCandidateIds(candidates.map((c) => c._id), requisitionId)).map(String),
+  );
 
   const enabledStages = (requisition.stages || []).filter((s) => s.enabled).sort((a, b) => a.order - b.order);
   const firstStageKey = enabledStages[0]?.key || null;
@@ -478,7 +449,7 @@ const bulkAttach = asyncHandler(async (req, res) => {
     }
   });
 
-  const created = toCreate.length > 0 ? await Application.insertMany(toCreate) : [];
+  const created = toCreate.length > 0 ? await applicationRepo.createMany(toCreate) : [];
 
   logger.info(`[Candidate] Bulk attach to ${requisitionId}: attached=${created.length}, skipped=${skippedCount}.`);
   res.status(200).json({

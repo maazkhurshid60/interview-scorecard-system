@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
-import RefreshToken from '../models/RefreshToken.js';
+import * as userRepo from '../repositories/userRepository.js';
+import * as refreshTokens from '../repositories/refreshTokenRepository.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -70,7 +70,7 @@ function clearSessionCookies(res) {
 async function createRefreshToken(userId, req, { familyId, familyStartedAt } = {}) {
   const { refreshDays } = getSessionConfig();
   const raw = crypto.randomBytes(48).toString('base64url');
-  await RefreshToken.create({
+  await refreshTokens.create({
     userId,
     tokenHash: hashToken(raw),
     familyId: familyId || crypto.randomUUID(),
@@ -99,7 +99,7 @@ async function refreshSession(req, res) {
 
   const { maxDays } = getSessionConfig();
   const now = new Date();
-  const stored = await RefreshToken.findOne({ tokenHash: hashToken(raw) });
+  const stored = await refreshTokens.findByHash(hashToken(raw));
   if (!stored) return { failure: 'unknown_token' };
   if (stored.expiresAt <= now) return { failure: 'expired' };
 
@@ -108,7 +108,7 @@ async function refreshSession(req, res) {
     return { failure: 'session_too_old' };
   }
 
-  const user = await User.findById(stored.userId);
+  const user = await userRepo.findById(stored.userId);
   if (!user || !user.active) {
     await revokeFamily(stored.familyId);
     return { failure: 'user_inactive' };
@@ -126,10 +126,10 @@ async function refreshSession(req, res) {
   // if two arrive at the same instant.
   let usedAt = stored.usedAt;
   if (!usedAt) {
-    const won = await RefreshToken.findOneAndUpdate({ _id: stored._id, usedAt: null, revokedAt: null }, { usedAt: now });
+    const won = await refreshTokens.markUsedIfUnused(stored._id, now);
     if (!won) {
       // Another request got there between our read and our update: look again.
-      const fresh = await RefreshToken.findById(stored._id);
+      const fresh = await refreshTokens.findById(stored._id);
       if (!fresh || fresh.revokedAt) return { failure: 'revoked' };
       usedAt = fresh.usedAt || now;
     }
@@ -152,20 +152,20 @@ async function refreshSession(req, res) {
 
 async function revokeFamily(familyId) {
   if (!familyId) return;
-  await RefreshToken.updateMany({ familyId, revokedAt: null }, { revokedAt: new Date() });
+  await refreshTokens.revokeFamily(familyId);
 }
 
 /** Ends the session that owns this refresh cookie (used by logout). */
 async function revokeSessionByCookie(req) {
   const raw = req.cookies?.[REFRESH_COOKIE];
   if (!raw) return;
-  const stored = await RefreshToken.findOne({ tokenHash: hashToken(raw) });
+  const stored = await refreshTokens.findByHash(hashToken(raw));
   if (stored) await revokeFamily(stored.familyId);
 }
 
 /** Signs a user out everywhere: used after a password change, deactivation or deletion. */
 async function revokeAllForUser(userId) {
-  await RefreshToken.updateMany({ userId, revokedAt: null }, { revokedAt: new Date() });
+  await refreshTokens.revokeAllForUser(userId);
 }
 
 export { ACCESS_COOKIE, REFRESH_COOKIE, REUSE_GRACE_MS, getSessionConfig, signAccessToken, setSessionCookies, clearSessionCookies, startSession, refreshSession, revokeSessionByCookie, revokeAllForUser };

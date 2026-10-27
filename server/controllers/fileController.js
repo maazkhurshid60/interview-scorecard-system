@@ -1,18 +1,18 @@
-import mongoose from 'mongoose';
-import Candidate from '../models/Candidate.js';
-import Interview from '../models/Interview.js';
-import Application from '../models/Application.js';
+import { isValidId } from '../repositories/ids.js';
+import * as candidateRepo from '../repositories/candidateRepository.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { getFileAccessUrl } from '../services/fileStorage.js';
 
 /**
- * Which stored file each `kind` refers to: the model it lives on, and the
- * names of that model's file fields.
+ * Which stored file each `kind` refers to: how to look it up (a repository function), and the names of
+ * the file fields.
  */
 const FILE_KINDS = {
-  resume: { model: Candidate, url: 'resumeFileUrl', id: 'resumeFilePublicId', name: 'resumeFileName', size: 'resumeFileSize', mime: 'resumeFileMimeType' },
-  artifact: { model: Interview, url: 'artifactFileUrl', id: 'artifactFilePublicId', name: 'artifactFileName', size: 'artifactFileSize', mime: 'artifactFileMimeType' },
-  'offer-letter': { model: Application, url: 'offerLetterUrl', id: 'offerLetterPublicId', name: 'offerLetterFileName', size: 'offerLetterFileSize', mime: 'offerLetterFileMimeType' },
+  resume: { find: candidateRepo.findResumeFile, url: 'resumeFileUrl', id: 'resumeFilePublicId', name: 'resumeFileName', size: 'resumeFileSize', mime: 'resumeFileMimeType' },
+  artifact: { find: interviewRepo.findArtifactFile, url: 'artifactFileUrl', id: 'artifactFilePublicId', name: 'artifactFileName', size: 'artifactFileSize', mime: 'artifactFileMimeType' },
+  'offer-letter': { find: applicationRepo.findOfferLetterFile, url: 'offerLetterUrl', id: 'offerLetterPublicId', name: 'offerLetterFileName', size: 'offerLetterFileSize', mime: 'offerLetterFileMimeType' },
 };
 
 /**
@@ -25,11 +25,11 @@ const FILE_KINDS = {
  */
 const getFile = asyncHandler(async (req, res) => {
   const kind = FILE_KINDS[req.params.kind];
-  if (!kind || !mongoose.isValidObjectId(req.params.id)) {
+  if (!kind || !isValidId(req.params.id)) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'File not found.' });
   }
 
-  const record = await kind.model.findById(req.params.id).select(Object.values(kind).filter((v) => typeof v === 'string').join(' '));
+  const record = await kind.find(req.params.id);
   if (!record || !record[kind.url]) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'No file has been uploaded.' });
   }

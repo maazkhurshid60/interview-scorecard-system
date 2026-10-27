@@ -1,4 +1,4 @@
-import Setting from '../models/Setting.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 
 /** Every credential an admin can override from Settings, instead of editing .env + redeploying. */
 const SECRET_SETTING_KEYS = [
@@ -15,9 +15,7 @@ const SECRET_SETTING_KEYS = [
  * @returns {Promise<{anthropicApiKey:string, googleClientId:string, googleClientSecret:string, googleRefreshToken:string, slackWebhookUrl:string, gmailUser:string, gmailAppPassword:string}>}
  */
 async function getSecrets() {
-  const docs = await Setting.find({ key: { $in: SECRET_SETTING_KEYS } });
-  const map = {};
-  docs.forEach((doc) => { map[doc.key] = doc.value; });
+  const map = await settingRepo.getValues(SECRET_SETTING_KEYS);
   return {
     anthropicApiKey: map.anthropicApiKey || process.env.ANTHROPIC_API_KEY,
     googleClientId: map.googleClientId || process.env.GOOGLE_CLIENT_ID,

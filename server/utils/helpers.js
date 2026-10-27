@@ -16,8 +16,8 @@ function asyncHandler(fn) {
 
 /**
  * Removes fields that must never leave the server (password hash, __v) from
- * a Mongoose user document before sending it to the client.
- * @param {import('mongoose').Document} userDoc
+ * a user (a plain object from the user repository, or a Mongoose document) before sending it to the client.
+ * @param {object} userDoc
  * @returns {object} Plain object safe to serialize in an API response.
  */
 function sanitizeUser(userDoc) {

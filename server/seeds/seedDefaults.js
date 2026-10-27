@@ -6,26 +6,25 @@ import connectDB from '../config/db.js';
 import logger from '../utils/logger.js';
 import { DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS, DEFAULT_COST_RATE_TABLE } from '../utils/constants.js';
 
-import User from '../models/User.js';
-import PipelineTemplate from '../models/PipelineTemplate.js';
-import Setting from '../models/Setting.js';
+import * as userRepo from '../repositories/userRepository.js';
+import * as pipelines from '../repositories/pipelineTemplateRepository.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 
 /**
  * Creates the first OWNER account from SEED_OWNER_NAME / SEED_OWNER_EMAIL / SEED_OWNER_PASSWORD.
  */
 async function seedOwnerUser() {
   const email = process.env.SEED_OWNER_EMAIL || "owner@example.com";
-  const hasOwner = await User.exists({ role: "owner" });
-  const existing = await User.findOne({ email });
+  const hasOwner = await userRepo.hasOwner();
+  const existing = await userRepo.findByEmail(email);
 
   if (existing) {
     if (!hasOwner && existing.role === "admin") {
-      existing.role = "owner";
-      await existing.save();
+      const upgraded = await userRepo.update(existing._id, { role: "owner" });
       logger.info(`[Seed] Upgraded existing user (${email}) to owner role.`);
-    } else {
-      logger.info(`[Seed] Owner user already exists (${email}) with role ${existing.role}, skipping.`);
+      return upgraded;
     }
+    logger.info(`[Seed] Owner user already exists (${email}) with role ${existing.role}, skipping.`);
     return existing;
   }
 
@@ -34,7 +33,7 @@ async function seedOwnerUser() {
   const passwordHash = await bcrypt.hash(password, 10);
   const initialRole = hasOwner ? "admin" : "owner";
 
-  const owner = await User.create({
+  const owner = await userRepo.create({
     name,
     email,
     passwordHash,
@@ -62,20 +61,20 @@ const DEMO_USERS = [
 
 async function seedDemoUsers() {
   for (const { role, email, name } of DEMO_USERS) {
-    const existing = await User.findOne({ email });
+    const existing = await userRepo.findByEmail(email);
     if (existing) {
       logger.info(`[Seed] ${role} user already exists (${email}), skipping.`);
       continue;
     }
 
     const passwordHash = await bcrypt.hash("12345678", 10);
-    await User.create({ name, email, passwordHash, role, active: true });
+    await userRepo.create({ name, email, passwordHash, role, active: true });
     logger.info(`[Seed] Created demo ${role} user: ${email}`);
   }
 }
 
 async function seedDefaultPipeline() {
-  const existing = await PipelineTemplate.findOne({ isDefault: true });
+  const existing = await pipelines.findDefault();
   if (existing) {
     logger.info(
       `[Seed] Default hiring process template already exists ("${existing.name}"), skipping.`,
@@ -83,7 +82,7 @@ async function seedDefaultPipeline() {
     return existing;
   }
 
-  const template = await PipelineTemplate.create({
+  const template = await pipelines.create({
     name: "Standard Hiring Stages",
     description:
       "Initial Screening (10%) -> HR Interview (15%) -> Sales Simulation (25%) -> Technical/Ops (25%) -> Final/CEO (15%).",
@@ -98,12 +97,7 @@ async function seedDefaultPipeline() {
 }
 
 async function upsertSetting(key, value, description) {
-  const result = await Setting.findOneAndUpdate(
-    { key },
-    { $setOnInsert: { key, value, description, updatedAt: new Date() } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-  return result;
+  return settingRepo.createIfMissing(key, value, description);
 }
 
 async function seedSettings() {

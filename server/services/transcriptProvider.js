@@ -1,5 +1,5 @@
 import logger from '../utils/logger.js';
-import Setting from '../models/Setting.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 import * as googleMeet from './googleMeet.js';
 
 /** Stub for a not-yet-implemented provider — Zoom/Fathom are wired in Phase 2. */
@@ -31,8 +31,8 @@ const PROVIDERS = {
  * @returns {Promise<string>} One of 'google_meet' | 'zoom' | 'fathom'.
  */
 async function getActiveProvider() {
-  const setting = await Setting.findOne({ key: 'activeTranscriptProvider' });
-  return setting?.value || process.env.ACTIVE_TRANSCRIPT_PROVIDER || 'google_meet';
+  const configured = await settingRepo.getValue('activeTranscriptProvider');
+  return configured || process.env.ACTIVE_TRANSCRIPT_PROVIDER || 'google_meet';
 }
 
 /**
@@ -41,7 +41,7 @@ async function getActiveProvider() {
  * Keeping this interface stable means adding a provider later is a new
  * file, not a rewrite.
  *
- * @param {import('mongoose').Document} interview
+ * @param {object} interview
  * @returns {Promise<{meetingUri: string, conferenceId: string}>}
  */
 async function createMeeting(interview, details) {
@@ -59,7 +59,7 @@ async function cancelMeeting(interview) {
 
 /**
  * Pulls the transcript for an interview from the active provider.
- * @param {import('mongoose').Document} interview
+ * @param {object} interview
  * @returns {Promise<{status: 'pending'|'ready'|'failed', text?: string}>}
  */
 async function fetchTranscript(interview) {

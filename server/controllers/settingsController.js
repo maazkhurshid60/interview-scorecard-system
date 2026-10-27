@@ -1,9 +1,9 @@
 import axios from 'axios';
 import { google } from 'googleapis';
-import Setting from '../models/Setting.js';
-import Interview from '../models/Interview.js';
-import Requisition from '../models/Requisition.js';
-import AuditLog from '../models/AuditLog.js';
+import * as settingRepo from '../repositories/settingRepository.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler } from '../utils/helpers.js';
 import { ValidationError, ApiKeyError } from '../utils/errors.js';
@@ -19,9 +19,9 @@ import { getSecrets, maskSecret, SECRET_SETTING_KEYS } from '../utils/secrets.js
  * masked preview of those instead.
  */
 const list = asyncHandler(async (req, res) => {
-  const settings = await Setting.find().sort({ key: 1 });
+  const settings = await settingRepo.listAll();
   const sanitized = settings.map((s) => (
-    SECRET_SETTING_KEYS.includes(s.key) ? { ...s.toObject(), value: undefined } : s
+    SECRET_SETTING_KEYS.includes(s.key) ? { ...s, value: undefined } : s
   ));
   res.json({ settings: sanitized });
 });
@@ -57,21 +57,18 @@ const keyStatus = asyncHandler(async (req, res) => {
 
 /** PUT /api/settings/:key — update a setting's value (thresholds, retention, provider, spend cap, ...). */
 const update = asyncHandler(async (req, res) => {
-  const setting = await Setting.findOne({ key: req.params.key });
-  if (!setting) return res.status(404).json({ error: 'NOT_FOUND', message: `No setting found with key "${req.params.key}".` });
+  const existing = await settingRepo.findByKey(req.params.key);
+  if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: `No setting found with key "${req.params.key}".` });
 
   if (req.body.value === undefined) throw new ValidationError(['value'], 'value is required.');
 
-  const oldValue = setting.value;
-  setting.value = req.body.value;
-  setting.updatedAt = new Date();
-  await setting.save();
+  const { oldValue, setting } = await settingRepo.updateValue(req.params.key, req.body.value);
 
   // Credentials are audited as an event only (which key, who, when). Their
   // values — old, new, or masked — are never stored in the audit log (it is
   // readable via /api/audit) and never echoed back in the response.
   const isSecret = SECRET_SETTING_KEYS.includes(setting.key);
-  await AuditLog.create({
+  await auditLog.record({
     action: setting.key === 'activeTranscriptProvider' ? 'provider_change' : 'key_change',
     userId: req.user._id, targetType: 'setting', targetId: setting.key,
     ...(isSecret ? {} : { oldValue, newValue: setting.value }),
@@ -79,7 +76,7 @@ const update = asyncHandler(async (req, res) => {
   });
 
   logger.info(`[Settings] Updated "${setting.key}" by user=${req.user._id}`);
-  res.json({ setting: isSecret ? { ...setting.toObject(), value: undefined } : setting });
+  res.json({ setting: isSecret ? { ...setting, value: undefined } : setting });
 });
 
 /**
@@ -154,29 +151,12 @@ const testApi = asyncHandler(async (req, res) => {
  * Token + cost totals grouped by model tier, stage, requisition, and month.
  */
 const aiUsage = asyncHandler(async (req, res) => {
-  const grouped = await Interview.aggregate([
-    { $match: { aiCostUsd: { $exists: true, $ne: null } } },
-    {
-      $group: {
-        _id: {
-          requisitionId: '$requisitionId',
-          stageKey: '$stageKey',
-          month: { $dateToString: { format: '%Y-%m', date: '$updatedAt' } },
-        },
-        totalCostUsd: { $sum: '$aiCostUsd' },
-        totalInputTokens: { $sum: '$aiTokensUsed.input' },
-        totalOutputTokens: { $sum: '$aiTokensUsed.output' },
-        interviewCount: { $sum: 1 },
-      },
-    },
-    { $sort: { '_id.month': -1 } },
-  ]);
+  const grouped = await interviewRepo.summarizeAiCost();
 
   const requisitionIds = [...new Set(grouped.map((g) => String(g._id.requisitionId)))];
-  const requisitions = await Requisition.find({ _id: { $in: requisitionIds } }, 'title stages');
+  const requisitions = await requisitionRepo.findTitlesAndStages(requisitionIds);
   const requisitionById = new Map(requisitions.map((r) => [String(r._id), r]));
-  const stageTiersSetting = await Setting.findOne({ key: 'stageModelTiers' });
-  const stageModelTiers = stageTiersSetting?.value || STAGE_MODEL_TIER;
+  const stageModelTiers = await settingRepo.getValue('stageModelTiers') || STAGE_MODEL_TIER;
 
   const rows = grouped.map((g) => {
     const requisition = requisitionById.get(String(g._id.requisitionId));

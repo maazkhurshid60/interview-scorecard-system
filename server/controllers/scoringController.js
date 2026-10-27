@@ -1,17 +1,14 @@
-import Interview from '../models/Interview.js';
-import Application from '../models/Application.js';
-import Requisition from '../models/Requisition.js';
-import '../models/Candidate.js'; // registers the Candidate model for populate('candidateId')
-import AuditLog from '../models/AuditLog.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
-import { assertCalendarMeetingCancelled } from '../utils/meetingLifecycle.js';
 import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
 import { FINAL_DECISIONS } from '../utils/constants.js';
 import { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } from '../services/scoringEngine.js';
 import * as slackNotifier from '../services/slackNotifier.js';
-import * as emailNotifier from '../services/emailNotifier.js';
 import { enqueueEmail, cancelPendingEmails } from '../services/emailQueue.js';
 import { uploadFile, deleteFile } from '../services/fileStorage.js';
 import { assertPdfUpload } from '../utils/uploadValidation.js';
@@ -31,14 +28,14 @@ import { listTemplates } from '../services/offerLetterTemplates.js';
  * Always derives stage averages live from approvedScore, never from the
  * cached interview.stageAverage, so it can't propagate a stale value.
  *
- * @param {import('mongoose').Document} application
- * @param {import('mongoose').Document} requisition
+ * @param {object} application
+ * @param {object} requisition
  * @param {string} userId
  * @param {string} reason - audit reason if the disposition changes
  * @returns {Promise<object>} the computeApplicationResult payload
  */
 async function recomputeAndPersist(application, requisition, userId, reason) {
-  const interviews = await Interview.find({ applicationId: application._id });
+  const interviews = await interviewRepo.listByApplication(application._id);
   const interviewsByStageKey = new Map(interviews.map((i) => [i.stageKey, i]));
 
   const result = computeApplicationResult({
@@ -76,10 +73,10 @@ async function recomputeAndPersist(application, requisition, userId, reason) {
   if (result.disposition === 'NO_HIRE' || result.allGatesPassed === false || application.stageProgress.some((p) => p.status === 'failed')) {
     application.currentStageKey = null;
   }
-  await application.save();
+  await applicationRepo.save(application);
 
   if (oldDisposition !== result.disposition) {
-    await AuditLog.create({
+    await auditLog.record({
       action: 'disposition_change', userId, requisitionId: application.requisitionId, applicationId: application._id,
       targetType: 'application', targetId: application._id.toString(),
       oldValue: oldDisposition, newValue: result.disposition, reason,
@@ -94,23 +91,22 @@ async function recomputeAndPersist(application, requisition, userId, reason) {
  * Re-ranks every application in the requisition and persists the result.
  *
  * Rank is requisition-wide — one candidate's new weighted total can reorder
- * everyone else — so it can't be derived from a single application. Written
- * with updateOne rather than save() to avoid two live documents for the same
- * record. Application.rank is a real schema field that requisitionController
- * .getOne() sorts by; without this it stays undefined forever and that sort
- * silently does nothing.
- * @param {import('mongoose').Document} application - the just-recomputed application
+ * everyone else — so it can't be derived from a single application. Only the
+ * rank is written (never the whole application) to avoid overwriting other
+ * changes. The rank is a real field that the job page sorts by; without this
+ * it stays undefined forever and that sort silently does nothing.
+ * @param {object} application - the just-recomputed application
  */
 async function persistRanks(application) {
-  const siblings = await Application.find({ requisitionId: application.requisitionId }).select('_id weightedTotal rank');
-  const ranked = rankApplications(siblings.map((a) => a.toObject()));
+  const siblings = await applicationRepo.listForRanking(application.requisitionId);
+  const ranked = rankApplications(siblings.map((a) => ({ ...a })));
 
   const writes = ranked
     .filter((a) => {
       const current = siblings.find((s) => String(s._id) === String(a._id));
       return current && current.rank !== a.rank;
     })
-    .map((a) => Application.updateOne({ _id: a._id }, { $set: { rank: a.rank } }));
+    .map((a) => applicationRepo.setRank(a._id, a.rank));
   await Promise.all(writes);
 
   const mine = ranked.find((a) => String(a._id) === String(application._id));
@@ -131,9 +127,9 @@ async function getOrCreateNextInterview(application, requisition, currentStageKe
   application.currentStageKey = next.key;
 
   const isHrInterview = next.key === 'hr_interview' || next.stageType === 'hr_interview' || String(next.key).toLowerCase().includes('hr_interview');
-  let existing = await Interview.findOne({ applicationId: application._id, stageKey: next.key });
+  let existing = await interviewRepo.findByApplicationAndStage(application._id, next.key);
   if (!existing) {
-    existing = await Interview.create({
+    existing = await interviewRepo.create({
       applicationId: application._id,
       requisitionId: application.requisitionId,
       stageKey: next.key,
@@ -161,26 +157,25 @@ async function getOrCreateNextInterview(application, requisition, currentStageKe
  * advances the pipeline, same endpoint HR already uses for every stage.
  */
 const approve = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
-  assertCalendarMeetingCancelled(interview, 'approve or re-approve this stage');
 
-  const requisitionForType = await Requisition.findById(interview.requisitionId);
+  const requisitionForType = await requisitionRepo.findById(interview.requisitionId);
   assertRequisitionNotClosed(requisitionForType, 'approve interview scores');
   const stageConfigForType = requisitionForType.stages.find((s) => s.key === interview.stageKey);
 
   if (stageConfigForType.inputType === 'status_only') {
     interview.status = 'approved';
-    await interview.save();
+    await interviewRepo.save(interview);
 
-    await AuditLog.create({
+    await auditLog.record({
       action: 'score_approve', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
       targetType: 'interview', targetId: interview._id.toString(),
       newValue: { status: 'approved' },
       reason: 'Status-only stage marked reached/complete (no rubric, no gate).',
     });
 
-    const application = await Application.findById(interview.applicationId);
+    const application = await applicationRepo.findById(interview.applicationId);
     const progress = application.stageProgress.find((p) => p.stageKey === interview.stageKey);
     if (progress) progress.status = 'approved';
 
@@ -216,7 +211,6 @@ const approve = asyncHandler(async (req, res) => {
       }
     }
     interview.status = 'scored';
-    interview.markModified('scores');
   }
 
   if (interview.status !== 'scored' && interview.status !== 'approved') {
@@ -233,10 +227,9 @@ const approve = asyncHandler(async (req, res) => {
     if (s.approvedScore === undefined || s.approvedScore === null) s.approvedScore = s.aiScore;
   });
   interview.status = 'approved';
-  interview.markModified('scores');
-  await interview.save();
+  await interviewRepo.save(interview);
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_approve', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
     targetType: 'interview', targetId: interview._id.toString(),
     oldValue: oldScores, newValue: interview.scores.map((s) => ({ attributeId: s.attributeId, approvedScore: s.approvedScore })),
@@ -246,9 +239,9 @@ const approve = asyncHandler(async (req, res) => {
   const stageAverage = computeStageAverage(interview);
   const passed = isStagePassed(stageAverage, stageConfigForType.passThreshold);
   interview.stageAverage = stageAverage;
-  await interview.save();
+  await interviewRepo.save(interview);
 
-  const application = await Application.findById(interview.applicationId);
+  const application = await applicationRepo.findById(interview.applicationId);
   const progress = application.stageProgress.find((p) => p.stageKey === interview.stageKey);
   if (progress) {
     progress.stageAverage = stageAverage;
@@ -274,9 +267,9 @@ const approve = asyncHandler(async (req, res) => {
  * never by array position. Every override is individually audited.
  */
 const override = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
-  const requisition = await Requisition.findById(interview.requisitionId);
+  const requisition = await requisitionRepo.findById(interview.requisitionId);
   assertRequisitionNotClosed(requisition, 'override interview scores');
 
   const { overrides } = req.body;
@@ -302,7 +295,7 @@ const override = asyncHandler(async (req, res) => {
       scoreEntry.overriddenBy = req.user._id;
       scoreEntry.overrideReason = trimmedReason;
 
-      await AuditLog.create({
+      await auditLog.record({
         action: 'score_override', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
         targetType: 'score', targetId: attributeId, oldValue, newValue: numScore, reason: trimmedReason,
       });
@@ -315,7 +308,7 @@ const override = asyncHandler(async (req, res) => {
         overrideReason: trimmedReason,
       });
 
-      await AuditLog.create({
+      await auditLog.record({
         action: 'score_override', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
         targetType: 'score', targetId: attributeId, oldValue: null, newValue: numScore, reason: trimmedReason,
       });
@@ -325,9 +318,7 @@ const override = asyncHandler(async (req, res) => {
   if (interview.status !== 'approved') {
     interview.status = 'scored';
   }
-
-  interview.markModified('scores');
-  await interview.save();
+  await interviewRepo.save(interview);
   logger.info(`[Scoring] Overrode ${overrides.length} score(s) on interview ${interview._id}.`);
   res.json({ interview });
 });
@@ -339,10 +330,10 @@ const override = asyncHandler(async (req, res) => {
  * weightedTotal can never yield HIRE unless every gate passed.
  */
 const recompute = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id);
+  const application = await applicationRepo.findById(req.params.id);
   if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
 
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   assertRequisitionNotClosed(requisition, 'recompute scores');
   const result = await recomputeAndPersist(
     application, requisition, req.user._id, 'Recomputed after score approval/override.'
@@ -360,9 +351,9 @@ const recompute = asyncHandler(async (req, res) => {
  * disposition too (it's a recommendation, the human has final authority).
  */
 const decision = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id).populate('candidateId', 'name');
+  const application = await applicationRepo.findByIdWithCandidate(req.params.id, 'name');
   if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   assertRequisitionNotClosed(requisition, 'record a final decision');
 
   const { decision: finalDecision, reason } = req.body;
@@ -374,9 +365,9 @@ const decision = asyncHandler(async (req, res) => {
   application.finalDecision = finalDecision;
   application.finalDecisionBy = req.user._id;
   if (finalDecision === 'rejected' && reason) application.rejectionReason = reason;
-  await application.save();
+  await applicationRepo.save(application);
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'final_decision', userId: req.user._id, requisitionId: application.requisitionId, applicationId: application._id,
     targetType: 'application', targetId: application._id.toString(),
     oldValue: oldDecision, newValue: finalDecision, reason,
@@ -411,12 +402,12 @@ const getOfferLetterTemplates = asyncHandler(async (req, res) => {
  * Makes the letter exactly as it would be sent and returns the PDF (base64), without storing or emailing anything.
  */
 const previewOfferLetter = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id).populate('candidateId', 'name');
+  const application = await applicationRepo.findByIdWithCandidate(req.params.id, 'name');
   if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
   if (application.finalDecision !== 'hired') {
     throw new ValidationError(['finalDecision'], 'An offer letter can only be made after the candidate is marked Hired.');
   }
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   assertRequisitionNotClosed(requisition, 'make an offer letter');
 
   const generated = await generateOfferLetter({
@@ -437,14 +428,14 @@ const previewOfferLetter = asyncHandler(async (req, res) => {
  * (emailQueued / emailReason) and does not undo the upload.
  */
 const sendOfferLetter = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id).populate('candidateId', 'name email');
+  const application = await applicationRepo.findByIdWithCandidate(req.params.id, 'name email');
   if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
 
   if (application.finalDecision !== 'hired') {
     throw new ValidationError(['finalDecision'], 'An offer letter can only be sent after the candidate is marked Hired.');
   }
 
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   assertRequisitionNotClosed(requisition, 'send an offer letter');
 
   // The letter is either the PDF staff uploaded, or one made from a template (the template wins if both arrive).
@@ -481,7 +472,7 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
   application.offerLetterDeliveryStatus = 'pending';
   application.offerLetterSentAt = null;
   try {
-    await application.save();
+    await applicationRepo.save(application);
   } catch (err) {
     // The new file was never recorded, so remove it; the previous letter is still in place.
     await deleteFile(upload.publicId).catch((cleanupErr) => logger.warn(`[Scoring] Could not remove unsaved offer letter ${upload.publicId}: ${cleanupErr.message}`));
@@ -497,8 +488,7 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
     }
   }
 
-  // The email is sent in the background. Production attaches the PDF itself (the queue keeps it
-  // until sent); other environments send a link.
+  // The email is sent in the background, with the PDF attached (the queue keeps it until sent).
   const candidate = application.candidateId;
   const emailResult = await enqueueEmail({
     type: 'offer-letter',
@@ -509,15 +499,13 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
       requisitionTitle: requisition.title,
       offerLetterUrl: upload.url,
     },
-    attachment: emailNotifier.shouldAttachOfferLetter()
-      ? { filename: file.originalname, content: file.buffer, contentType: 'application/pdf' }
-      : undefined,
+    attachment: { filename: file.originalname, content: file.buffer, contentType: 'application/pdf' },
     related: { kind: 'offer-letter', applicationId: application._id },
   });
   // A resend replaces any earlier offer email that is still waiting or retrying, so the candidate gets one.
   if (emailResult.queued) await cancelPendingEmails({ type: 'offer-letter', applicationId: application._id, exceptJobId: emailResult.jobId });
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'offer_letter_sent',
     userId: req.user._id,
     requisitionId: application.requisitionId,
@@ -533,7 +521,7 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
 });
 
 const passFail = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
 
   if (!interview) {
     return res.status(404).json({
@@ -541,9 +529,8 @@ const passFail = asyncHandler(async (req, res) => {
       message: 'Interview not found.',
     });
   }
-  assertCalendarMeetingCancelled(interview, 'save this stage decision');
 
-  const requisition = await Requisition.findById(interview.requisitionId);
+  const requisition = await requisitionRepo.findById(interview.requisitionId);
 
   if (!requisition) {
     return res.status(404).json({
@@ -586,9 +573,9 @@ const passFail = asyncHandler(async (req, res) => {
   interview.stageAverage = passed ? 5 : 1;
   interview.status = 'approved';
 
-  await interview.save();
+  await interviewRepo.save(interview);
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_approve',
     userId: req.user._id,
     requisitionId: interview.requisitionId,
@@ -602,7 +589,7 @@ const passFail = asyncHandler(async (req, res) => {
       : 'Marked pass_fail stage as failed.',
   });
 
-  const application = await Application.findById(interview.applicationId);
+  const application = await applicationRepo.findById(interview.applicationId);
 
   if (!application) {
     return res.status(404).json({
@@ -658,12 +645,12 @@ const passFail = asyncHandler(async (req, res) => {
  * of the requisition's pipeline.
  */
 const overrideInitialScreening = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id);
+  const application = await applicationRepo.findById(req.params.id);
   if (!application) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
   }
 
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   if (!requisition) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition not found.' });
   }
@@ -699,9 +686,9 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
     application.currentStageKey = firstStageKey;
 
     const isHrStage = firstStageKey === 'hr_interview' || firstStage?.stageType === 'hr_interview' || String(firstStageKey).toLowerCase().includes('hr_interview');
-    let existing = await Interview.findOne({ applicationId: application._id, stageKey: firstStageKey });
+    let existing = await interviewRepo.findByApplicationAndStage(application._id, firstStageKey);
     if (!existing) {
-      existing = await Interview.create({
+      existing = await interviewRepo.create({
         applicationId: application._id,
         requisitionId: requisition._id,
         stageKey: firstStageKey,
@@ -719,9 +706,9 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
     application.disposition = 'NO_HIRE';
   }
 
-  await application.save();
+  await applicationRepo.save(application);
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_override',
     userId: req.user._id,
     requisitionId: requisition._id,
@@ -734,10 +721,10 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
   });
 
   try {
-    const allApps = await Application.find({ requisitionId: requisition._id });
+    const allApps = await applicationRepo.listForRanking(requisition._id);
     const ranked = rankApplications(allApps);
     for (const app of ranked) {
-      await Application.updateOne({ _id: app._id }, { rank: app.rank });
+      await applicationRepo.setRank(app._id, app.rank);
     }
   } catch (rankErr) {
     logger.warn(`[Scoring] Ranking error: ${rankErr.message}`);

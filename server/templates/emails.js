@@ -19,20 +19,23 @@ export default {
   // To the candidate, right after they apply through the public job link.
   applicationReceived: {
     details: ['name', 'jobTitle'],
-    subject: 'Application Received – {jobTitle}',
+    subject: 'Application Received – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Thank you for applying for the {jobTitle} position at Red Star Technologies. We have received your application and our hiring team will review it carefully.
+Thank you for your interest in joining Red Star Technologies and for applying for the position of {jobTitle}.
 
-If your profile matches our requirements, we will contact you with the next steps.
+We have successfully received your application. Our recruitment team will review your profile, and if your qualifications and experience align with our requirements, we will contact you regarding the next steps in the hiring process.
 
-${SIGN_OFF}`,
+We appreciate your interest in becoming part of our team and thank you for considering Red Star Technologies as your next career opportunity.
+
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a recruiter asks for their interview availability.
   availabilityRequest: {
     details: ['name', 'jobTitle', 'stage', 'availabilityLink'],
-    subject: 'Interview Availability Request – {jobTitle} ({stage})',
+    subject: 'Interview Availability Request – {jobTitle} ({stage}) | RedStar Technologies',
     body: `Dear {name},
 
 Thank you for your interest in the {jobTitle} position at Red Star Technologies. We would like to schedule your {stage} interview.
@@ -42,53 +45,72 @@ Please use the link below to select the dates and times that suit you best:
 
 Once we receive your availability, we will confirm the interview time with you.
 
-${SIGN_OFF}`,
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a meeting link is sent or sent again by hand.
   // (Interviews scheduled through Google Calendar are announced by Google's own invitation instead.)
   interviewLink: {
-    details: ['name', 'jobTitle', 'stage', 'dateTime', 'timeZone', 'duration', 'meetingLink'],
-    subject: 'Interview Details – {jobTitle} ({stage})',
+    details: ['name', 'jobTitle', 'date', 'time', 'meetingLink'],
+    subject: 'Interview Invitation – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Your {stage} interview for the {jobTitle} position at Red Star Technologies is scheduled as follows:
+We are pleased to invite you for an interview for the position of {jobTitle} at RedStar Technologies.
 
-Date and time: {dateTime} ({timeZone})
-Duration: {duration}
-Meeting link: {meetingLink}
+Interview Date: {date}
+Interview Time: {time}
+Interview Link: {meetingLink}
 
-Please join a few minutes early and make sure your camera and microphone are working.
+Kindly join the meeting on time and ensure your camera, microphone, and internet connection are working properly.
 
-${SIGN_OFF}`,
+We look forward to speaking with you.
+
+Best regards,
+HR Department
+RedStar Technologies
+hr@redstartechs.com`,
   },
 
-  // To the candidate, when a recruiter sends the offer letter. The PDF is attached in production.
+  // To the candidate, when a recruiter sends the offer letter. The PDF is attached.
   offerLetterAttached: {
     details: ['name', 'jobTitle'],
-    subject: 'Job Offer – {jobTitle}',
+    subject: 'Job Offer – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Congratulations! We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
+Congratulations!
 
-Please find your offer letter attached to this email as a PDF. Kindly review it and confirm your acceptance.
+We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
 
-${SIGN_OFF}`,
+Please review your attached offer letter.
+
+Kindly confirm your acceptance.
+
+We look forward to welcoming you to our team.
+
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
-  // The same email outside production, where the letter is a download link instead of an attachment.
+  // The same email when there is no PDF to attach, where the letter is a download link instead.
   offerLetterLink: {
     details: ['name', 'jobTitle', 'offerLetterLink'],
-    subject: 'Job Offer – {jobTitle}',
+    subject: 'Job Offer – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Congratulations! We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
+Congratulations!
 
-You can view and download your offer letter here: {offerLetterLink}
+We are pleased to offer you the position of {jobTitle} at Red Star Technologies.
 
-Kindly review it and confirm your acceptance.
+Please review your offer letter using the link below:
+{offerLetterLink}
 
-${SIGN_OFF}`,
+Kindly confirm your acceptance.
+
+We look forward to welcoming you to our team.
+
+${SIGN_OFF}
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a recruiter sends the onboarding form.
@@ -97,12 +119,36 @@ ${SIGN_OFF}`,
     subject: 'Onboarding Form – Red Star Technologies',
     body: `Dear {name},
 
-Welcome to Red Star Technologies! We are thrilled to have you join our team. The onboarding form outlines the key information, policies and tools you need to settle in smoothly, and we are committed to supporting your success.
+Welcome to Red Star Technologies!
 
-Please complete your onboarding form using the link below:
-{onboardingLink}
+To complete your onboarding process, kindly fill out the onboarding form using the link below.
 
-${SIGN_OFF}`,
+Onboarding Form: {onboardingLink}
+
+Please ensure all required information is accurate and submitted before the deadline.
+
+We look forward to having you on our team.
+
+Best regards,
+HR Department
+RedStar Technologies
+hr@redstartechs.com`,
+  },
+
+  // To the candidate, when staff cancel a scheduled interview.
+  interviewCancelled: {
+    details: ['name', 'jobTitle', 'date', 'time'],
+    subject: 'Interview Cancelled – {jobTitle} | RedStar Technologies',
+    body: `Dear {name},
+
+We regret to inform you that your interview for the position of {jobTitle}, scheduled for {date} at {time}, has been cancelled.
+
+We apologize for any inconvenience and appreciate your understanding.
+
+Best regards,
+HR Department
+Red Star Technologies
+hr@redstartechs.com`,
   },
 
   // To the HR calendar mailbox, when an interview is scheduled with Google Calendar.

@@ -1,14 +1,12 @@
 import { google } from 'googleapis';
-import Interview from '../models/Interview.js';
-import Application from '../models/Application.js';
-import Requisition from '../models/Requisition.js';
-import Scorecard from '../models/Scorecard.js';
-import AuditLog from '../models/AuditLog.js';
-import '../models/Candidate.js'; // registers the Candidate model for populate('candidateId')
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
+import * as scorecardRepo from '../repositories/scorecardRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
 import { ValidationError, TranscriptNotReadyError } from '../utils/errors.js';
-import { assertCalendarMeetingCancelled } from '../utils/meetingLifecycle.js';
 import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
 import { uploadFile, deleteFile } from '../services/fileStorage.js';
 import { assertPdfUpload } from '../utils/uploadValidation.js';
@@ -18,7 +16,6 @@ import { destroyFileIfUnreferenced } from '../services/fileReferenceCleanup.js';
 import * as transcriptProvider from '../services/transcriptProvider.js';
 import { scoreInterview } from '../services/aiScorer.js';
 import * as slackNotifier from '../services/slackNotifier.js';
-import * as emailNotifier from '../services/emailNotifier.js';
 import { renderEmail } from '../utils/renderEmail.js';
 import { getSecrets } from '../utils/secrets.js';
 import { extractArtifactText } from '../utils/textExtractor.js';
@@ -32,20 +29,26 @@ function logParsedText(interviewId, source, text) {
 }
 
 /**
- * The meeting's date, time zone and length as readable text, for the emails. A part we do not know is ''
- * (the email template then leaves that line out).
- * @param {import('mongoose').Document} interview
- * @returns {{dateTime:string, timeZone:string, duration:string}}
+ * The meeting's date, time, time zone and length as readable text, for the emails. A part we do not know is ''
+ * (the email template then leaves that line out). `time` carries the time zone, for example "3:00 pm (Asia/Karachi)".
+ * @param {object} interview
+ * @returns {{dateTime:string, date:string, time:string, timeZone:string, duration:string}}
  */
 function describeMeetingTime(interview) {
   const timeZone = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Karachi';
   const dateTime = interview.meetingStart
     ? new Intl.DateTimeFormat('en-PK', { dateStyle: 'full', timeStyle: 'short', timeZone }).format(new Date(interview.meetingStart))
     : '';
+  const date = interview.meetingStart
+    ? new Intl.DateTimeFormat('en-PK', { dateStyle: 'full', timeZone }).format(new Date(interview.meetingStart))
+    : '';
+  const time = interview.meetingStart
+    ? `${new Intl.DateTimeFormat('en-PK', { timeStyle: 'short', timeZone }).format(new Date(interview.meetingStart))} (${timeZone})`
+    : '';
   const duration = interview.meetingEnd && interview.meetingStart
     ? `${Math.round((new Date(interview.meetingEnd) - new Date(interview.meetingStart)) / 60000)} minutes`
     : '';
-  return { dateTime, timeZone, duration };
+  return { dateTime, date, time, timeZone, duration };
 }
 
 /**
@@ -53,20 +56,20 @@ function describeMeetingTime(interview) {
  * background). Never throws — a missing candidate email or a queueing failure is
  * reported in the return value, never as an error on the caller (creating or
  * resending a meeting must still succeed even if the email can't go out).
- * @param {import('mongoose').Document} interview
+ * @param {object} interview
  * @returns {Promise<{queued:boolean, reason?:string}>}
  */
 async function emailMeetingLinkToCandidate(interview) {
   try {
-    const application = await Application.findById(interview.applicationId).populate('candidateId', 'name email');
+    const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
     const candidate = application?.candidateId;
     if (!candidate?.email) {
       logger.warn(`[Interview] No candidate email on file for application ${interview.applicationId} — skipping meeting email.`);
       return { queued: false, reason: 'No candidate email on file.' };
     }
-    const requisition = await Requisition.findById(interview.requisitionId);
+    const requisition = await requisitionRepo.findById(interview.requisitionId);
     const stageConfig = requisition?.stages.find((s) => s.key === interview.stageKey);
-    const { dateTime, timeZone, duration } = describeMeetingTime(interview);
+    const { date, time } = describeMeetingTime(interview);
     return await enqueueEmail({
       type: 'meeting-link',
       to: candidate.email,
@@ -76,9 +79,8 @@ async function emailMeetingLinkToCandidate(interview) {
         requisitionTitle: requisition?.title || 'your role',
         stageLabel: stageConfig?.label || interview.stageKey,
         meetingUri: interview.meetingUri,
-        interviewDateTime: dateTime,
-        interviewTimeZone: timeZone,
-        interviewDuration: duration,
+        interviewDate: date,
+        interviewTime: time,
       },
     });
   } catch (err) {
@@ -87,6 +89,39 @@ async function emailMeetingLinkToCandidate(interview) {
     // meeting creation into a 500 the caller has to retry.
     logger.warn(`[Interview] Could not queue the meeting-link email for ${interview._id}: ${err.message}`);
     return { queued: false, reason: 'Could not queue the email — the meeting link was still saved.' };
+  }
+}
+
+/**
+ * Queues an email telling the candidate their scheduled interview has been cancelled (it is sent in the background).
+ * Needs the interview's date and time for the wording, so an interview that was never scheduled (for example a link
+ * pasted by hand) gets no email. Never throws: a missing candidate email or a queueing failure is reported in the
+ * return value, so cancelling the meeting still succeeds.
+ * @param {object} interview the interview, before its meeting details are cleared
+ * @returns {Promise<{queued:boolean, reason?:string}>}
+ */
+async function emailInterviewCancelledToCandidate(interview) {
+  try {
+    const { date, time } = describeMeetingTime(interview);
+    if (!date || !time) return { queued: false, reason: 'The interview had no scheduled time, so no cancellation email was sent.' };
+    const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
+    const candidate = application?.candidateId;
+    if (!candidate?.email) return { queued: false, reason: 'No candidate email on file.' };
+    const requisition = await requisitionRepo.findById(interview.requisitionId);
+    return await enqueueEmail({
+      type: 'interview-cancelled',
+      to: candidate.email,
+      payload: {
+        candidateEmail: candidate.email,
+        candidateName: candidate.name,
+        requisitionTitle: requisition?.title || 'your role',
+        interviewDate: date,
+        interviewTime: time,
+      },
+    });
+  } catch (err) {
+    logger.warn(`[Interview] Could not queue the cancellation email for ${interview._id}: ${err.message}`);
+    return { queued: false, reason: 'Could not queue the email — the meeting was still cancelled.' };
   }
 }
 
@@ -101,8 +136,8 @@ async function emailCalendarHost(interview, action) {
     const hostEmail = process.env.GOOGLE_CALENDAR_HOST_EMAIL || gmailUser;
     if (!hostEmail) return { queued: false, reason: 'No Calendar host email configured.' };
 
-    const application = await Application.findById(interview.applicationId).populate('candidateId', 'name');
-    const requisition = await Requisition.findById(interview.requisitionId);
+    const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name');
+    const requisition = await requisitionRepo.findById(interview.requisitionId);
     const stage = requisition?.stages?.find((item) => item.key === interview.stageKey);
     const candidateName = application?.candidateId?.name || 'Candidate';
     const stageLabel = stage?.label || interview.stageKey;
@@ -144,7 +179,7 @@ async function assertPriorStagesApproved(requisition, applicationId, stageKey) {
   if (targetIndex <= 0) return; // first stage (or not found — let the caller validate stageKey itself)
 
   const priorKeys = ordered.slice(0, targetIndex).map((s) => s.key);
-  const priorInterviews = await Interview.find({ applicationId, stageKey: { $in: priorKeys } });
+  const priorInterviews = await interviewRepo.listByApplicationAndStages(applicationId, priorKeys);
 
   for (const key of priorKeys) {
     const interview = priorInterviews.find((i) => i.stageKey === key);
@@ -154,13 +189,11 @@ async function assertPriorStagesApproved(requisition, applicationId, stageKey) {
       err.statusCode = 409;
       throw err;
     }
-    const label = ordered.find((s) => s.key === key)?.label || key;
-    assertCalendarMeetingCancelled(interview, `start the ${label} stage`);
   }
 }
 
 async function assertInterviewMutable(interview, action) {
-  const requisition = await Requisition.findById(interview.requisitionId);
+  const requisition = await requisitionRepo.findById(interview.requisitionId);
   if (!requisition) throw new ValidationError(['requisitionId'], 'Requisition not found.');
   assertRequisitionNotClosed(requisition, action);
   return requisition;
@@ -177,20 +210,18 @@ const list = asyncHandler(async (req, res) => {
   if (!applicationId && !requisitionId && !applicationIds) {
     throw new ValidationError(['applicationId'], 'applicationId, applicationIds, or requisitionId query param is required.');
   }
-  const filter = {};
-  if (applicationId) filter.applicationId = applicationId;
-  if (requisitionId) filter.requisitionId = requisitionId;
+  let ids;
   if (applicationIds) {
-    const ids = String(applicationIds).split(',').map((id) => id.trim()).filter(Boolean);
-    if (ids.length > 0) filter.applicationId = { $in: ids };
+    const listed = String(applicationIds).split(',').map((id) => id.trim()).filter(Boolean);
+    if (listed.length > 0) ids = listed;
   }
-  const interviews = await Interview.find(filter).select('_id applicationId stageKey status stageAverage');
+  const interviews = await interviewRepo.listSummaries({ applicationId, requisitionId, applicationIds: ids });
   res.json({ interviews });
 });
 
 /** GET /api/interviews/:id */
 const getOne = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   // calendarTimeZone: the zone meetings are booked in, so the page picks and shows times in it too.
   res.json({ interview, calendarTimeZone: getCalendarTimeZone() });
@@ -206,19 +237,19 @@ const create = asyncHandler(async (req, res) => {
   const { applicationId, stageKey, meetingMode, provider } = req.body;
   if (!applicationId || !stageKey) throw new ValidationError(['applicationId', 'stageKey'], 'applicationId and stageKey are required.');
 
-  const application = await Application.findById(applicationId);
+  const application = await applicationRepo.findById(applicationId);
   if (!application) throw new ValidationError(['applicationId'], 'No application found with that id.');
   if (application.disposition === 'NO_HIRE' || (application.stageProgress || []).some((p) => p.status === 'failed')) {
     throw new ValidationError(['applicationId'], 'This candidate has failed a stage and cannot have new interviews created.');
   }
 
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   if (!requisition) throw new ValidationError(['requisitionId'], 'Requisition not found.');
   assertRequisitionOpen(requisition, 'start a new interview stage');
   const stageConfig = requisition.stages.find((s) => s.key === stageKey && s.enabled);
   if (!stageConfig) throw new ValidationError(['stageKey'], 'That stage is not enabled on this requisition.');
 
-  const existing = await Interview.findOne({ applicationId, stageKey });
+  const existing = await interviewRepo.findByApplicationAndStage(applicationId, stageKey);
   if (existing) {
     return res.status(409).json({ error: 'VALIDATION_ERROR', message: 'An interview for this application+stage already exists.', interviewId: existing._id });
   }
@@ -226,7 +257,7 @@ const create = asyncHandler(async (req, res) => {
   await assertPriorStagesApproved(requisition, applicationId, stageKey);
 
   const isHrStage = stageKey === 'hr_interview' || stageConfig?.stageType === 'hr_interview' || String(stageKey).toLowerCase().includes('hr_interview');
-  const interview = await Interview.create({
+  const interview = await interviewRepo.create({
     applicationId,
     requisitionId: requisition._id,
     stageKey,
@@ -239,7 +270,7 @@ const create = asyncHandler(async (req, res) => {
   application.currentStageKey = stageKey;
   const progress = application.stageProgress.find((p) => p.stageKey === stageKey);
   if (progress) progress.status = 'scheduled';
-  await application.save();
+  await applicationRepo.save(application);
 
   logger.info(`[Interview] Created ${interview._id} for application=${applicationId} stage=${stageKey}`);
   res.status(201).json({ interview });
@@ -252,7 +283,7 @@ const create = asyncHandler(async (req, res) => {
  * transcript can't be auto-fetched).
  */
 const createMeeting = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'create or change a meeting');
 
@@ -277,12 +308,12 @@ const createMeeting = asyncHandler(async (req, res) => {
       interview.calendarEventId = undefined;
       interview.meetingStart = undefined;
       interview.meetingEnd = undefined;
-      await interview.save();
+      await interviewRepo.save(interview);
       logger.info(`[Interview] Previous Calendar meeting cancelled before replacement for ${interview._id}.`);
     }
 
-    const application = await Application.findById(interview.applicationId).populate('candidateId', 'name email');
-    const requisition = await Requisition.findById(interview.requisitionId);
+    const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
+    const requisition = await requisitionRepo.findById(interview.requisitionId);
     const stage = requisition?.stages?.find((item) => item.key === interview.stageKey);
     const { meetingUri, conferenceId, calendarEventId, meetingStart, meetingEnd } = await transcriptProvider.createMeeting(interview, {
       startTime: req.body?.meetingStart,
@@ -309,13 +340,11 @@ const createMeeting = asyncHandler(async (req, res) => {
     interview.provider = 'google_meet';
   }
   interview.status = 'scheduled';
-  await interview.save();
+  await interviewRepo.save(interview);
 
-  // Calendar sends the candidate the official invitation itself. Keep the
-  // existing email fallback only for manually pasted meeting links.
-  const emailResult = interview.calendarEventId
-    ? { queued: true, reason: 'Google Calendar invitation sent.' }
-    : await emailMeetingLinkToCandidate(interview);
+  // The candidate always gets our own invitation email. For a Google Calendar meeting they also get
+  // Google's own invitation, so the two arrive together.
+  const emailResult = await emailMeetingLinkToCandidate(interview);
   const hostEmailResult = interview.calendarEventId
     ? await emailCalendarHost(interview, 'scheduled')
     : null;
@@ -337,7 +366,7 @@ const createMeeting = asyncHandler(async (req, res) => {
  * the auto-send on creation failed, was missed, or the link since changed.
  */
 const sendMeetingEmail = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'send a meeting email');
   if (!interview.meetingUri) {
@@ -356,7 +385,7 @@ const sendMeetingEmail = asyncHandler(async (req, res) => {
  * stale link can never orphan or reset evidence a human already reviewed.
  */
 const cancelMeeting = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'cancel a meeting');
 
@@ -371,6 +400,7 @@ const cancelMeeting = asyncHandler(async (req, res) => {
   const hostEmailResult = interview.calendarEventId
     ? await emailCalendarHost(interview, 'cancelled')
     : null;
+  const candidateEmailResult = await emailInterviewCancelledToCandidate(interview); // before the meeting details are cleared
 
   interview.meetingUri = undefined;
   interview.conferenceId = undefined;
@@ -384,7 +414,7 @@ const cancelMeeting = asyncHandler(async (req, res) => {
       interview.transcriptStatus = 'none';
     }
   }
-  await interview.save();
+  await interviewRepo.save(interview);
 
   logger.info(`[Interview] Meeting cancelled for ${interview._id}.`);
   res.json({
@@ -392,19 +422,21 @@ const cancelMeeting = asyncHandler(async (req, res) => {
     hostEmailQueued: hostEmailResult?.queued,
     hostEmailReason: hostEmailResult?.reason,
     hostEmail: hostEmailResult?.hostEmail,
+    candidateEmailQueued: candidateEmailResult.queued,
+    candidateEmailReason: candidateEmailResult.reason,
   });
 });
 
 /** POST /api/interviews/:id/consent */
 const recordConsent = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'record consent');
 
   interview.consentObtained = true;
-  await interview.save();
+  await interviewRepo.save(interview);
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'consent_capture', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
     targetType: 'interview', targetId: interview._id.toString(), newValue: { consentObtained: true },
     reason: 'Candidate consent confirmed before recording/scoring.',
@@ -420,7 +452,7 @@ const recordConsent = asyncHandler(async (req, res) => {
  * 4xx/5xx failure, so the UI knows to keep polling.
  */
 const fetchTranscript = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'fetch a transcript');
 
@@ -430,13 +462,13 @@ const fetchTranscript = asyncHandler(async (req, res) => {
 
   if (result.status === 'pending') {
     interview.transcriptStatus = 'pending';
-    await interview.save();
+    await interviewRepo.save(interview);
     throw new TranscriptNotReadyError(120);
   }
 
   interview.transcriptText = result.text;
   interview.transcriptStatus = 'ready';
-  await interview.save();
+  await interviewRepo.save(interview);
 
   logParsedText(interview._id, 'Google Meet transcript', result.text);
   logger.info(`[Interview] Transcript ready for ${interview._id}.`);
@@ -450,7 +482,7 @@ const fetchTranscript = asyncHandler(async (req, res) => {
  * not persisted; only the extracted text is retained for scoring.
  */
 const uploadTranscript = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'upload a transcript');
   if (!req.file) throw new ValidationError(['transcript'], 'A transcript file is required (field name "transcript").');
@@ -468,10 +500,10 @@ const uploadTranscript = asyncHandler(async (req, res) => {
   // interview. Keep its provider when a Calendar event exists so cancelling
   // the interview still deletes that event and notifies attendees.
   if (!interview.calendarEventId) interview.provider = 'manual';
-  await interview.save();
+  await interviewRepo.save(interview);
 
   logParsedText(interview._id, 'uploaded transcript', text);
-  await AuditLog.create({
+  await auditLog.record({
     action: 'transcript_upload', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
     targetType: 'interview', targetId: interview._id.toString(), newValue: { transcriptStatus: 'ready', wordCount: text.split(/\s+/).length },
     reason: 'Manual transcript upload.',
@@ -490,7 +522,7 @@ const uploadTranscript = asyncHandler(async (req, res) => {
  * changes to either.
  */
 const uploadArtifact = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
   await assertInterviewMutable(interview, 'upload an artifact');
   assertPdfUpload(req.file, { field: 'artifact', label: 'artifact' });
@@ -508,12 +540,12 @@ const uploadArtifact = asyncHandler(async (req, res) => {
     interview.transcriptStatus = 'ready';
   } catch (err) {
     interview.transcriptStatus = 'failed';
-    await interview.save();
+    await interviewRepo.save(interview);
     logger.warn(`[Interview] Artifact text extraction failed for ${interview._id}: ${err.message}`);
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: err.message, interview });
   }
 
-  await interview.save();
+  await interviewRepo.save(interview);
   logParsedText(interview._id, 'extracted artifact', interview.transcriptText);
   if (oldArtifactPublicId) {
     destroyFileIfUnreferenced(oldArtifactPublicId)
@@ -530,10 +562,10 @@ const uploadArtifact = asyncHandler(async (req, res) => {
  * scores — they do not count until approved (scoringController).
  */
 const score = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
 
-  const requisition = await Requisition.findById(interview.requisitionId);
+  const requisition = await requisitionRepo.findById(interview.requisitionId);
   assertRequisitionNotClosed(requisition, 'score an interview');
   const stageConfig = requisition.stages.find((s) => s.key === interview.stageKey);
 
@@ -554,13 +586,13 @@ const score = asyncHandler(async (req, res) => {
 
   await assertPriorStagesApproved(requisition, interview.applicationId, interview.stageKey);
 
-  const scorecard = await Scorecard.findOne({ requisitionId: interview.requisitionId });
+  const scorecard = await scorecardRepo.findByRequisition(interview.requisitionId);
   const scorecardStage = scorecard?.stages.find((s) => s.stageKey === interview.stageKey);
   if (!scorecardStage || scorecardStage.attributes.length === 0) {
     throw new ValidationError(['stageKey'], 'No rubric found for this stage — generate or edit the scorecard first.');
   }
 
-  const application = await Application.findById(interview.applicationId).populate('candidateId', 'name');
+  const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name');
 
   const { interview: scored, message } = await scoreInterview({
     interview,
@@ -576,7 +608,7 @@ const score = asyncHandler(async (req, res) => {
 
   const progress = application.stageProgress.find((p) => p.stageKey === interview.stageKey);
   if (progress) progress.status = 'scored';
-  await application.save();
+  await applicationRepo.save(application);
 
   try {
     const stageAverage = scored.scores.length
@@ -631,13 +663,12 @@ const googleOAuthCallback = asyncHandler(async (req, res) => {
  * to the candidate, and approves/completes the Offer stage in the pipeline!
  */
 const sendOffer = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
-  assertCalendarMeetingCancelled(interview, 'complete this stage');
 
   assertPdfUpload(req.file, { field: 'offerLetter', label: 'offer letter' });
 
-  const requisition = await Requisition.findById(interview.requisitionId);
+  const requisition = await requisitionRepo.findById(interview.requisitionId);
   assertRequisitionNotClosed(requisition, 'send an offer');
 
   // Upload the NEW file first and delete the previous one only after the new one is saved, so a failed
@@ -651,11 +682,11 @@ const sendOffer = asyncHandler(async (req, res) => {
   interview.artifactFileMimeType = uploaded.mimeType;
 
   // Find candidate details to send email
-  const application = await Application.findById(interview.applicationId).populate('candidateId', 'name email');
+  const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
   const candidate = application?.candidateId;
 
-  // The email is queued and sent in the background. Production attaches the PDF
-  // itself (the queue keeps it until sent); other environments send a link.
+  // The email is queued and sent in the background, with the PDF attached
+  // (the queue keeps it until sent).
   let emailResult = { queued: false, reason: 'No candidate email on file.' };
   if (candidate?.email) {
     emailResult = await enqueueEmail({
@@ -667,9 +698,7 @@ const sendOffer = asyncHandler(async (req, res) => {
         requisitionTitle: requisition?.title,
         offerLetterUrl: interview.artifactFileUrl,
       },
-      attachment: emailNotifier.shouldAttachOfferLetter()
-        ? { filename: req.file.originalname, content: req.file.buffer, contentType: 'application/pdf' }
-        : undefined,
+      attachment: { filename: req.file.originalname, content: req.file.buffer, contentType: 'application/pdf' },
       related: application ? { kind: 'interview-offer', applicationId: application._id } : undefined,
     });
   }
@@ -677,7 +706,7 @@ const sendOffer = asyncHandler(async (req, res) => {
   // Mark stage as approved
   interview.status = 'approved';
   try {
-    await interview.save();
+    await interviewRepo.save(interview);
   } catch (err) {
     // The new file was never recorded, so remove it; the previous letter is still in place.
     await deleteFile(uploaded.publicId).catch((cleanupErr) => logger.warn(`[Interview] Could not remove unsaved offer letter ${uploaded.publicId}: ${cleanupErr.message}`));
@@ -697,7 +726,7 @@ const sendOffer = asyncHandler(async (req, res) => {
     await cancelPendingEmails({ type: 'offer-letter', applicationId: application._id, exceptJobId: emailResult.jobId });
   }
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_approve',
     userId: req.user._id,
     requisitionId: interview.requisitionId,
@@ -726,14 +755,14 @@ const sendOffer = asyncHandler(async (req, res) => {
 });
 
 const requestAvailability = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
 
-  const application = await Application.findById(interview.applicationId).populate('candidateId');
+  const application = await applicationRepo.findByIdWithCandidate(interview.applicationId);
   if (!application || !application.candidateId) {
     throw new ValidationError(['applicationId'], 'Candidate information not found.');
   }
-  const requisition = await Requisition.findById(interview.requisitionId);
+  const requisition = await requisitionRepo.findById(interview.requisitionId);
   const stageConfig = (requisition?.stages || []).find((s) => s.key === interview.stageKey);
   const stageLabel = stageConfig?.label || interview.stageKey;
 
@@ -767,10 +796,10 @@ const requestAvailability = asyncHandler(async (req, res) => {
 });
 
 const getPublicAvailability = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found or expired.' });
 
-  const requisition = await Requisition.findById(interview.requisitionId).select('title employmentType location status');
+  const requisition = await requisitionRepo.findFields(interview.requisitionId, 'title employmentType location status');
   if (!requisition || requisition.status !== 'open') {
     const statusMsg = requisition?.status === 'closed'
       ? 'This position is closed and is no longer accepting availability.'
@@ -778,14 +807,14 @@ const getPublicAvailability = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'REQUISITION_NOT_OPEN', message: statusMsg });
   }
 
-  const application = await Application.findById(interview.applicationId).populate('candidateId', 'name email');
+  const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
   const stageConfig = (requisition?.stages || []).find((s) => s.key === interview.stageKey);
 
   res.json({
     candidateName: application?.candidateId?.name || 'Candidate',
     requisitionTitle: requisition?.title || 'Job Opening',
     stageLabel: stageConfig?.label || interview.stageKey,
-    candidateAvailability: interview.candidateAvailability || null,
+    candidateAvailability: interview.candidateAvailability || {},
     captcha: (() => {
       const { enabled, siteKey } = getCaptchaConfig();
       return { enabled, siteKey: enabled ? siteKey : undefined };
@@ -794,10 +823,10 @@ const getPublicAvailability = asyncHandler(async (req, res) => {
 });
 
 const submitPublicAvailability = asyncHandler(async (req, res) => {
-  const interview = await Interview.findById(req.params.id);
+  const interview = await interviewRepo.findById(req.params.id);
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
 
-  const requisition = await Requisition.findById(interview.requisitionId).select('status');
+  const requisition = await requisitionRepo.findFields(interview.requisitionId, 'status');
   if (!requisition || requisition.status !== 'open') {
     const statusMsg = requisition?.status === 'closed'
       ? 'This position is closed and is no longer accepting availability.'
@@ -826,7 +855,7 @@ const submitPublicAvailability = asyncHandler(async (req, res) => {
     submittedAt: new Date(),
   };
 
-  await interview.save();
+  await interviewRepo.save(interview);
   logger.info(`[Interview] Candidate submitted availability for interview ${interview._id}: ${preferredDate}`);
 
   res.json({

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import logger from '../utils/logger.js';
-import Setting from '../models/Setting.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 import { withRetry } from '../utils/retry.js';
 import { SpendCapError } from '../utils/errors.js';
 import { round, currentMonthRange } from '../utils/helpers.js';
@@ -25,10 +25,7 @@ const MODEL_SETTING_KEYS = ['claudeModelCheap', 'claudeModelDefault', 'claudeMod
  * @returns {Promise<Record<string, any>>} key -> value map (missing keys are undefined).
  */
 async function loadSpendSettings() {
-  const docs = await Setting.find({ key: { $in: SPEND_SETTING_KEYS } });
-  const map = {};
-  docs.forEach((doc) => { map[doc.key] = doc.value; });
-  return map;
+  return settingRepo.getValues(SPEND_SETTING_KEYS);
 }
 
 /**
@@ -39,9 +36,7 @@ async function loadSpendSettings() {
  * @returns {Promise<{cheap: string, default: string, deep: string}>}
  */
 async function getModelIds() {
-  const docs = await Setting.find({ key: { $in: MODEL_SETTING_KEYS } });
-  const map = {};
-  docs.forEach((doc) => { map[doc.key] = doc.value; });
+  const map = await settingRepo.getValues(MODEL_SETTING_KEYS);
   return {
     cheap: map.claudeModelCheap || process.env.CLAUDE_MODEL_CHEAP,
     default: map.claudeModelDefault || process.env.CLAUDE_MODEL_DEFAULT,
@@ -91,11 +86,7 @@ async function checkSpendCap() {
       } catch (err) {
         logger.warn(`[ClaudeClient] Spend warning notification failed: ${err.message}`);
       }
-      await Setting.findOneAndUpdate(
-        { key: 'aiSpendWarnedMonths' },
-        { $addToSet: { value: monthKey }, $set: { updatedAt: new Date() } },
-        { upsert: true }
-      );
+      await settingRepo.addToList('aiSpendWarnedMonths', monthKey);
     }
   }
 }
@@ -107,11 +98,7 @@ async function checkSpendCap() {
  */
 async function recordSpend(costUsd) {
   const { key: monthKey } = currentMonthRange();
-  await Setting.findOneAndUpdate(
-    { key: 'aiMonthlySpend' },
-    { $inc: { [`value.${monthKey}`]: costUsd }, $set: { updatedAt: new Date() } },
-    { upsert: true }
-  );
+  await settingRepo.incrementEntry('aiMonthlySpend', monthKey, costUsd);
 }
 
 /** Strips ```json / ``` fences a model sometimes wraps JSON in. */

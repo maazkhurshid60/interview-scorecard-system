@@ -1,5 +1,5 @@
 import { Queue, Worker, UnrecoverableError } from 'bullmq';
-import Application from '../models/Application.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
 import logger from '../utils/logger.js';
 import * as emailNotifier from './emailNotifier.js';
 import { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } from '../queues/redis.js';
@@ -28,6 +28,7 @@ const KEEP_FAILED_SECONDS = 90 * 24 * 60 * 60;
 /** Which template sends each kind of email. Looked up when sending, so the templates stay in emailNotifier. */
 const SENDERS = {
   'meeting-link': (payload) => emailNotifier.sendMeetingLinkEmail(payload),
+  'interview-cancelled': (payload) => emailNotifier.sendInterviewCancelledEmail(payload),
   'offer-letter': (payload, attachment) => emailNotifier.sendOfferEmail({ ...payload, attachment }),
   'application-confirmation': (payload) => emailNotifier.sendApplicationConfirmationEmail(payload),
   'password-reset': (payload) => emailNotifier.sendPasswordResetEmail(payload),
@@ -155,11 +156,11 @@ async function applySentEffects(data) {
   const now = new Date();
   try {
     if (kind === 'offer-letter') {
-      await Application.updateOne({ _id: applicationId }, { offerLetterDeliveryStatus: 'sent', offerLetterSentAt: now });
+      await applicationRepo.markOfferLetterSent(applicationId, now);
     } else if (kind === 'onboarding-form') {
-      await Application.updateOne({ _id: applicationId }, { onboardingFormDeliveryStatus: 'sent', onboardingFormSentAt: now });
+      await applicationRepo.markOnboardingFormSent(applicationId, now);
     } else if (kind === 'application-confirmation') {
-      await Application.updateOne({ _id: applicationId }, { 'screeningJob.confirmationEmailSentAt': now });
+      await applicationRepo.markConfirmationEmailSent(applicationId, now);
     }
   } catch (err) {
     logger.warn(`[EmailQueue] The "${kind}" email was sent but its record could not be updated: ${err.message}`);
