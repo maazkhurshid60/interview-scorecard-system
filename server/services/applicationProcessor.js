@@ -1,6 +1,6 @@
 import Application from '../models/Application.js';
 import Requisition from '../models/Requisition.js';
-import Candidate from '../models/Candidate.js';
+import * as candidateRepo from '../repositories/candidateRepository.js';
 import Interview from '../models/Interview.js';
 import Scorecard from '../models/Scorecard.js';
 import logger from '../utils/logger.js';
@@ -95,7 +95,7 @@ async function approveAutoScores(interview, stage, application) {
 /** Runs every step for one application. Problems are collected in `failures`; a failed step does not stop the others. */
 async function runSteps(application, failures) {
   const requisition = await Requisition.findById(application.requisitionId);
-  const candidate = await Candidate.findById(application.candidateId);
+  const candidate = await candidateRepo.findById(application.candidateId);
   if (!requisition || !candidate) {
     // The job or the candidate was deleted while this waited: nothing left to do.
     logger.warn(`[AppProcessor] Skipping application ${application._id}: its job or candidate no longer exists.`);

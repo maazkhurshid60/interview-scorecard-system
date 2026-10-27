@@ -1,4 +1,4 @@
-import Candidate from '../models/Candidate.js';
+import * as candidateRepo from '../repositories/candidateRepository.js';
 import Interview from '../models/Interview.js';
 import { deleteFile } from './fileStorage.js';
 
@@ -7,7 +7,7 @@ import { deleteFile } from './fileStorage.js';
 async function destroyFileIfUnreferenced(publicId) {
   if (!publicId) return false;
   const [candidateReference, interviewReference] = await Promise.all([
-    Candidate.exists({ resumeFilePublicId: publicId }),
+    candidateRepo.isResumeFileInUse(publicId),
     Interview.exists({ artifactFilePublicId: publicId }),
   ]);
   if (candidateReference || interviewReference) return false;

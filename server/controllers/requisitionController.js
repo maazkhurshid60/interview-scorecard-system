@@ -4,7 +4,8 @@ import Requisition from '../models/Requisition.js';
 import * as pipelines from '../repositories/pipelineTemplateRepository.js';
 import Scorecard from '../models/Scorecard.js';
 import Application from '../models/Application.js';
-import Candidate from '../models/Candidate.js';
+import '../models/Candidate.js'; // registers the Candidate model for Application.populate('candidateId')
+import * as candidateRepo from '../repositories/candidateRepository.js';
 import Interview from '../models/Interview.js';
 import { extractArtifactText } from '../utils/textExtractor.js';
 import * as transcriptProvider from '../services/transcriptProvider.js';
@@ -556,12 +557,9 @@ const getOne = asyncHandler(async (req, res) => {
   }
 
   if (req.query.search && req.query.search.trim()) {
-    const searchRegex = new RegExp(escapeRegex(req.query.search.trim()), 'i');
-    const matchingCandidates = await Candidate.find({
-      $or: [{ name: searchRegex }, { email: searchRegex }],
-    }).select('_id').lean();
-
-    const candidateIds = matchingCandidates.map((c) => c._id);
+    // The aggregation below does not turn string ids into ObjectIds for us.
+    const candidateIds = (await candidateRepo.findIdsBySearch(req.query.search.trim()))
+      .map((id) => new mongoose.Types.ObjectId(id));
     if (query.candidateId) {
       const targetCid = String(query.candidateId);
       query.candidateId = { $in: candidateIds.filter((cid) => String(cid) === targetCid) };
@@ -1307,7 +1305,7 @@ const applyPublic = asyncHandler(async (req, res) => {
   const cleanEmail = email.toLowerCase().trim();
 
   // 1. Check if candidate already exists AND has an application for this requisition BEFORE uploading to Cloudinary
-  let candidate = await Candidate.findOne({ email: cleanEmail });
+  let candidate = await candidateRepo.findByEmail(cleanEmail);
   if (candidate) {
     const existingApp = await Application.findOne({ candidateId: candidate._id, requisitionId: requisition._id });
     if (existingApp) {
@@ -1345,7 +1343,7 @@ const applyPublic = asyncHandler(async (req, res) => {
 
   // 3. Create or update candidate record with the new CV upload
   if (!candidate) {
-    candidate = await Candidate.create({
+    candidate = await candidateRepo.create({
       name,
       email: cleanEmail,
       phone: phone.trim(),
@@ -1356,16 +1354,18 @@ const applyPublic = asyncHandler(async (req, res) => {
       resumeFileMimeType: resumeMeta?.mimeType,
     });
   } else {
+    const changes = { phone: phone.trim() };
     if (candidateResumeFileUrl) {
       oldProfileResumeId = candidate.resumeFilePublicId;
-      candidate.resumeFileUrl = candidateResumeFileUrl;
-      candidate.resumeFilePublicId = candidateResumeFilePublicId;
-      candidate.resumeFileName = resumeMeta?.name;
-      candidate.resumeFileSize = resumeMeta?.size;
-      candidate.resumeFileMimeType = resumeMeta?.mimeType;
+      Object.assign(changes, {
+        resumeFileUrl: candidateResumeFileUrl,
+        resumeFilePublicId: candidateResumeFilePublicId,
+        resumeFileName: resumeMeta?.name,
+        resumeFileSize: resumeMeta?.size,
+        resumeFileMimeType: resumeMeta?.mimeType,
+      });
     }
-    candidate.phone = phone.trim();
-    await candidate.save();
+    candidate = await candidateRepo.update(candidate._id, changes);
     if (oldProfileResumeId) {
       destroyFileIfUnreferenced(oldProfileResumeId)
         .catch((err) => logger.warn(`[ApplyPublic] Could not clean up old candidate résumé ${oldProfileResumeId}: ${err.message}`));
