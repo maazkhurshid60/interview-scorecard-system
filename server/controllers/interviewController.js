@@ -343,11 +343,9 @@ const createMeeting = asyncHandler(async (req, res) => {
   interview.status = 'scheduled';
   await interviewRepo.save(interview);
 
-  // Calendar sends the candidate the official invitation itself. Keep the
-  // existing email fallback only for manually pasted meeting links.
-  const emailResult = interview.calendarEventId
-    ? { queued: true, reason: 'Google Calendar invitation sent.' }
-    : await emailMeetingLinkToCandidate(interview);
+  // The candidate always gets our own invitation email. For a Google Calendar meeting they also get
+  // Google's own invitation, so the two arrive together.
+  const emailResult = await emailMeetingLinkToCandidate(interview);
   const hostEmailResult = interview.calendarEventId
     ? await emailCalendarHost(interview, 'scheduled')
     : null;
