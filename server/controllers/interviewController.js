@@ -16,7 +16,6 @@ import { destroyFileIfUnreferenced } from '../services/fileReferenceCleanup.js';
 import * as transcriptProvider from '../services/transcriptProvider.js';
 import { scoreInterview } from '../services/aiScorer.js';
 import * as slackNotifier from '../services/slackNotifier.js';
-import * as emailNotifier from '../services/emailNotifier.js';
 import { renderEmail } from '../utils/renderEmail.js';
 import { getSecrets } from '../utils/secrets.js';
 import { extractArtifactText } from '../utils/textExtractor.js';
@@ -686,8 +685,8 @@ const sendOffer = asyncHandler(async (req, res) => {
   const application = await applicationRepo.findByIdWithCandidate(interview.applicationId, 'name email');
   const candidate = application?.candidateId;
 
-  // The email is queued and sent in the background. Production attaches the PDF
-  // itself (the queue keeps it until sent); other environments send a link.
+  // The email is queued and sent in the background, with the PDF attached
+  // (the queue keeps it until sent).
   let emailResult = { queued: false, reason: 'No candidate email on file.' };
   if (candidate?.email) {
     emailResult = await enqueueEmail({
@@ -699,9 +698,7 @@ const sendOffer = asyncHandler(async (req, res) => {
         requisitionTitle: requisition?.title,
         offerLetterUrl: interview.artifactFileUrl,
       },
-      attachment: emailNotifier.shouldAttachOfferLetter()
-        ? { filename: req.file.originalname, content: req.file.buffer, contentType: 'application/pdf' }
-        : undefined,
+      attachment: { filename: req.file.originalname, content: req.file.buffer, contentType: 'application/pdf' },
       related: application ? { kind: 'interview-offer', applicationId: application._id } : undefined,
     });
   }

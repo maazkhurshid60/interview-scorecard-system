@@ -71,7 +71,7 @@ RedStar Technologies
 hr@redstartechs.com`,
   },
 
-  // To the candidate, when a recruiter sends the offer letter. The PDF is attached in production.
+  // To the candidate, when a recruiter sends the offer letter. The PDF is attached.
   offerLetterAttached: {
     details: ['name', 'jobTitle'],
     subject: 'Job Offer – {jobTitle} | RedStar Technologies',
@@ -91,7 +91,7 @@ ${SIGN_OFF}
 hr@redstartechs.com`,
   },
 
-  // The same email outside production, where the letter is a download link instead of an attachment.
+  // The same email when there is no PDF to attach, where the letter is a download link instead.
   offerLetterLink: {
     details: ['name', 'jobTitle', 'offerLetterLink'],
     subject: 'Job Offer – {jobTitle} | RedStar Technologies',

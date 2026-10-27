@@ -9,7 +9,6 @@ import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requ
 import { FINAL_DECISIONS } from '../utils/constants.js';
 import { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } from '../services/scoringEngine.js';
 import * as slackNotifier from '../services/slackNotifier.js';
-import * as emailNotifier from '../services/emailNotifier.js';
 import { enqueueEmail, cancelPendingEmails } from '../services/emailQueue.js';
 import { uploadFile, deleteFile } from '../services/fileStorage.js';
 import { assertPdfUpload } from '../utils/uploadValidation.js';
@@ -489,8 +488,7 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
     }
   }
 
-  // The email is sent in the background. Production attaches the PDF itself (the queue keeps it
-  // until sent); other environments send a link.
+  // The email is sent in the background, with the PDF attached (the queue keeps it until sent).
   const candidate = application.candidateId;
   const emailResult = await enqueueEmail({
     type: 'offer-letter',
@@ -501,9 +499,7 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
       requisitionTitle: requisition.title,
       offerLetterUrl: upload.url,
     },
-    attachment: emailNotifier.shouldAttachOfferLetter()
-      ? { filename: file.originalname, content: file.buffer, contentType: 'application/pdf' }
-      : undefined,
+    attachment: { filename: file.originalname, content: file.buffer, contentType: 'application/pdf' },
     related: { kind: 'offer-letter', applicationId: application._id },
   });
   // A resend replaces any earlier offer email that is still waiting or retrying, so the candidate gets one.
