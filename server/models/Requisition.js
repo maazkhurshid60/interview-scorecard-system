@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { STAGE_TYPES, INPUT_TYPES } = require('../utils/constants');
+import mongoose from 'mongoose';
+import { STAGE_TYPES, INPUT_TYPES } from '../utils/constants.js';
 
 const requisitionStageSchema = new mongoose.Schema({
   key: { type: String, required: true },
@@ -120,4 +120,4 @@ const requisitionSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
-module.exports = mongoose.model('Requisition', requisitionSchema);
+export default mongoose.model('Requisition', requisitionSchema);

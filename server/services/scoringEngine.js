@@ -1,4 +1,4 @@
-const { round } = require('../utils/helpers');
+import { round } from '../utils/helpers.js';
 
 /**
  * Pure calculation module — no API calls, no database access. This is the
@@ -191,4 +191,4 @@ function rankApplications(applications) {
   return [...withTotal, ...withoutTotal];
 }
 
-module.exports = { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications };
+export { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications };

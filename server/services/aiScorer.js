@@ -1,8 +1,8 @@
-const Application = require('../models/Application');
-const Setting = require('../models/Setting');
-const logger = require('../utils/logger');
-const { callClaude, getModelIds } = require('./claudeClient');
-const { STAGE_MODEL_TIER } = require('../utils/constants');
+import Application from '../models/Application.js';
+import Setting from '../models/Setting.js';
+import logger from '../utils/logger.js';
+import { callClaude, getModelIds } from './claudeClient.js';
+import { STAGE_MODEL_TIER } from '../utils/constants.js';
 
 /** Below this word count, a transcript is treated as empty/noise — never scored. */
 const MIN_TRANSCRIPT_WORDS = 30;
@@ -169,4 +169,4 @@ async function scoreInterview({ interview, stageType, attributes, requisition, a
   return { interview };
 }
 
-module.exports = { scoreInterview };
+export { scoreInterview };

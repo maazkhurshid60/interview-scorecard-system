@@ -1,8 +1,8 @@
-const express = require('express');
-const scoringController = require('../controllers/scoringController');
-const { requireAuth, requireRole } = require('../middleware/auth');
-const { uploadPdf } = require('../middleware/upload');
-const { offerPreviewLimiter } = require('../middleware/rateLimit');
+import express from 'express';
+import * as scoringController from '../controllers/scoringController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
+import { uploadPdf } from '../middleware/upload.js';
+import { offerPreviewLimiter } from '../middleware/rateLimit.js';
 
 const router = express.Router();
 
@@ -21,4 +21,4 @@ router.get('/offer-letter-templates', scoringController.getOfferLetterTemplates)
 router.post('/application/:id/offer-letter-preview', offerPreviewLimiter, canDecide, scoringController.previewOfferLetter);
 router.post('/application/:id/send-offer-letter', uploadPdf('offerLetter'), canDecide, scoringController.sendOfferLetter);
 
-module.exports = router;
+export default router;

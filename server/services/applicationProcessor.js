@@ -1,17 +1,17 @@
-const Application = require('../models/Application');
-const Requisition = require('../models/Requisition');
-const Candidate = require('../models/Candidate');
-const Interview = require('../models/Interview');
-const Scorecard = require('../models/Scorecard');
-const logger = require('../utils/logger');
-const { ApiKeyError, SpendCapError } = require('../utils/errors');
-const { generateScorecard } = require('./questionGenerator');
-const { scoreInterview } = require('./aiScorer');
-const { computeStageAverage, isStagePassed, rankApplications } = require('./scoringEngine');
-const { enqueueEmail } = require('./emailQueue');
-const { Queue, Worker, UnrecoverableError } = require('bullmq');
-const { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } = require('../queues/redis');
-const { syncHrQuestionnaireRubric, assignMissingAttributeIds } = require('../utils/scorecardHelpers');
+import Application from '../models/Application.js';
+import Requisition from '../models/Requisition.js';
+import Candidate from '../models/Candidate.js';
+import Interview from '../models/Interview.js';
+import Scorecard from '../models/Scorecard.js';
+import logger from '../utils/logger.js';
+import { ApiKeyError, SpendCapError } from '../utils/errors.js';
+import { generateScorecard } from './questionGenerator.js';
+import { scoreInterview } from './aiScorer.js';
+import { computeStageAverage, isStagePassed, rankApplications } from './scoringEngine.js';
+import { enqueueEmail } from './emailQueue.js';
+import { Queue, Worker, UnrecoverableError } from 'bullmq';
+import { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } from '../queues/redis.js';
+import { syncHrQuestionnaireRubric, assignMissingAttributeIds } from '../utils/scorecardHelpers.js';
 
 /**
  * Background processing of a PUBLIC job application.
@@ -101,9 +101,9 @@ async function runSteps(application, failures) {
     logger.warn(`[AppProcessor] Skipping application ${application._id}: its job or candidate no longer exists.`);
     return;
   }
-  // scoringController is loaded here, not at the top, because it is a large module that depends on a lot.
-  // eslint-disable-next-line global-require
-  const { getOrCreateNextInterview, recomputeAndPersist } = require('../controllers/scoringController');
+  // scoringController is loaded here, not at the top, because it is a large module that depends on a lot
+  // (and would otherwise import this file in a circle).
+  const { getOrCreateNextInterview, recomputeAndPersist } = await import('../controllers/scoringController.js');
 
   // 1. Confirmation email — handed to the email queue (one per application, however many times this job
   //    runs), so a mail problem is retried there and never blocks the scoring.
@@ -401,4 +401,4 @@ async function closeApplicationProcessor() {
   queueConnection = null;
 }
 
-module.exports = { enqueueApplication, processApplication, startApplicationProcessor, closeApplicationProcessor, sweep, MAX_ATTEMPTS };
+export { enqueueApplication, processApplication, startApplicationProcessor, closeApplicationProcessor, sweep, MAX_ATTEMPTS };

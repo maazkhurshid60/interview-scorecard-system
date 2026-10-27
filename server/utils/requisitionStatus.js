@@ -1,4 +1,4 @@
-const { ValidationError } = require('./errors');
+import { ValidationError } from './errors.js';
 
 function statusError(message) {
   const error = new ValidationError(['status'], message);
@@ -31,4 +31,4 @@ function assertRequisitionNotClosed(requisition, action) {
   }
 }
 
-module.exports = { assertRequisitionOpen, assertRequisitionConfigurable, assertRequisitionNotClosed };
+export { assertRequisitionOpen, assertRequisitionConfigurable, assertRequisitionNotClosed };

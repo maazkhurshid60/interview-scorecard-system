@@ -1,5 +1,5 @@
-const AuditLog = require('../models/AuditLog');
-const { asyncHandler } = require('../utils/helpers');
+import AuditLog from '../models/AuditLog.js';
+import { asyncHandler } from '../utils/helpers.js';
 
 /**
  * GET /api/audit
@@ -34,4 +34,4 @@ const list = asyncHandler(async (req, res) => {
   res.json({ entries, total, page, limit });
 });
 
-module.exports = { list };
+export { list };

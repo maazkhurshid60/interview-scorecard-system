@@ -1,9 +1,9 @@
-const mongoose = require('mongoose');
-const Candidate = require('../models/Candidate');
-const Interview = require('../models/Interview');
-const Application = require('../models/Application');
-const { asyncHandler } = require('../utils/helpers');
-const { getFileAccessUrl } = require('../services/fileStorage');
+import mongoose from 'mongoose';
+import Candidate from '../models/Candidate.js';
+import Interview from '../models/Interview.js';
+import Application from '../models/Application.js';
+import { asyncHandler } from '../utils/helpers.js';
+import { getFileAccessUrl } from '../services/fileStorage.js';
 
 /**
  * Which stored file each `kind` refers to: the model it lives on, and the
@@ -47,4 +47,4 @@ const getFile = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getFile };
+export { getFile };

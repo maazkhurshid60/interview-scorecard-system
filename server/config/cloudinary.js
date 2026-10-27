@@ -1,5 +1,5 @@
-const cloudinary = require('cloudinary').v2;
-const { Readable } = require('stream');
+import { v2 as cloudinary } from 'cloudinary';
+import { Readable } from 'stream';
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -35,4 +35,4 @@ async function destroyFile(publicId) {
   await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
 }
 
-module.exports = { cloudinary, uploadBuffer, destroyFile };
+export { cloudinary, uploadBuffer, destroyFile };

@@ -1,7 +1,7 @@
-const express = require('express');
-const candidateController = require('../controllers/candidateController');
-const { requireAuth, requireRole } = require('../middleware/auth');
-const { uploadPdf } = require('../middleware/upload');
+import express from 'express';
+import * as candidateController from '../controllers/candidateController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
+import { uploadPdf } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -22,4 +22,4 @@ router.post('/:id/apply', canManageCandidates, candidateController.apply);
 router.delete('/:id/requisitions/:requisitionId', requireRole('owner', 'admin'), candidateController.removeFromRequisition);
 router.delete('/:id', requireRole('owner', 'admin'), candidateController.remove);
 
-module.exports = router;
+export default router;

@@ -1,4 +1,4 @@
-const templates = require('../templates/emails');
+import templates from '../templates/emails.js';
 
 const PLACEHOLDER = /\{\s*(\w+)\s*\}/g; // {name} and { name } both work
 
@@ -39,4 +39,4 @@ function renderEmail(key, values = {}) {
   return { subject, text };
 }
 
-module.exports = { renderEmail };
+export { renderEmail };

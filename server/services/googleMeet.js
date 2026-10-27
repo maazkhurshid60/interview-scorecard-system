@@ -1,9 +1,9 @@
-const { google } = require('googleapis');
-const logger = require('../utils/logger');
-const { getCalendarTimeZone } = require('../utils/calendarTimeZone');
-const { withRetry } = require('../utils/retry');
-const { getSecrets } = require('../utils/secrets');
-const { ValidationError } = require('../utils/errors');
+import { google } from 'googleapis';
+import logger from '../utils/logger.js';
+import { getCalendarTimeZone } from '../utils/calendarTimeZone.js';
+import { withRetry } from '../utils/retry.js';
+import { getSecrets } from '../utils/secrets.js';
+import { ValidationError } from '../utils/errors.js';
 
 /**
  * Builds an OAuth2 client authorized as the one connected organizer account.
@@ -332,4 +332,4 @@ async function fetchTranscript(interview) {
   return { status: 'ready', text: lines.join('\n'), resolvedConferenceId: conferenceRecordName };
 }
 
-module.exports = { createMeeting, cancelMeeting, fetchTranscript };
+export { createMeeting, cancelMeeting, fetchTranscript };

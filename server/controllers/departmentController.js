@@ -1,8 +1,8 @@
-const Department = require('../models/Department');
-const Requisition = require('../models/Requisition');
-const { asyncHandler } = require('../utils/helpers');
-const { ValidationError } = require('../utils/errors');
-const logger = require('../utils/logger');
+import Department from '../models/Department.js';
+import Requisition from '../models/Requisition.js';
+import { asyncHandler } from '../utils/helpers.js';
+import { ValidationError } from '../utils/errors.js';
+import logger from '../utils/logger.js';
 
 /**
  * GET /api/departments
@@ -162,4 +162,4 @@ const remove = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { list, create, update, remove };
+export { list, create, update, remove };

@@ -1,18 +1,14 @@
-require("dotenv").config({
-  path: require("path").join(__dirname, "..", "..", ".env"),
-});
-const bcrypt = require("bcryptjs");
-const connectDB = require("../config/db");
-const logger = require("../utils/logger");
-const {
-  DEFAULT_PIPELINE_STAGES,
-  DEFAULT_SETTINGS,
-  DEFAULT_COST_RATE_TABLE,
-} = require("../utils/constants");
+import '../config/env.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
+import connectDB from '../config/db.js';
+import logger from '../utils/logger.js';
+import { DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS, DEFAULT_COST_RATE_TABLE } from '../utils/constants.js';
 
-const User = require("../models/User");
-const PipelineTemplate = require("../models/PipelineTemplate");
-const Setting = require("../models/Setting");
+import User from '../models/User.js';
+import PipelineTemplate from '../models/PipelineTemplate.js';
+import Setting from '../models/Setting.js';
 
 /**
  * Creates the first OWNER account from SEED_OWNER_NAME / SEED_OWNER_EMAIL / SEED_OWNER_PASSWORD.
@@ -228,13 +224,8 @@ async function run() {
   }
 }
 
-if (require.main === module) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) { // ES modules have no require.main
   run();
 }
 
-module.exports = {
-  seedOwnerUser,
-  seedDemoUsers,
-  seedDefaultPipeline,
-  seedSettings,
-};
+export { seedOwnerUser, seedDemoUsers, seedDefaultPipeline, seedSettings };

@@ -1,8 +1,10 @@
-const crypto = require('crypto');
-const zlib = require('zlib');
-const { promisify } = require('util');
-const cloudinaryStorage = require('../config/cloudinary');
-const logger = require('../utils/logger');
+import crypto from 'crypto';
+import zlib from 'zlib';
+import { promisify } from 'util';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import * as cloudinaryStorage from '../config/cloudinary.js';
+import logger from '../utils/logger.js';
 
 const gzip = promisify(zlib.gzip);
 
@@ -45,8 +47,6 @@ function getS3() {
     throw new Error('S3 storage is enabled but AWS_REGION and S3_BUCKET are not both set.');
   }
   if (!s3Cache || s3Cache.region !== region) {
-    // eslint-disable-next-line global-require
-    const { S3Client } = require('@aws-sdk/client-s3');
     // Credentials come from the standard AWS chain (AWS_ACCESS_KEY_ID /
     // AWS_SECRET_ACCESS_KEY in the environment, or an instance role).
     s3Cache = { region, client: new S3Client({ region }) };
@@ -86,8 +86,6 @@ async function uploadFile({ file, folder, filenamePrefix = '' }) {
 
   if (provider === 's3') {
     const { client, bucket } = getS3();
-    // eslint-disable-next-line global-require
-    const { PutObjectCommand } = require('@aws-sdk/client-s3');
     const key = `${folder}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${filenamePrefix}${safeName(name)}`;
     // Gzip before upload. The object is marked Content-Encoding: gzip, so a
     // browser opening it decompresses it automatically and sees a normal PDF.
@@ -118,8 +116,6 @@ async function deleteFile(publicId) {
   if (!publicId) return;
   if (isS3Id(publicId)) {
     const { client, bucket } = getS3();
-    // eslint-disable-next-line global-require
-    const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: publicId.slice(S3_ID_PREFIX.length) }));
     return;
   }
@@ -139,10 +135,6 @@ async function getFileAccessUrl({ url, publicId, name }) {
   const { client, bucket: configuredBucket } = getS3();
   const bucket = parsed?.bucket || configuredBucket;
   const key = publicId.slice(S3_ID_PREFIX.length);
-  // eslint-disable-next-line global-require
-  const { GetObjectCommand } = require('@aws-sdk/client-s3');
-  // eslint-disable-next-line global-require
-  const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
   const asciiName = safeName(name || key.split('/').pop());
   return getSignedUrl(client, new GetObjectCommand({
     Bucket: bucket,
@@ -152,4 +144,4 @@ async function getFileAccessUrl({ url, publicId, name }) {
   }), { expiresIn: SIGNED_URL_SECONDS });
 }
 
-module.exports = { getProvider, isS3Id, uploadFile, deleteFile, getFileAccessUrl, SIGNED_URL_SECONDS };
+export { getProvider, isS3Id, uploadFile, deleteFile, getFileAccessUrl, SIGNED_URL_SECONDS };

@@ -1,6 +1,6 @@
-const logger = require('./logger');
-const { sleep } = require('./helpers');
-const { ApiKeyError, RateLimitError, ServiceError } = require('./errors');
+import logger from './logger.js';
+import { sleep } from './helpers.js';
+import { ApiKeyError, RateLimitError, ServiceError } from './errors.js';
 
 /**
  * Shared retry-with-backoff wrapper implementing the exact pattern from
@@ -65,4 +65,4 @@ async function withRetry(serviceName, apiCallFn) {
   throw new ServiceError(serviceName, lastError.message);
 }
 
-module.exports = { withRetry };
+export { withRetry };

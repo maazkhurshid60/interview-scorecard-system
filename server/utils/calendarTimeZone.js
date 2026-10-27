@@ -22,4 +22,4 @@ function getCalendarTimeZone(env = process.env) {
   }
 }
 
-module.exports = { getCalendarTimeZone };
+export { getCalendarTimeZone };

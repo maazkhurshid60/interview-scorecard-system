@@ -4,6 +4,7 @@
   "description": "Express + MongoDB backend for OWNERS TALENT.",
   "private": true,
   "main": "index.js",
+  "type": "module",
   "engines": {
     "node": "20.x"
   },

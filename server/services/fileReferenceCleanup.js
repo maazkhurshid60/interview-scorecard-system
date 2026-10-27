@@ -1,6 +1,6 @@
-const Candidate = require('../models/Candidate');
-const Interview = require('../models/Interview');
-const { deleteFile } = require('./fileStorage');
+import Candidate from '../models/Candidate.js';
+import Interview from '../models/Interview.js';
+import { deleteFile } from './fileStorage.js';
 
 // A file can be shared by legacy public applications. Delete it only after
 // every profile and interview has stopped referring to it.
@@ -15,4 +15,4 @@ async function destroyFileIfUnreferenced(publicId) {
   return true;
 }
 
-module.exports = { destroyFileIfUnreferenced };
+export { destroyFileIfUnreferenced };

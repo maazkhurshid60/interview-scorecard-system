@@ -1,10 +1,10 @@
-const fs = require('fs/promises');
-const PizZip = require('pizzip');
-const Docxtemplater = require('docxtemplater');
-const logger = require('../utils/logger');
-const { ValidationError, OfferLetterError } = require('../utils/errors');
-const { getTemplate, templatePath, prepareValues } = require('./offerLetterTemplates');
-const { convert, ConverterUnavailableError } = require('./officeConverter');
+import fs from 'fs/promises';
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
+import logger from '../utils/logger.js';
+import { ValidationError, OfferLetterError } from '../utils/errors.js';
+import { getTemplate, templatePath, prepareValues } from './offerLetterTemplates.js';
+import { convert, ConverterUnavailableError } from './officeConverter.js';
 
 /**
  * Makes an offer letter PDF from a template:
@@ -70,4 +70,4 @@ async function generateOfferLetter({ templateKey, fields, candidateName, now }) 
   return { pdf, fileName: safeFileName(values.candidate_name), fields: cleaned, templateKey: template.key };
 }
 
-module.exports = { generateOfferLetter };
+export { generateOfferLetter };

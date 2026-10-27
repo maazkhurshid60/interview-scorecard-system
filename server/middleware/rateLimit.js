@@ -1,4 +1,4 @@
-const logger = require('../utils/logger');
+import logger from '../utils/logger.js';
 
 /**
  * Minimal fixed-window, in-memory rate limiter keyed by client IP.
@@ -81,4 +81,4 @@ const offerPreviewLimiter = rateLimit({
   message: 'Too many previews. Please wait a minute and try again.',
 });
 
-module.exports = { rateLimit, publicApplyLimiter, publicAvailabilityLimiter, offerPreviewLimiter };
+export { rateLimit, publicApplyLimiter, publicAvailabilityLimiter, offerPreviewLimiter };

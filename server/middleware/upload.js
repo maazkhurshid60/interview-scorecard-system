@@ -1,6 +1,6 @@
-const multer = require('multer');
-const { ValidationError } = require('../utils/errors');
-const { MAX_PDF_BYTES, MAX_PDF_MB } = require('../utils/uploadValidation');
+import multer from 'multer';
+import { ValidationError } from '../utils/errors.js';
+import { MAX_PDF_BYTES, MAX_PDF_MB } from '../utils/uploadValidation.js';
 
 /**
  * Shared multer instance for routes that accept more than PDFs (the manual
@@ -53,4 +53,4 @@ function uploadPdf(fieldName) {
   };
 }
 
-module.exports = { upload, uploadPdf };
+export { upload, uploadPdf };

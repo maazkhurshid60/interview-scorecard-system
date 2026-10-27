@@ -1,9 +1,9 @@
-const bcrypt = require('bcryptjs');
-const User = require('../models/User');
-const { USER_ROLES } = require('../utils/constants');
-const { asyncHandler, sanitizeUser } = require('../utils/helpers');
-const logger = require('../utils/logger');
-const { revokeAllForUser } = require('../services/sessionService');
+import bcrypt from 'bcryptjs';
+import User from '../models/User.js';
+import { USER_ROLES } from '../utils/constants.js';
+import { asyncHandler, sanitizeUser } from '../utils/helpers.js';
+import logger from '../utils/logger.js';
+import { revokeAllForUser } from '../services/sessionService.js';
 
 /**
  * GET /api/users
@@ -196,4 +196,4 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ message: 'User deleted successfully.' });
 });
 
-module.exports = { list, create, update, remove };
+export { list, create, update, remove };

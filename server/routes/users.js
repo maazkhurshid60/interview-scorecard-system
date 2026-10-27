@@ -1,6 +1,6 @@
-const express = require('express');
-const userController = require('../controllers/userController');
-const { requireAuth, requireRole } = require('../middleware/auth');
+import express from 'express';
+import * as userController from '../controllers/userController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -12,4 +12,4 @@ router.post('/', userController.create);
 router.patch('/:id', userController.update);
 router.delete('/:id', userController.remove);
 
-module.exports = router;
+export default router;

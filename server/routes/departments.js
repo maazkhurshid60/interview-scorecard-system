@@ -1,6 +1,6 @@
-const express = require('express');
-const departmentController = require('../controllers/departmentController');
-const { requireAuth, requireRole } = require('../middleware/auth');
+import express from 'express';
+import * as departmentController from '../controllers/departmentController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -13,4 +13,4 @@ router.post('/', canManageDepts, departmentController.create);
 router.patch('/:id', canManageDepts, departmentController.update);
 router.delete('/:id', canManageDepts, departmentController.remove);
 
-module.exports = router;
+export default router;

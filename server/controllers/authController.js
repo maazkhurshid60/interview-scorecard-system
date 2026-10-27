@@ -1,10 +1,10 @@
-const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
-const User = require('../models/User');
-const logger = require('../utils/logger');
-const { asyncHandler, sanitizeUser } = require('../utils/helpers');
-const { enqueueEmail } = require('../services/emailQueue');
-const sessions = require('../services/sessionService');
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import User from '../models/User.js';
+import logger from '../utils/logger.js';
+import { asyncHandler, sanitizeUser } from '../utils/helpers.js';
+import { enqueueEmail } from '../services/emailQueue.js';
+import * as sessions from '../services/sessionService.js';
 
 const RESET_TTL_MINUTES = Math.max(5, Math.min(Number(process.env.PASSWORD_RESET_TTL_MINUTES) || 30, 120));
 const RESET_RESPONSE = 'If an active account uses that email address, a password-reset link has been sent.';
@@ -162,4 +162,4 @@ const resetPassword = asyncHandler(async (req, res) => {
   return res.json({ message: 'Password updated. You can now sign in.' });
 });
 
-module.exports = { login, refresh, logout, me, forgotPassword, resetPassword };
+export { login, refresh, logout, me, forgotPassword, resetPassword };

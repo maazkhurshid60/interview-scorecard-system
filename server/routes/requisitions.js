@@ -1,8 +1,8 @@
-const express = require('express');
-const requisitionController = require('../controllers/requisitionController');
-const { requireAuth, requireRole } = require('../middleware/auth');
-const { uploadPdf } = require('../middleware/upload');
-const { publicApplyLimiter } = require('../middleware/rateLimit');
+import express from 'express';
+import * as requisitionController from '../controllers/requisitionController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
+import { uploadPdf } from '../middleware/upload.js';
+import { publicApplyLimiter } from '../middleware/rateLimit.js';
 
 const router = express.Router();
 
@@ -30,4 +30,4 @@ router.post('/:id/clone-scorecard', canManageReqs, requisitionController.cloneSc
 router.patch('/:id/scorecard', canManageReqs, requisitionController.updateScorecard);
 router.get('/:id/ranking', requisitionController.ranking);
 
-module.exports = router;
+export default router;

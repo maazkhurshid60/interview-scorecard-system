@@ -1,15 +1,15 @@
-const axios = require('axios');
-const { google } = require('googleapis');
-const Setting = require('../models/Setting');
-const Interview = require('../models/Interview');
-const Requisition = require('../models/Requisition');
-const AuditLog = require('../models/AuditLog');
-const logger = require('../utils/logger');
-const { asyncHandler } = require('../utils/helpers');
-const { ValidationError, ApiKeyError } = require('../utils/errors');
-const { STAGE_MODEL_TIER } = require('../utils/constants');
-const { callClaude, getModelIds } = require('../services/claudeClient');
-const { getSecrets, maskSecret, SECRET_SETTING_KEYS } = require('../utils/secrets');
+import axios from 'axios';
+import { google } from 'googleapis';
+import Setting from '../models/Setting.js';
+import Interview from '../models/Interview.js';
+import Requisition from '../models/Requisition.js';
+import AuditLog from '../models/AuditLog.js';
+import logger from '../utils/logger.js';
+import { asyncHandler } from '../utils/helpers.js';
+import { ValidationError, ApiKeyError } from '../utils/errors.js';
+import { STAGE_MODEL_TIER } from '../utils/constants.js';
+import { callClaude, getModelIds } from '../services/claudeClient.js';
+import { getSecrets, maskSecret, SECRET_SETTING_KEYS } from '../utils/secrets.js';
 
 /**
  * GET /api/settings — all settings, sorted by key. Credential keys
@@ -203,4 +203,4 @@ const aiUsage = asyncHandler(async (req, res) => {
   res.json({ rows, totalCostUsd });
 });
 
-module.exports = { list, update, testApi, aiUsage, keyStatus };
+export { list, update, testApi, aiUsage, keyStatus };

@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const attributeSchema = new mongoose.Schema({
   attributeId: { type: String, required: true },   // Stable id used by scores
@@ -20,4 +20,4 @@ const scorecardSchema = new mongoose.Schema({
   stages: [scorecardStageSchema],
 }, { timestamps: true });
 
-module.exports = mongoose.model('Scorecard', scorecardSchema);
+export default mongoose.model('Scorecard', scorecardSchema);

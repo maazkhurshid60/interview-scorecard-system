@@ -1,28 +1,29 @@
-const crypto = require('crypto');
-const mongoose = require('mongoose');
-const Requisition = require('../models/Requisition');
-const PipelineTemplate = require('../models/PipelineTemplate');
-const Scorecard = require('../models/Scorecard');
-const Application = require('../models/Application');
-const Candidate = require('../models/Candidate');
-const Interview = require('../models/Interview');
-const transcriptProvider = require('../services/transcriptProvider');
-const Setting = require('../models/Setting');
-const AuditLog = require('../models/AuditLog');
-const logger = require('../utils/logger');
-const { asyncHandler, normalizeWeights } = require('../utils/helpers');
-const { ValidationError } = require('../utils/errors');
-const { assertRequisitionOpen, assertRequisitionConfigurable } = require('../utils/requisitionStatus');
-const { generateScorecard } = require('../services/questionGenerator');
-const { syncHrQuestionnaireRubric, assignMissingAttributeIds } = require('../utils/scorecardHelpers');
-const { rankApplications } = require('../services/scoringEngine');
-const { enqueueApplication } = require('../services/applicationProcessor');
-const { uploadFile, deleteFile } = require('../services/fileStorage');
-const { assertPdfUpload } = require('../utils/uploadValidation');
-const { cleanRichText } = require('../utils/sanitizeRichText');
-const { callClaude, getModelIds } = require('../services/claudeClient');
-const { getCaptchaConfig, verifyCaptcha } = require('../services/captchaService');
-const { destroyFileIfUnreferenced } = require('../services/fileReferenceCleanup');
+import crypto from 'crypto';
+import mongoose from 'mongoose';
+import Requisition from '../models/Requisition.js';
+import PipelineTemplate from '../models/PipelineTemplate.js';
+import Scorecard from '../models/Scorecard.js';
+import Application from '../models/Application.js';
+import Candidate from '../models/Candidate.js';
+import Interview from '../models/Interview.js';
+import { extractArtifactText } from '../utils/textExtractor.js';
+import * as transcriptProvider from '../services/transcriptProvider.js';
+import Setting from '../models/Setting.js';
+import AuditLog from '../models/AuditLog.js';
+import logger from '../utils/logger.js';
+import { asyncHandler, normalizeWeights } from '../utils/helpers.js';
+import { ValidationError } from '../utils/errors.js';
+import { assertRequisitionOpen, assertRequisitionConfigurable } from '../utils/requisitionStatus.js';
+import { generateScorecard } from '../services/questionGenerator.js';
+import { syncHrQuestionnaireRubric, assignMissingAttributeIds } from '../utils/scorecardHelpers.js';
+import { rankApplications } from '../services/scoringEngine.js';
+import { enqueueApplication } from '../services/applicationProcessor.js';
+import { uploadFile, deleteFile } from '../services/fileStorage.js';
+import { assertPdfUpload } from '../utils/uploadValidation.js';
+import { cleanRichText } from '../utils/sanitizeRichText.js';
+import { callClaude, getModelIds } from '../services/claudeClient.js';
+import { getCaptchaConfig, verifyCaptcha } from '../services/captchaService.js';
+import { destroyFileIfUnreferenced } from '../services/fileReferenceCleanup.js';
 // Server-side validation mirror. The editable UI definition lives in client/src/constants.
 const screeningCriteriaConfig = {
   education: { label: 'Education', options: ['Undergraduate (currently studying)', "Bachelor's degree", "Master's degree", 'PhD'] },
@@ -1337,7 +1338,6 @@ const applyPublic = asyncHandler(async (req, res) => {
     candidateResumeFilePublicId = profileUpload.publicId;
 
     try {
-      const { extractArtifactText } = require('../utils/textExtractor');
       resumeText = await extractArtifactText(req.file.buffer, req.file.originalname);
     } catch (err) {
       logger.warn(`[ApplyPublic] Text extraction failed for file ${req.file.originalname}: ${err.message}`);
@@ -1413,7 +1413,6 @@ const applyPublic = asyncHandler(async (req, res) => {
   });
 
   // 2. Create the stage interviews (just saves the résumé / answers; scoring happens later).
-  const Interview = require('../models/Interview');
   if (firstStageKey) {
     await Interview.create({
       applicationId: application._id,
@@ -1471,13 +1470,4 @@ const applyPublic = asyncHandler(async (req, res) => {
   enqueueApplication(application._id);
 });
 
-module.exports = {
-  create, list, getOne, getScorecard, update, remove, duplicate,
-  generateScorecard: generateScorecardHandler,
-  cloneScorecard,
-  updateScorecard,
-  ranking,
-  generateField,
-  getPublic,
-  applyPublic,
-};
+export { create, list, getOne, getScorecard, update, remove, duplicate, generateScorecardHandler as generateScorecard, cloneScorecard, updateScorecard, ranking, generateField, getPublic, applyPublic };

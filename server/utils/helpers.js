@@ -106,12 +106,4 @@ function getEnabledStagesSorted(requisition) {
   return (requisition.stages || []).filter((s) => s.enabled).sort((a, b) => a.order - b.order);
 }
 
-module.exports = {
-  asyncHandler,
-  sanitizeUser,
-  round,
-  normalizeWeights,
-  sleep,
-  currentMonthRange,
-  getEnabledStagesSorted,
-};
+export { asyncHandler, sanitizeUser, round, normalizeWeights, sleep, currentMonthRange, getEnabledStagesSorted };

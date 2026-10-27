@@ -1,10 +1,11 @@
-const fs = require('fs');
-const path = require('path');
-const dayjs = require('dayjs');
-const utc = require('dayjs/plugin/utc');
-const timezone = require('dayjs/plugin/timezone');
-const { ValidationError } = require('../utils/errors');
-const { getCalendarTimeZone } = require('../utils/calendarTimeZone');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc.js';
+import timezone from 'dayjs/plugin/timezone.js';
+import { ValidationError } from '../utils/errors.js';
+import { getCalendarTimeZone } from '../utils/calendarTimeZone.js';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -18,6 +19,7 @@ dayjs.extend(timezone);
  * Adding a template = one Word file in the templates folder + one entry below.
  */
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url)); // ES modules have no __dirname of their own
 const TEMPLATES_DIR = process.env.OFFER_TEMPLATES_DIR
   ? path.resolve(process.env.OFFER_TEMPLATES_DIR)
   : path.join(__dirname, '..', 'templates', 'offer-letters');
@@ -181,4 +183,4 @@ function prepareValues(template, input, { candidateName, now } = {}) {
   return { values, fields };
 }
 
-module.exports = { TEMPLATES_DIR, getTemplate, templatePath, listTemplates, prepareValues, letterDate, cleanSalary, cleanTime };
+export { TEMPLATES_DIR, getTemplate, templatePath, listTemplates, prepareValues, letterDate, cleanSalary, cleanTime };

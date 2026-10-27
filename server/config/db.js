@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const logger = require('../utils/logger');
+import mongoose from 'mongoose';
+import logger from '../utils/logger.js';
 
 /**
  * Connects to MongoDB using MONGODB_URI. Retries once on failure (per the
@@ -39,4 +39,4 @@ async function connectDB() {
   }
 }
 
-module.exports = connectDB;
+export default connectDB;

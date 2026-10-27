@@ -19,8 +19,9 @@
  * Prices: USD per million tokens, from https://platform.claude.com/docs/en/about-claude/pricing (read 2026-10-21).
  * Prices change: re-check the page before sharing a report.
  */
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const PRICES = {
   'Haiku 5.5': [0.10, 0.50],
@@ -68,6 +69,7 @@ const FILLER = ['the', 'team', 'hiring', 'skills', 'work', 'role', 'talent']; //
 /** Text of n words. */
 const words = (n) => Array.from({ length: n }, (_, i) => FILLER[i % FILLER.length]).join(' ');
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url)); // ES modules have no __dirname of their own
 const root = path.join(__dirname, '..', 'services');
 const aiScorer = fs.readFileSync(path.join(root, 'aiScorer.js'), 'utf8');
 const questionGenerator = fs.readFileSync(path.join(root, 'questionGenerator.js'), 'utf8');

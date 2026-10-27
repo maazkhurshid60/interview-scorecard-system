@@ -1,5 +1,5 @@
-const axios = require('axios');
-const logger = require('../utils/logger');
+import axios from 'axios';
+import logger from '../utils/logger.js';
 
 const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
@@ -36,4 +36,4 @@ async function verifyCaptcha(token, remoteip) {
   }
 }
 
-module.exports = { getCaptchaConfig, verifyCaptcha };
+export { getCaptchaConfig, verifyCaptcha };

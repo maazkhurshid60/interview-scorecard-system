@@ -1,8 +1,8 @@
-const express = require('express');
-const interviewController = require('../controllers/interviewController');
-const { requireAuth, requireRole } = require('../middleware/auth');
-const { upload, uploadPdf } = require('../middleware/upload');
-const { publicAvailabilityLimiter } = require('../middleware/rateLimit');
+import express from 'express';
+import * as interviewController from '../controllers/interviewController.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
+import { upload, uploadPdf } from '../middleware/upload.js';
+import { publicAvailabilityLimiter } from '../middleware/rateLimit.js';
 
 const router = express.Router();
 
@@ -31,4 +31,4 @@ router.post('/:id/upload-artifact', uploadPdf('artifact'), interviewController.u
 router.post('/:id/send-offer', canSchedule, uploadPdf('offerLetter'), interviewController.sendOffer);
 router.post('/:id/score', interviewController.score);
 
-module.exports = router;
+export default router;

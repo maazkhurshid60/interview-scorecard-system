@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { STAGE_TYPES, INPUT_TYPES } = require('../utils/constants');
+import mongoose from 'mongoose';
+import { STAGE_TYPES, INPUT_TYPES } from '../utils/constants.js';
 
 const stageSchema = new mongoose.Schema({
   key: { type: String, required: true },        // 'hr_screen', 'technical', etc.
@@ -31,4 +31,4 @@ const pipelineTemplateSchema = new mongoose.Schema({
   stages: [stageSchema],
 }, { timestamps: true });
 
-module.exports = mongoose.model('PipelineTemplate', pipelineTemplateSchema);
+export default mongoose.model('PipelineTemplate', pipelineTemplateSchema);

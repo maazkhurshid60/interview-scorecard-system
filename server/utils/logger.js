@@ -1,6 +1,7 @@
-const fs = require('fs');
-const path = require('path');
-const dayjs = require('dayjs');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dayjs from 'dayjs';
 
 /**
  * Minimal console + file logger. Levels: info, warn, error.
@@ -9,6 +10,7 @@ const dayjs = require('dayjs');
  * must never crash the request that triggered it.
  */
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url)); // ES modules have no __dirname of their own
 const LOG_DIR = path.join(__dirname, '..', 'logs');
 
 function ensureLogDir() {
@@ -52,7 +54,7 @@ function log(level, message) {
   writeToFile(line);
 }
 
-module.exports = {
+export default {
   info: (message) => log('INFO', message),
   warn: (message) => log('WARN', message),
   error: (message) => log('ERROR', message),

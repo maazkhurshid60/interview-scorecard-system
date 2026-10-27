@@ -15,7 +15,7 @@ const SIGN_OFF = `Best regards,
 HR Department
 Red Star Technologies`;
 
-module.exports = {
+export default {
   // To the candidate, right after they apply through the public job link.
   applicationReceived: {
     details: ['name', 'jobTitle'],
