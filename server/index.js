@@ -10,8 +10,8 @@ const connectDB = require('./config/db');
 const logger = require('./utils/logger');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { startRetentionSchedule } = require('./services/retentionService');
-const { startApplicationProcessor } = require('./services/applicationProcessor');
-const { startEmailQueue } = require('./services/emailQueue');
+const { startApplicationProcessor, closeApplicationProcessor } = require('./services/applicationProcessor');
+const { startEmailQueue, closeEmailQueue } = require('./services/emailQueue');
 const { getAllowedOrigins, normalizeOrigin } = require('./utils/allowedOrigins');
 const { createOriginGuard } = require('./middleware/originGuard');
 const { getCaptchaConfig } = require('./services/captchaService');
@@ -117,11 +117,25 @@ async function start() {
       logger.warn('[Security] Cloudflare Turnstile is NOT configured (TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY). Public application forms have no bot protection and can be abused to consume AI spend and storage.');
     }
     startRetentionSchedule();
-    startApplicationProcessor(); // finishes AI screening of public applications in the background
-    startEmailQueue();           // sends queued emails in the background, with retries
-    app.listen(PORT, () => {
+    startApplicationProcessor(); // finishes AI screening of public applications in the background (BullMQ)
+    startEmailQueue();           // sends queued emails in the background, with retries (BullMQ)
+    const server = app.listen(PORT, () => {
       logger.info(`[Server] Listening on port ${PORT} (env=${process.env.NODE_ENV || 'development'})`);
     });
+
+    // A hosting platform stops the app with SIGTERM when it deploys. Let the emails and screenings that are
+    // running finish and release their Redis connections, so BullMQ does not have to recover them afterwards.
+    let stopping = false;
+    const shutdown = async (signal) => {
+      if (stopping) return;
+      stopping = true;
+      logger.info(`[Server] ${signal} received: finishing background work before exit.`);
+      server.close();
+      await Promise.allSettled([closeEmailQueue(), closeApplicationProcessor()]);
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
     logger.error(`[Server] Failed to start: ${err.message}`);
     process.exit(1);

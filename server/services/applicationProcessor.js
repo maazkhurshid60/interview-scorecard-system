@@ -9,6 +9,8 @@ const { generateScorecard } = require('./questionGenerator');
 const { scoreInterview } = require('./aiScorer');
 const { computeStageAverage, isStagePassed, rankApplications } = require('./scoringEngine');
 const { enqueueEmail } = require('./emailQueue');
+const { Queue, Worker, UnrecoverableError } = require('bullmq');
+const { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } = require('../queues/redis');
 const { syncHrQuestionnaireRubric, assignMissingAttributeIds } = require('../utils/scorecardHelpers');
 
 /**
@@ -19,15 +21,17 @@ const { syncHrQuestionnaireRubric, assignMissingAttributeIds } = require('../uti
  * scorecard if the job has none, AI-scoring the résumé and the questionnaire,
  * approving those scores, ranking, and the confirmation email.
  *
- * The job's state lives on the application itself (`screeningJob.status`:
- * pending -> processing -> completed | failed), so nothing is lost if the server
- * restarts: a sweeper picks up pending jobs, recovers jobs left "processing" by a
- * restart, and retries temporary failures. Every step checks what is already
- * done, so running a job again never scores or emails twice.
+ * The work is queued with BullMQ (on Redis), which runs it, waits between retries and recovers a job whose
+ * worker died. The job's state is also kept on the application itself (`screeningJob.status`:
+ * pending -> processing -> completed | failed): the screens read it, and a check every minute puts any
+ * application that is still waiting back in the queue if Redis ever lost the job. Every step checks what is
+ * already done, so running a job again never scores or emails twice.
  */
 
+const QUEUE_NAME = 'application-screening';
 const MAX_ATTEMPTS = 3;
-const STALE_LOCK_MS = 10 * 60 * 1000; // a job "processing" longer than this was left behind by a restart
+const RETRY_WAIT_MS = 60 * 1000;      // wait before the 2nd attempt; doubles for the 3rd
+const STALE_LOCK_MS = 10 * 60 * 1000; // a job "processing" longer than this was left behind by a crash
 const CONCURRENCY = 2;                // at most this many applications are processed at once (limits AI load)
 const DEFAULT_SWEEP_MS = 60 * 1000;
 
@@ -234,7 +238,7 @@ async function finishJob(application, failures) {
   let status = 'completed';
   if (failures.length > 0) {
     // A bad key or a reached spend cap will not fix itself, so it is not retried (staff can score by hand).
-    status = permanent || attempts >= MAX_ATTEMPTS ? 'failed' : 'pending'; // pending = retried by the sweeper
+    status = permanent || attempts >= MAX_ATTEMPTS ? 'failed' : 'pending'; // pending = BullMQ tries again after a wait
   }
   const lastError = failures.map((err) => err.message).join('; ').slice(0, 500);
 
@@ -247,19 +251,23 @@ async function finishJob(application, failures) {
     $unset: { 'screeningJob.lockedAt': 1 },
   });
   logger.info(`[AppProcessor] Application ${application._id} -> ${status} (attempt ${attempts}${lastError ? `, issue: ${lastError}` : ''}).`);
+  return { status, lastError };
 }
 
 /**
- * Processes one application if it is waiting. Safe to call twice: only one call can claim the job.
- * @param {string|import('mongoose').Types.ObjectId} applicationId
+ * Processes one application: this is what the BullMQ worker runs for each job. Throwing makes BullMQ try again
+ * after a wait; throwing an UnrecoverableError makes it stop.
+ * @param {import('bullmq').Job} job - job.data.applicationId is the application to process.
  */
-async function processApplication(applicationId) {
+async function processApplication(job) {
+  // BullMQ gives a job to one worker at a time, so an application that is still "processing" here was left
+  // behind by a crashed attempt and is taken over. One that is completed or failed (or deleted) is skipped.
   const claimed = await Application.findOneAndUpdate(
-    { _id: applicationId, 'screeningJob.status': 'pending' },
+    { _id: job.data.applicationId, 'screeningJob.status': { $in: ['pending', 'processing'] } },
     { $set: { 'screeningJob.status': 'processing', 'screeningJob.lockedAt': new Date() }, $inc: { 'screeningJob.attempts': 1 } },
     { new: true },
   );
-  if (!claimed) return; // not waiting (done already, or another worker has it)
+  if (!claimed) return; // done already, or the application no longer exists
 
   const failures = [];
   try {
@@ -268,35 +276,69 @@ async function processApplication(applicationId) {
     failures.push(err);
     logger.error(`[AppProcessor] Unexpected error for application ${claimed._id}: ${err.stack || err.message}`);
   }
-  await finishJob(claimed, failures);
+  const { status, lastError } = await finishJob(claimed, failures);
+  if (status === 'pending') throw new Error(lastError || 'Screening did not finish.'); // BullMQ retries after a wait
+  if (status === 'failed' && failures.length > 0) throw new UnrecoverableError(lastError || 'Screening failed.');
 }
 
-// ---------------------------------------------------------------- queue + sweeper
+// ---------------------------------------------------------------- queue
 
-const queued = new Set();   // application ids waiting or running in THIS process
-const waiting = [];
-let running = 0;
+let queue = null;
+let worker = null;
+let queueConnection = null;
+let workerConnection = null;
+let reconcileTimer = null;
 
-function pump() {
-  while (running < CONCURRENCY && waiting.length > 0) {
-    const id = waiting.shift();
-    running += 1;
-    processApplication(id)
-      .catch((err) => logger.error(`[AppProcessor] ${id} crashed: ${err.stack || err.message}`))
-      .finally(() => { running -= 1; queued.delete(id); pump(); });
+/** The screening queue, created on first use. null when Redis is not configured. */
+function getQueue() {
+  if (!redisConfigured()) return null;
+  if (!queue) {
+    queueConnection = createRedisConnection({ forQueue: true });
+    queue = new Queue(QUEUE_NAME, {
+      connection: queueConnection,
+      prefix: queuePrefix(),
+      defaultJobOptions: {
+        attempts: MAX_ATTEMPTS,
+        backoff: { type: 'exponential', delay: RETRY_WAIT_MS },
+        removeOnComplete: true,
+        removeOnFail: { age: 7 * 24 * 60 * 60 },
+      },
+    });
+    queue.on('error', (err) => logger.warn(`[AppProcessor] Queue error: ${err.message}`));
+  }
+  return queue;
+}
+
+/**
+ * Adds an application to the queue. Returns immediately; the work happens in the background. Never throws: if
+ * Redis is down the application stays "pending" in the database and the check below queues it later.
+ * An application is queued once at a time: asking again while it is waiting or running does nothing.
+ * @returns {Promise<{queued: boolean, duplicate?: boolean, reason?: string}>}
+ */
+async function enqueueApplication(applicationId) {
+  const screening = getQueue();
+  if (!screening) return { queued: false, reason: 'The screening queue is not available (REDIS_URL is not set).' };
+  try {
+    await whenReady(screening);
+    const jobId = safeJobId(applicationId);
+    const existing = await screening.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state !== 'completed' && state !== 'failed') return { queued: true, duplicate: true };
+      await existing.remove(); // an old finished job with this id must not block a new attempt
+    }
+    await screening.add('screen', { applicationId: String(applicationId) }, { jobId });
+    return { queued: true };
+  } catch (err) {
+    logger.error(`[AppProcessor] Could not queue application ${applicationId}: ${err.message}`);
+    return { queued: false, reason: 'Could not queue the application.' };
   }
 }
 
-/** Puts an application at the back of the line. Returns immediately; the work happens in the background. */
-function enqueueApplication(applicationId) {
-  const id = String(applicationId);
-  if (queued.has(id)) return;
-  queued.add(id);
-  waiting.push(id);
-  setImmediate(pump);
-}
-
-/** One pass: recover jobs a restart left behind, then queue everything that is waiting. */
+/**
+ * One check: applications the database still shows as waiting are queued (a no-op for ones already in the queue),
+ * and ones stuck "processing" by a crash long ago are put back to waiting, or marked failed after too many tries.
+ */
 async function sweep() {
   const staleBefore = new Date(Date.now() - STALE_LOCK_MS);
   const left = { 'screeningJob.status': 'processing', 'screeningJob.lockedAt': { $lt: staleBefore } };
@@ -309,19 +351,54 @@ async function sweep() {
     $unset: { 'screeningJob.lockedAt': 1 },
   });
   const pending = await Application.find({ 'screeningJob.status': 'pending' }).sort({ createdAt: 1 }).limit(20).select('_id').lean();
-  pending.forEach((app) => enqueueApplication(app._id));
+  for (const application of pending) await enqueueApplication(application._id);
 }
 
 /**
- * Starts the sweeper: once now (picks up work left by a restart), then every minute.
+ * Starts the worker that screens applications, and the once-a-minute check above (also run now, to pick up
+ * work left by a restart). Returns null (and logs a warning) when Redis is not configured.
  * @param {{intervalMs?: number}} [options]
+ * @returns {import('bullmq').Worker|null}
  */
 function startApplicationProcessor({ intervalMs = DEFAULT_SWEEP_MS } = {}) {
+  if (!redisConfigured()) {
+    logger.warn('[AppProcessor] REDIS_URL is not set: applications cannot be screened in the background until it is.');
+    return null;
+  }
+  if (worker) return worker;
+  getQueue();
+  workerConnection = createRedisConnection();
+  worker = new Worker(QUEUE_NAME, processApplication, {
+    connection: workerConnection,
+    prefix: queuePrefix(),
+    concurrency: CONCURRENCY,
+    lockDuration: 120 * 1000, // one AI call can take up to 3 minutes; BullMQ renews the lock while the job runs
+  });
+  worker.on('error', (err) => logger.error(`[AppProcessor] Worker error: ${err.message}`));
+  worker.on('failed', (job, err) => {
+    if (job) logger.warn(`[AppProcessor] Screening job for application ${job.data?.applicationId} failed (attempt ${job.attemptsMade}): ${err.message}`);
+  });
+
   const tick = () => sweep().catch((err) => logger.error(`[AppProcessor] Sweep failed: ${err.message}`));
   tick();
-  const timer = setInterval(tick, intervalMs);
-  timer.unref(); // never keep the process alive just for this timer
-  return timer;
+  reconcileTimer = setInterval(tick, intervalMs);
+  reconcileTimer.unref(); // never keep the process alive just for this timer
+  return worker;
 }
 
-module.exports = { enqueueApplication, processApplication, startApplicationProcessor, sweep, MAX_ATTEMPTS };
+/** Stops taking new applications, lets the ones running finish, and closes the Redis connections. */
+async function closeApplicationProcessor() {
+  if (reconcileTimer) { clearInterval(reconcileTimer); reconcileTimer = null; }
+  const current = worker;
+  worker = null;
+  if (current) await current.close();
+  await closeRedisConnection(workerConnection);
+  workerConnection = null;
+  const screening = queue;
+  queue = null;
+  if (screening) await screening.close();
+  await closeRedisConnection(queueConnection);
+  queueConnection = null;
+}
+
+module.exports = { enqueueApplication, processApplication, startApplicationProcessor, closeApplicationProcessor, sweep, MAX_ATTEMPTS };
