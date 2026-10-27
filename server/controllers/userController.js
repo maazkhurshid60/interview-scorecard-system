@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import User from '../models/User.js';
+import * as userRepo from '../repositories/userRepository.js';
 import { USER_ROLES } from '../utils/constants.js';
 import { asyncHandler, sanitizeUser } from '../utils/helpers.js';
 import logger from '../utils/logger.js';
@@ -16,11 +16,10 @@ const list = asyncHandler(async (req, res) => {
   const isBrief = req.query.brief === 'true';
 
   if (!isManager || isBrief) {
-    const users = await User.find({ active: true }).select('name email').sort({ name: 1 });
-    return res.json({ users });
+    return res.json({ users: await userRepo.listActiveBrief() });
   }
 
-  const users = await User.find().select('-passwordHash -passwordResetTokenHash').sort({ createdAt: -1 });
+  const users = await userRepo.listAll();
   res.json({ users: users.map(sanitizeUser) });
 });
 
@@ -55,13 +54,13 @@ const create = asyncHandler(async (req, res) => {
     return res.status(403).json({ error: 'FORBIDDEN', message: 'Only an Owner can assign the Owner role.' });
   }
 
-  const existing = await User.findOne({ email: normalizedEmail });
+  const existing = await userRepo.findByEmail(normalizedEmail);
   if (existing) {
     return res.status(409).json({ error: 'CONFLICT', message: `A user with email "${normalizedEmail}" already exists.` });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const user = await User.create({
+  const user = await userRepo.create({
     name: name.trim(),
     email: normalizedEmail,
     passwordHash,
@@ -79,7 +78,7 @@ const create = asyncHandler(async (req, res) => {
  * Body: { name, email, role, active, password }
  */
 const update = asyncHandler(async (req, res) => {
-  const targetUser = await User.findById(req.params.id);
+  const targetUser = await userRepo.findById(req.params.id);
   if (!targetUser) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'User not found.' });
   }
@@ -101,20 +100,18 @@ const update = asyncHandler(async (req, res) => {
     const isDeactivating = active === false || active === 'false';
     const isChangingRole = role && role !== 'owner';
     if (isDeactivating || isChangingRole) {
-      const otherActiveOwners = await User.countDocuments({
-        role: 'owner',
-        active: true,
-        _id: { $ne: targetUser._id },
-      });
+      const otherActiveOwners = await userRepo.countOwnersExcept(targetUser._id, { activeOnly: true });
       if (otherActiveOwners === 0) {
         return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'There must be at least one active Owner in the system.' });
       }
     }
   }
 
+  const changes = {};
+
   if (name !== undefined) {
     if (!name.trim()) return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Name cannot be empty.' });
-    targetUser.name = name.trim();
+    changes.name = name.trim();
   }
 
   if (email !== undefined) {
@@ -124,11 +121,11 @@ const update = asyncHandler(async (req, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Please provide a valid email address.' });
     }
     if (normalizedEmail !== targetUser.email) {
-      const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: targetUser._id } });
+      const existing = await userRepo.findByEmail(normalizedEmail, { exceptId: targetUser._id });
       if (existing) {
         return res.status(409).json({ error: 'CONFLICT', message: `A user with email "${normalizedEmail}" already exists.` });
       }
-      targetUser.email = normalizedEmail;
+      changes.email = normalizedEmail;
     }
   }
 
@@ -136,28 +133,28 @@ const update = asyncHandler(async (req, res) => {
     if (!USER_ROLES.includes(role)) {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: `Role must be one of: ${USER_ROLES.join(', ')}.` });
     }
-    targetUser.role = role;
+    changes.role = role;
   }
 
   let endSessions = false; // sign the person out everywhere when their access is cut or their password changes
   if (active !== undefined) {
     if (!Boolean(active) && targetUser.active) endSessions = true;
-    targetUser.active = Boolean(active);
+    changes.active = Boolean(active);
   }
 
   if (password && String(password).trim()) {
     if (String(password).length < 6) {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'New password must be at least 6 characters long.' });
     }
-    targetUser.passwordHash = await bcrypt.hash(password, 10);
-    targetUser.passwordChangedAt = new Date();
+    changes.passwordHash = await bcrypt.hash(password, 10);
+    changes.passwordChangedAt = new Date();
     endSessions = true;
   }
 
-  await targetUser.save();
+  const updatedUser = await userRepo.update(targetUser._id, changes);
   if (endSessions) await revokeAllForUser(targetUser._id);
-  logger.info(`[Users] Updated user ${targetUser.email} (${targetUser.role}) by ${req.user.email} (${req.user.role})`);
-  res.json({ user: sanitizeUser(targetUser), message: 'User updated successfully.' });
+  logger.info(`[Users] Updated user ${updatedUser.email} (${updatedUser.role}) by ${req.user.email} (${req.user.role})`);
+  res.json({ user: sanitizeUser(updatedUser), message: 'User updated successfully.' });
 });
 
 /**
@@ -165,7 +162,7 @@ const update = asyncHandler(async (req, res) => {
  * Removes a user account (restricted to owner and admin).
  */
 const remove = asyncHandler(async (req, res) => {
-  const targetUser = await User.findById(req.params.id);
+  const targetUser = await userRepo.findById(req.params.id);
   if (!targetUser) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'User not found.' });
   }
@@ -181,16 +178,13 @@ const remove = asyncHandler(async (req, res) => {
 
   // Protect the last active Owner from deletion
   if (targetUser.role === 'owner') {
-    const otherOwners = await User.countDocuments({
-      role: 'owner',
-      _id: { $ne: targetUser._id },
-    });
+    const otherOwners = await userRepo.countOwnersExcept(targetUser._id);
     if (otherOwners === 0) {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Cannot delete the only Owner in the system.' });
     }
   }
 
-  await User.findByIdAndDelete(req.params.id);
+  await userRepo.remove(req.params.id);
   await revokeAllForUser(targetUser._id);
   logger.info(`[Users] Deleted user ${targetUser.email} (${targetUser.role}) by ${req.user.email} (${req.user.role})`);
   res.json({ message: 'User deleted successfully.' });

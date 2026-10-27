@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import * as userRepo from '../repositories/userRepository.js';
 import * as refreshTokens from '../repositories/refreshTokenRepository.js';
 import logger from '../utils/logger.js';
 
@@ -108,7 +108,7 @@ async function refreshSession(req, res) {
     return { failure: 'session_too_old' };
   }
 
-  const user = await User.findById(stored.userId);
+  const user = await userRepo.findById(stored.userId);
   if (!user || !user.active) {
     await revokeFamily(stored.familyId);
     return { failure: 'user_inactive' };

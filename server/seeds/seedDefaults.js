@@ -6,7 +6,7 @@ import connectDB from '../config/db.js';
 import logger from '../utils/logger.js';
 import { DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS, DEFAULT_COST_RATE_TABLE } from '../utils/constants.js';
 
-import User from '../models/User.js';
+import * as userRepo from '../repositories/userRepository.js';
 import * as pipelines from '../repositories/pipelineTemplateRepository.js';
 import * as settingRepo from '../repositories/settingRepository.js';
 
@@ -15,17 +15,16 @@ import * as settingRepo from '../repositories/settingRepository.js';
  */
 async function seedOwnerUser() {
   const email = process.env.SEED_OWNER_EMAIL || "owner@example.com";
-  const hasOwner = await User.exists({ role: "owner" });
-  const existing = await User.findOne({ email });
+  const hasOwner = await userRepo.hasOwner();
+  const existing = await userRepo.findByEmail(email);
 
   if (existing) {
     if (!hasOwner && existing.role === "admin") {
-      existing.role = "owner";
-      await existing.save();
+      const upgraded = await userRepo.update(existing._id, { role: "owner" });
       logger.info(`[Seed] Upgraded existing user (${email}) to owner role.`);
-    } else {
-      logger.info(`[Seed] Owner user already exists (${email}) with role ${existing.role}, skipping.`);
+      return upgraded;
     }
+    logger.info(`[Seed] Owner user already exists (${email}) with role ${existing.role}, skipping.`);
     return existing;
   }
 
@@ -34,7 +33,7 @@ async function seedOwnerUser() {
   const passwordHash = await bcrypt.hash(password, 10);
   const initialRole = hasOwner ? "admin" : "owner";
 
-  const owner = await User.create({
+  const owner = await userRepo.create({
     name,
     email,
     passwordHash,
@@ -62,14 +61,14 @@ const DEMO_USERS = [
 
 async function seedDemoUsers() {
   for (const { role, email, name } of DEMO_USERS) {
-    const existing = await User.findOne({ email });
+    const existing = await userRepo.findByEmail(email);
     if (existing) {
       logger.info(`[Seed] ${role} user already exists (${email}), skipping.`);
       continue;
     }
 
     const passwordHash = await bcrypt.hash("12345678", 10);
-    await User.create({ name, email, passwordHash, role, active: true });
+    await userRepo.create({ name, email, passwordHash, role, active: true });
     logger.info(`[Seed] Created demo ${role} user: ${email}`);
   }
 }
