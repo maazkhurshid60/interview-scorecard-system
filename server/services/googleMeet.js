@@ -94,7 +94,7 @@ async function logTranscriptDiagnostics(interview, conferenceRecordName, transcr
  * resolved, the caller should overwrite it with the real conference record
  * name (see fetchTranscript's `resolvedConferenceId` return field).
  *
- * @param {import('mongoose').Document} interview - Unused directly, kept for interface parity with other providers.
+ * @param {object} interview - Unused directly, kept for interface parity with other providers.
  * @returns {Promise<{meetingUri: string, conferenceId: string}>}
  * @throws {import('../utils/errors').ApiKeyError} on 401/403 — reconnect Google in Settings.
  * @throws {import('../utils/errors').RateLimitError} if 429 persists (Meet API ~60 req/min/project).
@@ -273,7 +273,7 @@ async function resolveSpeakerName(meet, participantName, cache) {
  * Requires: transcription was enabled during the meeting; the organizer's
  * Workspace edition produces transcripts; a valid OAuth refresh token.
  *
- * @param {import('mongoose').Document} interview - Must have `conferenceId` set
+ * @param {object} interview - Must have `conferenceId` set
  *   (either a space name from createMeeting, or an already-resolved conference record name).
  * @returns {Promise<{status:'pending'|'ready', text?:string, resolvedConferenceId?:string}>}
  *   `resolvedConferenceId` is set once a real conference record is found, so the

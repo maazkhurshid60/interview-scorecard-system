@@ -41,7 +41,7 @@ async function getActiveProvider() {
  * Keeping this interface stable means adding a provider later is a new
  * file, not a rewrite.
  *
- * @param {import('mongoose').Document} interview
+ * @param {object} interview
  * @returns {Promise<{meetingUri: string, conferenceId: string}>}
  */
 async function createMeeting(interview, details) {
@@ -59,7 +59,7 @@ async function cancelMeeting(interview) {
 
 /**
  * Pulls the transcript for an interview from the active provider.
- * @param {import('mongoose').Document} interview
+ * @param {object} interview
  * @returns {Promise<{status: 'pending'|'ready'|'failed', text?: string}>}
  */
 async function fetchTranscript(interview) {

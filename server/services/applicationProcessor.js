@@ -1,8 +1,8 @@
-import Application from '../models/Application.js';
-import Requisition from '../models/Requisition.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as candidateRepo from '../repositories/candidateRepository.js';
-import Interview from '../models/Interview.js';
-import Scorecard from '../models/Scorecard.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as scorecardRepo from '../repositories/scorecardRepository.js';
 import logger from '../utils/logger.js';
 import { ApiKeyError, SpendCapError } from '../utils/errors.js';
 import { generateScorecard } from './questionGenerator.js';
@@ -46,21 +46,20 @@ function ensureScorecard(requisition) {
 
   const work = (async () => {
     let scorecard = requisition.scorecardId
-      ? await Scorecard.findById(requisition.scorecardId)
-      : await Scorecard.findOne({ requisitionId: requisition._id });
+      ? await scorecardRepo.findById(requisition.scorecardId)
+      : await scorecardRepo.findByRequisition(requisition._id);
     if (!scorecard) {
       const generated = await generateScorecard(requisition);
       assignMissingAttributeIds(generated.stages);
-      scorecard = await Scorecard.findOne({ requisitionId: requisition._id }); // someone may have created it meanwhile
+      scorecard = await scorecardRepo.findByRequisition(requisition._id); // someone may have created it meanwhile
       if (!scorecard) {
-        scorecard = await Scorecard.create({ requisitionId: requisition._id, generatedByAI: true, stages: generated.stages });
-        await Requisition.updateOne({ _id: requisition._id }, { scorecardId: scorecard._id });
+        scorecard = await scorecardRepo.create({ requisitionId: requisition._id, generatedByAI: true, stages: generated.stages });
+        await requisitionRepo.setScorecard(requisition._id, scorecard._id);
         logger.info(`[AppProcessor] Auto-generated missing scorecard for requisition ${requisition._id}`);
       }
     }
     if (scorecard && syncHrQuestionnaireRubric(scorecard, requisition)) {
-      scorecard.markModified('stages');
-      await scorecard.save();
+      await scorecardRepo.save(scorecard);
     }
     return scorecard;
   })().finally(() => scorecardInFlight.delete(key));
@@ -77,11 +76,10 @@ async function approveAutoScores(interview, stage, application) {
     if (score.approvedScore === undefined || score.approvedScore === null) score.approvedScore = score.aiScore;
   });
   interview.status = 'approved';
-  interview.markModified('scores');
   const stageAverage = computeStageAverage(interview);
   const stagePassed = isStagePassed(stageAverage, stage.passThreshold);
   interview.stageAverage = stageAverage;
-  await interview.save();
+  await interviewRepo.save(interview);
 
   const progress = application.stageProgress.find((p) => p.stageKey === stage.key);
   if (progress) {
@@ -94,7 +92,7 @@ async function approveAutoScores(interview, stage, application) {
 
 /** Runs every step for one application. Problems are collected in `failures`; a failed step does not stop the others. */
 async function runSteps(application, failures) {
-  const requisition = await Requisition.findById(application.requisitionId);
+  const requisition = await requisitionRepo.findById(application.requisitionId);
   const candidate = await candidateRepo.findById(application.candidateId);
   if (!requisition || !candidate) {
     // The job or the candidate was deleted while this waited: nothing left to do.
@@ -133,9 +131,9 @@ async function runSteps(application, failures) {
   // Public applications always begin with the required résumé screen, even for an older pipeline template.
   const firstStage = enabledStages.find((stage) => stage.key === 'resume_screen') || enabledStages[0] || requisition.stages[0];
   const hrStage = enabledStages.find((stage) => stage.key === 'hr_screen');
-  const firstInterview = firstStage ? await Interview.findOne({ applicationId: application._id, stageKey: firstStage.key }) : null;
+  const firstInterview = firstStage ? await interviewRepo.findByApplicationAndStage(application._id, firstStage.key) : null;
   const hrInterview = hrStage && hrStage.key !== firstStage?.key
-    ? await Interview.findOne({ applicationId: application._id, stageKey: hrStage.key })
+    ? await interviewRepo.findByApplicationAndStage(application._id, hrStage.key)
     : null;
 
   // 3. Score the résumé stage using only the CV, JD, and screening criteria.
@@ -150,7 +148,7 @@ async function runSteps(application, failures) {
         if (scored) {
           const progress = application.stageProgress.find((p) => p.stageKey === firstStage.key);
           if (progress) progress.status = 'scored';
-          await application.save();
+          await applicationRepo.save(application);
         }
       } catch (err) {
         failures.push(err);
@@ -221,10 +219,10 @@ async function runSteps(application, failures) {
 
   // 6. Re-rank every applicant of this job.
   try {
-    const allApps = await Application.find({ requisitionId: requisition._id });
+    const allApps = await applicationRepo.listForRanking(requisition._id);
     const ranked = rankApplications(allApps);
     for (const app of ranked) {
-      await Application.updateOne({ _id: app._id }, { rank: app.rank });
+      await applicationRepo.setRank(app._id, app.rank);
     }
   } catch (err) {
     logger.warn(`[AppProcessor] Ranking error for requisition ${requisition._id}: ${err.message}`);
@@ -242,14 +240,7 @@ async function finishJob(application, failures) {
   }
   const lastError = failures.map((err) => err.message).join('; ').slice(0, 500);
 
-  await Application.updateOne({ _id: application._id }, {
-    $set: {
-      'screeningJob.status': status,
-      'screeningJob.lastError': lastError || null,
-      ...(status === 'pending' ? {} : { 'screeningJob.completedAt': new Date() }),
-    },
-    $unset: { 'screeningJob.lockedAt': 1 },
-  });
+  await applicationRepo.finishScreening(application._id, { status, lastError });
   logger.info(`[AppProcessor] Application ${application._id} -> ${status} (attempt ${attempts}${lastError ? `, issue: ${lastError}` : ''}).`);
   return { status, lastError };
 }
@@ -262,11 +253,7 @@ async function finishJob(application, failures) {
 async function processApplication(job) {
   // BullMQ gives a job to one worker at a time, so an application that is still "processing" here was left
   // behind by a crashed attempt and is taken over. One that is completed or failed (or deleted) is skipped.
-  const claimed = await Application.findOneAndUpdate(
-    { _id: job.data.applicationId, 'screeningJob.status': { $in: ['pending', 'processing'] } },
-    { $set: { 'screeningJob.status': 'processing', 'screeningJob.lockedAt': new Date() }, $inc: { 'screeningJob.attempts': 1 } },
-    { new: true },
-  );
+  const claimed = await applicationRepo.claimForScreening(job.data.applicationId);
   if (!claimed) return; // done already, or the application no longer exists
 
   const failures = [];
@@ -340,18 +327,9 @@ async function enqueueApplication(applicationId) {
  * and ones stuck "processing" by a crash long ago are put back to waiting, or marked failed after too many tries.
  */
 async function sweep() {
-  const staleBefore = new Date(Date.now() - STALE_LOCK_MS);
-  const left = { 'screeningJob.status': 'processing', 'screeningJob.lockedAt': { $lt: staleBefore } };
-  await Application.updateMany({ ...left, 'screeningJob.attempts': { $gte: MAX_ATTEMPTS } }, {
-    $set: { 'screeningJob.status': 'failed', 'screeningJob.completedAt': new Date(), 'screeningJob.lastError': 'Stopped: processing kept being interrupted.' },
-    $unset: { 'screeningJob.lockedAt': 1 },
-  });
-  await Application.updateMany({ ...left, 'screeningJob.attempts': { $lt: MAX_ATTEMPTS } }, {
-    $set: { 'screeningJob.status': 'pending' },
-    $unset: { 'screeningJob.lockedAt': 1 },
-  });
-  const pending = await Application.find({ 'screeningJob.status': 'pending' }).sort({ createdAt: 1 }).limit(20).select('_id').lean();
-  for (const application of pending) await enqueueApplication(application._id);
+  await applicationRepo.releaseStaleScreenings({ staleBefore: new Date(Date.now() - STALE_LOCK_MS), maxAttempts: MAX_ATTEMPTS });
+  const pendingIds = await applicationRepo.listPendingScreeningIds(20);
+  for (const applicationId of pendingIds) await enqueueApplication(applicationId);
 }
 
 /**

@@ -1,6 +1,6 @@
 import logger from '../utils/logger.js';
-import Requisition from '../models/Requisition.js';
-import Interview from '../models/Interview.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
 import * as settingRepo from '../repositories/settingRepository.js';
 import * as auditLog from '../repositories/auditLogRepository.js';
 import { deleteFile } from './fileStorage.js';
@@ -22,7 +22,7 @@ async function getRetentionDays() {
  * artifact file (and the file itself on Cloudinary), and each score's AI
  * justification text. NEVER touches numeric scores, stageAverage, or any
  * other part of the permanent decision record.
- * @param {import('mongoose').Document} interview
+ * @param {object} interview
  */
 async function purgeInterview(interview) {
   if (interview.artifactFilePublicId) {
@@ -40,19 +40,18 @@ async function purgeInterview(interview) {
   interview.artifactFileSize = undefined;
   interview.artifactFileMimeType = undefined;
   interview.scores.forEach((score) => { score.aiJustification = undefined; });
-  interview.markModified('scores');
 
-  await interview.save();
+  await interviewRepo.save(interview);
 }
 
 /**
  * Purges every interview under one closed requisition that still has
  * something to purge, then writes a single audit entry noting the purge.
- * @param {import('mongoose').Document} requisition
+ * @param {object} requisition
  * @returns {Promise<number>} Number of interviews purged.
  */
 async function purgeRequisition(requisition) {
-  const interviews = await Interview.find({ requisitionId: requisition._id });
+  const interviews = await interviewRepo.listByRequisition(requisition._id);
   let purgedCount = 0;
 
   for (const interview of interviews) {
@@ -93,7 +92,7 @@ async function runRetentionSweep() {
     }
 
     const cutoff = new Date(Date.now() - retentionDays * DAY_MS);
-    const requisitions = await Requisition.find({ status: 'closed', closedAt: { $lte: cutoff } });
+    const requisitions = await requisitionRepo.listClosedBefore(cutoff);
 
     if (requisitions.length === 0) {
       logger.info('[RetentionService] No closed requisitions past the retention window.');

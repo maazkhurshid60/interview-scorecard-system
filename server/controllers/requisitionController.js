@@ -1,12 +1,11 @@
 import crypto from 'crypto';
-import mongoose from 'mongoose';
-import Requisition from '../models/Requisition.js';
+import { isValidId, isValidIdString, normalizeId } from '../repositories/ids.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as pipelines from '../repositories/pipelineTemplateRepository.js';
-import Scorecard from '../models/Scorecard.js';
-import Application from '../models/Application.js';
-import '../models/Candidate.js'; // registers the Candidate model for Application.populate('candidateId')
+import * as scorecardRepo from '../repositories/scorecardRepository.js';
+import * as applicationRepo from '../repositories/applicationRepository.js';
 import * as candidateRepo from '../repositories/candidateRepository.js';
-import Interview from '../models/Interview.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
 import { extractArtifactText } from '../utils/textExtractor.js';
 import * as transcriptProvider from '../services/transcriptProvider.js';
 import * as settingRepo from '../repositories/settingRepository.js';
@@ -181,10 +180,6 @@ function normalizeJobTitle(title) {
     throw new ValidationError(['title'], `Job title must be at least ${JOB_TITLE_MIN_LENGTH} characters.`);
   }
   return normalizedTitle;
-}
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Reads a Setting's scalar value, falling back to a default if missing. */
@@ -382,10 +377,7 @@ const create = asyncHandler(async (req, res) => {
   const normalizedTitle = normalizeJobTitle(title);
   const workplace = resolveWorkplace({ workplaceType, officeLocation, remoteRegion });
 
-  const duplicateActiveOpening = await Requisition.findOne({
-    title: { $regex: `^${escapeRegex(normalizedTitle)}$`, $options: 'i' },
-    status: 'open',
-  }).select('_id title').lean();
+  const duplicateActiveOpening = await requisitionRepo.findOpenByTitle(normalizedTitle);
 
   const template = await pipelines.findById(pipelineTemplateId);
   if (!template) {
@@ -411,7 +403,7 @@ const create = asyncHandler(async (req, res) => {
     }
   }
 
-  const requisition = await Requisition.create({
+  const requisition = await requisitionRepo.create({
     title: normalizedTitle,
     employmentType: employmentType || 'full_time',
     ...(employmentDetailField ? { [employmentDetailField]: normalizedEmploymentDetails } : {}),
@@ -428,7 +420,7 @@ const create = asyncHandler(async (req, res) => {
     applicationDeadline: applicationDeadline ? new Date(applicationDeadline) : null,
     aiScreeningEnabled: aiScreeningEnabled !== undefined ? Boolean(aiScreeningEnabled) : true,
     status: status || 'open',
-    departmentId: departmentId && mongoose.isValidObjectId(departmentId) ? departmentId : undefined,
+    departmentId: departmentId && isValidId(departmentId) ? departmentId : undefined,
     closedAt: status === 'closed' ? new Date() : undefined,
     createdBy: req.user._id,
   });
@@ -451,36 +443,25 @@ const create = asyncHandler(async (req, res) => {
  * moving?" without the client fetching every requisition's detail separately.
  */
 const list = asyncHandler(async (req, res) => {
-  const filter = {};
-  if (req.query.status) {
-    // Include legacy `on_hold` records in the new Paused filter.
-    filter.status = req.query.status === 'paused' ? { $in: ['paused', 'on_hold'] } : req.query.status;
-  }
-  if (req.query.departmentId && req.query.departmentId !== 'all') {
-    filter.departmentId = req.query.departmentId;
-  }
-  const requisitions = await Requisition.find(filter)
-    .populate('departmentId', 'name')
-    .sort({ createdAt: -1 })
-    .lean();
+  const requisitions = await requisitionRepo.list({
+    status: req.query.status,
+    departmentId: req.query.departmentId && req.query.departmentId !== 'all' ? req.query.departmentId : undefined,
+  });
 
   // The database counts the applications per job and disposition, so only a few small rows come back,
   // instead of loading every application just to count them in JavaScript.
-  const counts = await Application.aggregate([
-    { $match: { requisitionId: { $in: requisitions.map((r) => r._id) } } },
-    { $group: { _id: { requisitionId: '$requisitionId', disposition: '$disposition' }, count: { $sum: 1 } } },
-  ]);
+  const counts = await applicationRepo.countByRequisitionAndDisposition(requisitions.map((r) => r._id));
 
   const statsByRequisition = new Map();
-  counts.forEach(({ _id, count }) => {
-    const key = String(_id.requisitionId);
+  counts.forEach(({ requisitionId, disposition, count }) => {
+    const key = requisitionId;
     if (!statsByRequisition.has(key)) {
       statsByRequisition.set(key, { total: 0, inProgress: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0 });
     }
     const stats = statsByRequisition.get(key);
     stats.total += count;
     // No disposition yet (null, missing or empty) means the candidate is still in progress.
-    if (_id.disposition && stats[_id.disposition] !== undefined) stats[_id.disposition] += count;
+    if (disposition && stats[disposition] !== undefined) stats[disposition] += count;
     else stats.inProgress += count;
   });
 
@@ -501,109 +482,75 @@ const list = asyncHandler(async (req, res) => {
  * Supports ?page=1&limit=10&search=john&disposition=HIRE|MAYBE|NO_HIRE|in_progress&finalDecision=hired|rejected|withdrawn|undecided&stageKey=...&candidateId=...
  */
 const getOne = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id)
-    .populate('departmentId', 'name description');
+  const requisition = await requisitionRepo.findByIdWithDepartment(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
 
   // The scorecard is loaded separately when its tab is opened.
   const scorecard = null;
 
-  const query = { requisitionId: requisition._id };
+  // What to filter the applications by; the repository turns this into the database query.
+  let matchNothing = false;
+  let disposition;
+  let finalDecision;
 
   if (req.query.disposition) {
     const dispositions = String(req.query.disposition).split(',').filter(Boolean);
     if (dispositions.includes('none')) {
-      query._id = { $in: [] };
+      matchNothing = true;
     } else if (!dispositions.includes('all')) {
-      const includeInProgress = dispositions.includes('in_progress');
-      const scoredDispositions = dispositions.filter((value) => ['HIRE', 'MAYBE', 'NO_HIRE'].includes(value));
-      if (includeInProgress && scoredDispositions.length) {
-        query.$or = [{ disposition: null }, { disposition: { $in: scoredDispositions } }];
-      } else if (includeInProgress) {
-        query.disposition = null;
-      } else {
-        query.disposition = { $in: scoredDispositions };
-      }
+      disposition = {
+        values: dispositions.filter((value) => ['HIRE', 'MAYBE', 'NO_HIRE'].includes(value)),
+        includeUnset: dispositions.includes('in_progress'),
+      };
     }
   }
 
   if (req.query.finalDecision) {
     const decisions = String(req.query.finalDecision).split(',').filter(Boolean);
     if (decisions.includes('none')) {
-      query._id = { $in: [] };
+      matchNothing = true;
     } else if (!decisions.includes('all')) {
-      const includeUndecided = decisions.includes('undecided');
-      const recordedDecisions = decisions.filter((value) => ['hired', 'rejected', 'withdrawn'].includes(value));
-      if (includeUndecided && recordedDecisions.length) {
-        query.finalDecision = { $in: [null, ...recordedDecisions] };
-      } else if (includeUndecided) {
-        query.finalDecision = null;
-      } else {
-        query.finalDecision = { $in: recordedDecisions };
-      }
+      finalDecision = {
+        values: decisions.filter((value) => ['hired', 'rejected', 'withdrawn'].includes(value)),
+        includeUnset: decisions.includes('undecided'),
+      };
     }
   }
 
+  let candidateIds; // undefined: any candidate; a list: only those
   if (req.query.candidateId) {
-    // This query is later used in an aggregation pipeline, which unlike a
-    // Mongoose find() query does not cast URL strings to ObjectIds for us.
-    query.candidateId = mongoose.isValidObjectId(req.query.candidateId)
-      ? new mongoose.Types.ObjectId(req.query.candidateId)
-      : { $in: [] };
+    candidateIds = isValidId(req.query.candidateId)
+      ? [normalizeId(req.query.candidateId)]
+      : [];
   }
 
-  if (req.query.stageKey && req.query.stageKey !== 'all') {
-    query.currentStageKey = req.query.stageKey;
-  }
+  const stageKey = req.query.stageKey && req.query.stageKey !== 'all' ? req.query.stageKey : undefined;
 
   if (req.query.search && req.query.search.trim()) {
-    // The aggregation below does not turn string ids into ObjectIds for us.
-    const candidateIds = (await candidateRepo.findIdsBySearch(req.query.search.trim()))
-      .map((id) => new mongoose.Types.ObjectId(id));
-    if (query.candidateId) {
-      const targetCid = String(query.candidateId);
-      query.candidateId = { $in: candidateIds.filter((cid) => String(cid) === targetCid) };
-    } else {
-      query.candidateId = { $in: candidateIds };
-    }
+    const matchingIds = await candidateRepo.findIdsBySearch(req.query.search.trim());
+    candidateIds = candidateIds ? candidateIds.filter((id) => matchingIds.includes(id)) : matchingIds;
   }
 
-  const totalApplications = await Application.countDocuments(query);
-  const dispositionCounts = await Application.aggregate([
-    { $match: { requisitionId: requisition._id } },
-    { $group: { _id: '$disposition', count: { $sum: 1 } } },
-  ]);
+  const dispositionCounts = await applicationRepo.countByDisposition(requisition._id);
   const applicationStats = { total: 0, IN_PROGRESS: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0 };
-  dispositionCounts.forEach(({ _id: disposition, count }) => {
-    if (disposition && applicationStats[disposition] !== undefined) applicationStats[disposition] = count;
+  dispositionCounts.forEach(({ disposition: counted, count }) => {
+    if (counted && applicationStats[counted] !== undefined) applicationStats[counted] = count;
     else applicationStats.IN_PROGRESS += count;
     applicationStats.total += count;
   });
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
-  const totalPages = Math.max(1, Math.ceil(totalApplications / limit));
-  const requestedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const page = Math.min(requestedPage, totalPages);
-  const skip = (page - 1) * limit;
+  const { applications, total: totalApplications, page, totalPages } = await applicationRepo.pageForRequisition({
+    requisitionId: requisition._id,
+    candidateIds,
+    stageKey,
+    disposition,
+    finalDecision,
+    matchNothing,
+    page: Math.max(1, parseInt(req.query.page, 10) || 1),
+    limit,
+  });
 
-  // Put ranked applications first. A normal MongoDB ascending sort places
-  // null/missing ranks before rank 1, which is not the ranking shown in the UI.
-  const applications = await Application.aggregate([
-    { $match: query },
-    {
-      $addFields: {
-        _rankSort: {
-          $cond: [{ $ne: [{ $ifNull: ['$rank', null] }, null] }, 0, 1],
-        },
-      },
-    },
-    { $sort: { _rankSort: 1, rank: 1, weightedTotal: -1, createdAt: -1 } },
-    { $skip: skip },
-    { $limit: limit },
-    { $project: { _rankSort: 0 } },
-  ]);
-  await Application.populate(applications, { path: 'candidateId', select: 'name email phone' });
-
-  const requisitionResponse = requisition.toObject();
+  const requisitionResponse = { ...requisition };
   if (requisitionResponse.status === 'on_hold') requisitionResponse.status = 'paused';
 
   res.json({
@@ -627,7 +574,7 @@ const getOne = asyncHandler(async (req, res) => {
  * auto-normalized to sum to 1 across enabled, scored stages and audited.
  */
 const update = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition not found.' });
 
   const {
@@ -651,7 +598,7 @@ const update = asyncHandler(async (req, res) => {
   }
 
   if (title !== undefined) requisition.title = normalizeJobTitle(title);
-  if (pipelineTemplateId !== undefined && mongoose.isValidObjectId(pipelineTemplateId)) {
+  if (pipelineTemplateId !== undefined && isValidId(pipelineTemplateId)) {
     const template = await pipelines.findById(pipelineTemplateId);
     if (template) {
       requisition.pipelineTemplateId = template._id;
@@ -699,9 +646,9 @@ const update = asyncHandler(async (req, res) => {
     requisition.questionnaire = normalizeQuestionnaire(questionnaire);
     if (requisition.scorecardId) {
       try {
-        const scorecard = await Scorecard.findById(requisition.scorecardId);
+        const scorecard = await scorecardRepo.findById(requisition.scorecardId);
         if (scorecard && syncHrQuestionnaireRubric(scorecard, requisition)) {
-          await scorecard.save();
+          await scorecardRepo.save(scorecard);
         }
       } catch (scErr) {
         logger.warn(`[Requisition] Questionnaire scorecard sync error: ${scErr.message}`);
@@ -727,7 +674,7 @@ const update = asyncHandler(async (req, res) => {
   if (applicationDeadline !== undefined) requisition.applicationDeadline = applicationDeadline ? new Date(applicationDeadline) : null;
   if (aiScreeningEnabled !== undefined) requisition.aiScreeningEnabled = Boolean(aiScreeningEnabled);
   if (departmentId !== undefined) {
-    requisition.departmentId = departmentId && mongoose.isValidObjectId(departmentId) ? departmentId : null;
+    requisition.departmentId = departmentId && isValidId(departmentId) ? departmentId : null;
   }
 
   let statusChange = null;
@@ -764,14 +711,10 @@ const update = asyncHandler(async (req, res) => {
   const effectiveStatus = requisition.status;
   let duplicateActiveOpening = null;
   if (effectiveStatus === 'open') {
-    duplicateActiveOpening = await Requisition.findOne({
-      _id: { $ne: requisition._id },
-      title: { $regex: `^${escapeRegex(requisition.title)}$`, $options: 'i' },
-      status: 'open',
-    }).select('_id title').lean();
+    duplicateActiveOpening = await requisitionRepo.findOpenByTitle(requisition.title, { exceptId: requisition._id });
   }
 
-  await requisition.save();
+  await requisitionRepo.save(requisition);
   if (statusChange) {
     await auditLog.record({
       action: 'requisition_status_change', userId: req.user._id, requisitionId: requisition._id,
@@ -798,12 +741,12 @@ const update = asyncHandler(async (req, res) => {
  * - Records audit log entry.
  */
 const remove = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
 
   // Find all applications & interviews for this requisition
-  const applications = await Application.find({ requisitionId: requisition._id }).select('_id offerLetterPublicId').lean();
-  const interviews = await Interview.find({ requisitionId: requisition._id });
+  const applications = await applicationRepo.listOfferLettersForRequisition(requisition._id);
+  const interviews = await interviewRepo.listByRequisition(requisition._id);
 
   // 1. Cancel all scheduled Google Calendar meetings for all interviews in this requisition
   const cancellations = await Promise.allSettled(
@@ -822,11 +765,11 @@ const remove = asyncHandler(async (req, res) => {
 
   // 3. Delete database records (Scorecard, Interviews, Applications, Audit Logs)
   if (requisition.scorecardId) {
-    await Scorecard.findByIdAndDelete(requisition.scorecardId);
+    await scorecardRepo.remove(requisition.scorecardId);
   }
-  await Scorecard.deleteMany({ requisitionId: requisition._id });
-  const interviewResult = await Interview.deleteMany({ requisitionId: requisition._id });
-  const applicationResult = await Application.deleteMany({ requisitionId: requisition._id });
+  await scorecardRepo.removeByRequisition(requisition._id);
+  const interviewsDeleted = await interviewRepo.removeByRequisition(requisition._id);
+  const applicationsDeleted = await applicationRepo.removeForRequisition(requisition._id);
   await auditLog.removeForRequisition(requisition._id);
 
   // 4. Clean up stored files (interview artifacts, and each application's offer letter)
@@ -842,7 +785,7 @@ const remove = asyncHandler(async (req, res) => {
 
   // 5. Delete the requisition itself
   const reqTitle = requisition.title;
-  await requisition.deleteOne();
+  await requisitionRepo.remove(requisition._id);
 
   await auditLog.record({
     action: 'requisition_deleted',
@@ -852,13 +795,13 @@ const remove = asyncHandler(async (req, res) => {
     reason: `Deleted Job Opening "${reqTitle}" (${req.params.id}) and all attached records.`,
   });
 
-  logger.info(`[Requisition] Permanently deleted "${reqTitle}" (${req.params.id}): applications=${applicationResult.deletedCount}, interviews=${interviewResult.deletedCount}, files=${deletedFiles} by user=${req.user._id}`);
+  logger.info(`[Requisition] Permanently deleted "${reqTitle}" (${req.params.id}): applications=${applicationsDeleted}, interviews=${interviewsDeleted}, files=${deletedFiles} by user=${req.user._id}`);
 
   res.json({
     message: `Job Opening "${reqTitle}" and all related data deleted cleanly.`,
     deleted: {
-      applications: applicationResult.deletedCount,
-      interviews: interviewResult.deletedCount,
+      applications: applicationsDeleted,
+      interviews: interviewsDeleted,
       files: deletedFiles,
     },
   });
@@ -871,19 +814,16 @@ const remove = asyncHandler(async (req, res) => {
  * screening criteria, questionnaire, and clones the scorecard if present.
  */
 const duplicate = asyncHandler(async (req, res) => {
-  const sourceReq = await Requisition.findById(req.params.id);
+  const sourceReq = await requisitionRepo.findById(req.params.id);
   if (!sourceReq) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
   }
 
   const newTitle = normalizeJobTitle(sourceReq.title);
 
-  const duplicateActiveOpening = await Requisition.findOne({
-    title: { $regex: `^${escapeRegex(newTitle)}$`, $options: 'i' },
-    status: 'open',
-  }).select('_id title').lean();
+  const duplicateActiveOpening = await requisitionRepo.findOpenByTitle(newTitle);
 
-  const sourceData = sourceReq.toObject();
+  const sourceData = structuredClone(sourceReq);
   delete sourceData._id;
   delete sourceData.createdAt;
   delete sourceData.updatedAt;
@@ -897,13 +837,13 @@ const duplicate = asyncHandler(async (req, res) => {
     createdBy: req.user._id,
   };
 
-  const newReq = await Requisition.create(newReqData);
+  const newReq = await requisitionRepo.create(newReqData);
 
   // Clone scorecard if original had one
   if (sourceReq.scorecardId) {
-    const sourceScorecard = await Scorecard.findById(sourceReq.scorecardId);
+    const sourceScorecard = await scorecardRepo.findById(sourceReq.scorecardId);
     if (sourceScorecard) {
-      const scorecardData = sourceScorecard.toObject();
+      const scorecardData = structuredClone(sourceScorecard);
       delete scorecardData._id;
       delete scorecardData.createdAt;
       delete scorecardData.updatedAt;
@@ -913,9 +853,9 @@ const duplicate = asyncHandler(async (req, res) => {
         assignMissingAttributeIds(scorecardData.stages);
       }
 
-      const newScorecard = await Scorecard.create(scorecardData);
+      const newScorecard = await scorecardRepo.create(scorecardData);
       newReq.scorecardId = newScorecard._id;
-      await newReq.save();
+      await requisitionRepo.save(newReq);
     }
   }
 
@@ -948,7 +888,7 @@ const duplicate = asyncHandler(async (req, res) => {
  * by value, so past scores are unaffected unless the same id is reused).
  */
 const generateScorecardHandler = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition not found.' });
   assertRequisitionConfigurable(requisition, 'generate a scorecard');
 
@@ -957,16 +897,16 @@ const generateScorecardHandler = asyncHandler(async (req, res) => {
 
   let scorecard;
   if (requisition.scorecardId) {
-    scorecard = await Scorecard.findById(requisition.scorecardId);
+    scorecard = await scorecardRepo.findById(requisition.scorecardId);
   }
   if (scorecard) {
     scorecard.stages = generated.stages;
     scorecard.generatedByAI = true;
-    await scorecard.save();
+    await scorecardRepo.save(scorecard);
   } else {
-    scorecard = await Scorecard.create({ requisitionId: requisition._id, generatedByAI: true, stages: generated.stages });
+    scorecard = await scorecardRepo.create({ requisitionId: requisition._id, generatedByAI: true, stages: generated.stages });
     requisition.scorecardId = scorecard._id;
-    await requisition.save();
+    await requisitionRepo.save(requisition);
   }
 
   logger.info(`[Requisition] Generated scorecard for ${requisition._id} (${generated.stages.length} stages).`);
@@ -979,30 +919,30 @@ const generateScorecardHandler = asyncHandler(async (req, res) => {
  * stages/attributes verbatim onto this requisition (marked generatedByAI:false).
  */
 const cloneScorecard = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition not found.' });
   assertRequisitionConfigurable(requisition, 'edit the scorecard');
 
   const { sourceRequisitionId } = req.body;
   if (!sourceRequisitionId) throw new ValidationError(['sourceRequisitionId'], 'sourceRequisitionId is required.');
 
-  const sourceRequisition = await Requisition.findById(sourceRequisitionId);
+  const sourceRequisition = await requisitionRepo.findById(sourceRequisitionId);
   if (!sourceRequisition || !sourceRequisition.scorecardId) {
     throw new ValidationError(['sourceRequisitionId'], 'Source requisition has no scorecard to clone.');
   }
-  const sourceScorecard = await Scorecard.findById(sourceRequisition.scorecardId);
+  const sourceScorecard = await scorecardRepo.findById(sourceRequisition.scorecardId);
   if (!sourceScorecard) throw new ValidationError(['sourceRequisitionId'], 'Source scorecard not found.');
 
   let scorecard;
   if (requisition.scorecardId) {
-    scorecard = await Scorecard.findById(requisition.scorecardId);
+    scorecard = await scorecardRepo.findById(requisition.scorecardId);
     scorecard.stages = sourceScorecard.stages;
     scorecard.generatedByAI = false;
-    await scorecard.save();
+    await scorecardRepo.save(scorecard);
   } else {
-    scorecard = await Scorecard.create({ requisitionId: requisition._id, generatedByAI: false, stages: sourceScorecard.stages });
+    scorecard = await scorecardRepo.create({ requisitionId: requisition._id, generatedByAI: false, stages: sourceScorecard.stages });
     requisition.scorecardId = scorecard._id;
-    await requisition.save();
+    await requisitionRepo.save(requisition);
   }
 
   logger.info(`[Requisition] Cloned scorecard from ${sourceRequisitionId} onto ${requisition._id}.`);
@@ -1020,7 +960,7 @@ const cloneScorecard = asyncHandler(async (req, res) => {
  * requisition, never persist arbitrary manual edits.
  */
 const updateScorecard = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition not found.' });
   assertRequisitionConfigurable(requisition, 'edit the scorecard');
   if (!requisition.scorecardId) {
@@ -1032,7 +972,7 @@ const updateScorecard = asyncHandler(async (req, res) => {
     throw new ValidationError(['stages'], 'stages must be an array.');
   }
 
-  const scorecard = await Scorecard.findById(requisition.scorecardId);
+  const scorecard = await scorecardRepo.findById(requisition.scorecardId);
   const oldStages = scorecard.stages;
 
   stages.forEach((stage) => {
@@ -1044,7 +984,7 @@ const updateScorecard = asyncHandler(async (req, res) => {
   });
 
   scorecard.stages = stages;
-  await scorecard.save();
+  await scorecardRepo.save(scorecard);
 
   await auditLog.record({
     action: 'question_edit', userId: req.user._id, requisitionId: requisition._id,
@@ -1063,11 +1003,11 @@ const updateScorecard = asyncHandler(async (req, res) => {
  * persisted by scoringController.recompute — this endpoint just reads them.
  */
 const ranking = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition not found.' });
 
-  const applications = await Application.find({ requisitionId: requisition._id }).populate('candidateId', 'name email');
-  const ranked = rankApplications(applications.map((a) => a.toObject()));
+  const applications = await applicationRepo.listWithCandidates(requisition._id);
+  const ranked = rankApplications(applications);
   ranked.sort((a, b) => {
     if (a.rank === null) return 1;
     if (b.rank === null) return -1;
@@ -1079,9 +1019,9 @@ const ranking = asyncHandler(async (req, res) => {
 
 /** GET /api/requisitions/:id/scorecard — lazy scorecard data for the detail tab. */
 const getScorecard = asyncHandler(async (req, res) => {
-  const requisition = await Requisition.findById(req.params.id).select('scorecardId');
+  const requisition = await requisitionRepo.findFields(req.params.id, 'scorecardId');
   if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
-  const scorecard = requisition.scorecardId ? await Scorecard.findById(requisition.scorecardId) : null;
+  const scorecard = requisition.scorecardId ? await scorecardRepo.findById(requisition.scorecardId) : null;
   res.json({ scorecard });
 });
 
@@ -1174,14 +1114,12 @@ Respond ONLY in JSON format matching this exact shape:
 const getPublic = asyncHandler(async (req, res) => {
   logger.info(`[Requisition] Public GET request for ID: "${req.params.id}"`);
 
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+  if (!isValidIdString(req.params.id)) {
     logger.warn(`[Requisition] Public GET failed: "${req.params.id}" is not a valid ObjectId`);
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition is closed or does not exist.' });
   }
 
-  const requisition = await Requisition.findById(req.params.id)
-    .select('title employmentType fullTimeDetails partTimeDetails contractDetails internshipDetails temporaryDetails location workplaceType officeLocation remoteRegion jobDescription initialScreeningCriteria questionnaire applicationDeadline aiScreeningEnabled status createdAt interviewAvailability')
-    .lean();
+  const requisition = await requisitionRepo.findPublicView(req.params.id);
 
   if (!requisition) {
     logger.warn(`[Requisition] Public GET failed: Requisition "${req.params.id}" not found in database`);
@@ -1214,11 +1152,11 @@ const getPublic = asyncHandler(async (req, res) => {
  * Public endpoint for candidate self-application submission with resume upload.
  */
 const applyPublic = asyncHandler(async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+  if (!isValidIdString(req.params.id)) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'This position is closed or no longer accepting applications.' });
   }
 
-  const requisition = await Requisition.findById(req.params.id);
+  const requisition = await requisitionRepo.findById(req.params.id);
   if (!requisition || requisition.status !== 'open') {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'This position is closed or no longer accepting applications.' });
   }
@@ -1307,7 +1245,7 @@ const applyPublic = asyncHandler(async (req, res) => {
   // 1. Check if candidate already exists AND has an application for this requisition BEFORE uploading to Cloudinary
   let candidate = await candidateRepo.findByEmail(cleanEmail);
   if (candidate) {
-    const existingApp = await Application.findOne({ candidateId: candidate._id, requisitionId: requisition._id });
+    const existingApp = await applicationRepo.findByCandidateAndRequisition(candidate._id, requisition._id);
     if (existingApp) {
       return res.status(409).json({ error: 'DUPLICATE', message: 'You have already submitted an application for this position.' });
     }
@@ -1399,7 +1337,7 @@ const applyPublic = asyncHandler(async (req, res) => {
     submittedAt: new Date(),
   } : undefined;
 
-  const application = await Application.create({
+  const application = await applicationRepo.create({
     candidateId: candidate._id,
     requisitionId: requisition._id,
     currentStageKey: firstStageKey,
@@ -1412,8 +1350,9 @@ const applyPublic = asyncHandler(async (req, res) => {
   });
 
   // 2. Create the stage interviews (just saves the résumé / answers; scoring happens later).
+  const scheduledStageKeys = [];
   if (firstStageKey) {
-    await Interview.create({
+    await interviewRepo.create({
       applicationId: application._id,
       requisitionId: requisition._id,
       stageKey: firstStageKey,
@@ -1428,10 +1367,7 @@ const applyPublic = asyncHandler(async (req, res) => {
       transcriptText: resumeText,
     });
 
-    const progressItem = application.stageProgress.find((p) => p.stageKey === firstStageKey);
-    if (progressItem) {
-      progressItem.status = 'scheduled';
-    }
+    scheduledStageKeys.push(firstStageKey);
   }
 
   // The HR questionnaire screen is created for every public application,
@@ -1442,7 +1378,7 @@ const applyPublic = asyncHandler(async (req, res) => {
       const questionText = typeof question === 'string' ? question : question.question;
       return `Question ${index + 1}: ${questionText}\nCandidate Answer: ${parsedQAnswers[questionText] || ''}`;
     }).join('\n\n');
-    await Interview.create({
+    await interviewRepo.create({
       applicationId: application._id,
       requisitionId: requisition._id,
       stageKey: hrStage.key,
@@ -1451,10 +1387,15 @@ const applyPublic = asyncHandler(async (req, res) => {
       status: 'pending',
       transcriptText: questionnaireTranscript,
     });
-    const hrProgress = application.stageProgress.find((progress) => progress.stageKey === hrStage.key);
-    if (hrProgress) hrProgress.status = 'scheduled';
+    scheduledStageKeys.push(hrStage.key);
   }
-  await application.save();
+  if (scheduledStageKeys.length > 0) {
+    await applicationRepo.update(application._id, {
+      stageProgress: application.stageProgress.map((progress) => (
+        scheduledStageKeys.includes(progress.stageKey) ? { ...progress, status: 'scheduled' } : progress
+      )),
+    });
+  }
 
   logger.info(`[ApplyPublic] Application ${application._id} submitted for candidate "${name}" (${candidate._id}) on requisition "${requisition.title}"; AI screening queued.`);
 

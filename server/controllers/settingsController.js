@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { google } from 'googleapis';
 import * as settingRepo from '../repositories/settingRepository.js';
-import Interview from '../models/Interview.js';
-import Requisition from '../models/Requisition.js';
+import * as interviewRepo from '../repositories/interviewRepository.js';
+import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler } from '../utils/helpers.js';
@@ -151,26 +151,10 @@ const testApi = asyncHandler(async (req, res) => {
  * Token + cost totals grouped by model tier, stage, requisition, and month.
  */
 const aiUsage = asyncHandler(async (req, res) => {
-  const grouped = await Interview.aggregate([
-    { $match: { aiCostUsd: { $exists: true, $ne: null } } },
-    {
-      $group: {
-        _id: {
-          requisitionId: '$requisitionId',
-          stageKey: '$stageKey',
-          month: { $dateToString: { format: '%Y-%m', date: '$updatedAt' } },
-        },
-        totalCostUsd: { $sum: '$aiCostUsd' },
-        totalInputTokens: { $sum: '$aiTokensUsed.input' },
-        totalOutputTokens: { $sum: '$aiTokensUsed.output' },
-        interviewCount: { $sum: 1 },
-      },
-    },
-    { $sort: { '_id.month': -1 } },
-  ]);
+  const grouped = await interviewRepo.summarizeAiCost();
 
   const requisitionIds = [...new Set(grouped.map((g) => String(g._id.requisitionId)))];
-  const requisitions = await Requisition.find({ _id: { $in: requisitionIds } }, 'title stages');
+  const requisitions = await requisitionRepo.findTitlesAndStages(requisitionIds);
   const requisitionById = new Map(requisitions.map((r) => [String(r._id), r]));
   const stageModelTiers = await settingRepo.getValue('stageModelTiers') || STAGE_MODEL_TIER;
 
