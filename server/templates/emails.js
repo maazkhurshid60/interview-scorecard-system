@@ -51,19 +51,24 @@ ${SIGN_OFF}`,
   // To the candidate, when a meeting link is sent or sent again by hand.
   // (Interviews scheduled through Google Calendar are announced by Google's own invitation instead.)
   interviewLink: {
-    details: ['name', 'jobTitle', 'stage', 'dateTime', 'timeZone', 'duration', 'meetingLink'],
-    subject: 'Interview Details – {jobTitle} ({stage})',
+    details: ['name', 'jobTitle', 'date', 'time', 'meetingLink'],
+    subject: 'Interview Invitation – {jobTitle} | RedStar Technologies',
     body: `Dear {name},
 
-Your {stage} interview for the {jobTitle} position at Red Star Technologies is scheduled as follows:
+We are pleased to invite you for an interview for the position of {jobTitle} at RedStar Technologies.
 
-Date and time: {dateTime} ({timeZone})
-Duration: {duration}
-Meeting link: {meetingLink}
+Interview Date: {date}
+Interview Time: {time}
+Interview Link: {meetingLink}
 
-Please join a few minutes early and make sure your camera and microphone are working.
+Kindly join the meeting on time and ensure your camera, microphone, and internet connection are working properly.
 
-${SIGN_OFF}`,
+We look forward to speaking with you.
+
+Best regards,
+HR Department
+RedStar Technologies
+hr@redstartechs.com`,
   },
 
   // To the candidate, when a recruiter sends the offer letter. The PDF is attached in production.

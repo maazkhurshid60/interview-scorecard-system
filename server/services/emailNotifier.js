@@ -80,17 +80,15 @@ async function sendEmail({ to, subject, text, attachments }) {
 
 /**
  * Emails a candidate their interview meeting link (used for a link pasted by hand or sent again).
- * @param {{candidateEmail:string, candidateName:string, requisitionTitle:string, stageLabel:string, meetingUri:string, interviewDateTime?:string, interviewTimeZone?:string, interviewDuration?:string}} params
+ * @param {{candidateEmail:string, candidateName:string, requisitionTitle:string, meetingUri:string, interviewDate?:string, interviewTime?:string}} params
  * @returns {Promise<{sent:boolean, reason?:string}>}
  */
-async function sendMeetingLinkEmail({ candidateEmail, candidateName, requisitionTitle, stageLabel, meetingUri, interviewDateTime, interviewTimeZone, interviewDuration }) {
+async function sendMeetingLinkEmail({ candidateEmail, candidateName, requisitionTitle, meetingUri, interviewDate, interviewTime }) {
   const { subject, text } = renderEmail('interviewLink', {
     name: candidateName || 'Candidate',
     jobTitle: requisitionTitle,
-    stage: stageLabel,
-    dateTime: interviewDateTime,
-    timeZone: interviewTimeZone,
-    duration: interviewDuration,
+    date: interviewDate,
+    time: interviewTime,
     meetingLink: meetingUri,
   });
   return sendEmail({ to: candidateEmail, subject, text });

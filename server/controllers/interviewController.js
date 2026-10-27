@@ -30,20 +30,26 @@ function logParsedText(interviewId, source, text) {
 }
 
 /**
- * The meeting's date, time zone and length as readable text, for the emails. A part we do not know is ''
- * (the email template then leaves that line out).
+ * The meeting's date, time, time zone and length as readable text, for the emails. A part we do not know is ''
+ * (the email template then leaves that line out). `time` carries the time zone, for example "3:00 pm (Asia/Karachi)".
  * @param {object} interview
- * @returns {{dateTime:string, timeZone:string, duration:string}}
+ * @returns {{dateTime:string, date:string, time:string, timeZone:string, duration:string}}
  */
 function describeMeetingTime(interview) {
   const timeZone = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Karachi';
   const dateTime = interview.meetingStart
     ? new Intl.DateTimeFormat('en-PK', { dateStyle: 'full', timeStyle: 'short', timeZone }).format(new Date(interview.meetingStart))
     : '';
+  const date = interview.meetingStart
+    ? new Intl.DateTimeFormat('en-PK', { dateStyle: 'full', timeZone }).format(new Date(interview.meetingStart))
+    : '';
+  const time = interview.meetingStart
+    ? `${new Intl.DateTimeFormat('en-PK', { timeStyle: 'short', timeZone }).format(new Date(interview.meetingStart))} (${timeZone})`
+    : '';
   const duration = interview.meetingEnd && interview.meetingStart
     ? `${Math.round((new Date(interview.meetingEnd) - new Date(interview.meetingStart)) / 60000)} minutes`
     : '';
-  return { dateTime, timeZone, duration };
+  return { dateTime, date, time, timeZone, duration };
 }
 
 /**
@@ -64,7 +70,7 @@ async function emailMeetingLinkToCandidate(interview) {
     }
     const requisition = await requisitionRepo.findById(interview.requisitionId);
     const stageConfig = requisition?.stages.find((s) => s.key === interview.stageKey);
-    const { dateTime, timeZone, duration } = describeMeetingTime(interview);
+    const { date, time } = describeMeetingTime(interview);
     return await enqueueEmail({
       type: 'meeting-link',
       to: candidate.email,
@@ -74,9 +80,8 @@ async function emailMeetingLinkToCandidate(interview) {
         requisitionTitle: requisition?.title || 'your role',
         stageLabel: stageConfig?.label || interview.stageKey,
         meetingUri: interview.meetingUri,
-        interviewDateTime: dateTime,
-        interviewTimeZone: timeZone,
-        interviewDuration: duration,
+        interviewDate: date,
+        interviewTime: time,
       },
     });
   } catch (err) {
