@@ -1,5 +1,5 @@
 import logger from '../utils/logger.js';
-import Setting from '../models/Setting.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 import * as googleMeet from './googleMeet.js';
 
 /** Stub for a not-yet-implemented provider — Zoom/Fathom are wired in Phase 2. */
@@ -31,8 +31,8 @@ const PROVIDERS = {
  * @returns {Promise<string>} One of 'google_meet' | 'zoom' | 'fathom'.
  */
 async function getActiveProvider() {
-  const setting = await Setting.findOne({ key: 'activeTranscriptProvider' });
-  return setting?.value || process.env.ACTIVE_TRANSCRIPT_PROVIDER || 'google_meet';
+  const configured = await settingRepo.getValue('activeTranscriptProvider');
+  return configured || process.env.ACTIVE_TRANSCRIPT_PROVIDER || 'google_meet';
 }
 
 /**

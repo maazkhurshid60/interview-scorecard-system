@@ -3,7 +3,7 @@ import Interview from '../models/Interview.js';
 import Application from '../models/Application.js';
 import Requisition from '../models/Requisition.js';
 import Scorecard from '../models/Scorecard.js';
-import AuditLog from '../models/AuditLog.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import '../models/Candidate.js'; // registers the Candidate model for populate('candidateId')
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
@@ -404,7 +404,7 @@ const recordConsent = asyncHandler(async (req, res) => {
   interview.consentObtained = true;
   await interview.save();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'consent_capture', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
     targetType: 'interview', targetId: interview._id.toString(), newValue: { consentObtained: true },
     reason: 'Candidate consent confirmed before recording/scoring.',
@@ -471,7 +471,7 @@ const uploadTranscript = asyncHandler(async (req, res) => {
   await interview.save();
 
   logParsedText(interview._id, 'uploaded transcript', text);
-  await AuditLog.create({
+  await auditLog.record({
     action: 'transcript_upload', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
     targetType: 'interview', targetId: interview._id.toString(), newValue: { transcriptStatus: 'ready', wordCount: text.split(/\s+/).length },
     reason: 'Manual transcript upload.',
@@ -697,7 +697,7 @@ const sendOffer = asyncHandler(async (req, res) => {
     await cancelPendingEmails({ type: 'offer-letter', applicationId: application._id, exceptJobId: emailResult.jobId });
   }
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_approve',
     userId: req.user._id,
     requisitionId: interview.requisitionId,

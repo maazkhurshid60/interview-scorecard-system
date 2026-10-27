@@ -1,5 +1,5 @@
 import PipelineTemplate from '../models/PipelineTemplate.js';
-import AuditLog from '../models/AuditLog.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, normalizeWeights } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
@@ -182,14 +182,14 @@ const update = asyncHandler(async (req, res) => {
     const weightsChanged = template.stages.some((s) => oldWeights[s.key] !== undefined && oldWeights[s.key] !== s.weight);
 
     if (enabledChanged) {
-      await AuditLog.create({
+      await auditLog.record({
         action: 'stage_toggle', userId: req.user._id, targetType: 'pipelineTemplate', targetId: template._id.toString(),
         oldValue: oldEnabled, newValue: Object.fromEntries(template.stages.map((s) => [s.key, s.enabled])),
         reason: 'Stage enabled/disabled via hiring process template edit.',
       });
     }
     if (weightsChanged) {
-      await AuditLog.create({
+      await auditLog.record({
         action: 'weight_change', userId: req.user._id, targetType: 'pipelineTemplate', targetId: template._id.toString(),
         oldValue: oldWeights, newValue: Object.fromEntries(template.stages.map((s) => [s.key, s.weight])),
         reason: 'Stage weights re-normalized via hiring process template edit.',

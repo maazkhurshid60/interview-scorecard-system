@@ -1,8 +1,8 @@
 import logger from '../utils/logger.js';
 import Requisition from '../models/Requisition.js';
 import Interview from '../models/Interview.js';
-import Setting from '../models/Setting.js';
-import AuditLog from '../models/AuditLog.js';
+import * as settingRepo from '../repositories/settingRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import { deleteFile } from './fileStorage.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -13,8 +13,8 @@ let intervalHandle = null;
  * @returns {Promise<number>}
  */
 async function getRetentionDays() {
-  const setting = await Setting.findOne({ key: 'transcriptRetentionDays' });
-  return Number(setting?.value ?? process.env.TRANSCRIPT_RETENTION_DAYS ?? 90);
+  const configured = await settingRepo.getValue('transcriptRetentionDays');
+  return Number(configured ?? process.env.TRANSCRIPT_RETENTION_DAYS ?? 90);
 }
 
 /**
@@ -64,7 +64,7 @@ async function purgeRequisition(requisition) {
     purgedCount += 1;
   }
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'retention_purge',
     requisitionId: requisition._id,
     targetType: 'requisition',

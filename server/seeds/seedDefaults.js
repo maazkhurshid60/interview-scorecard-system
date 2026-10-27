@@ -8,7 +8,7 @@ import { DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS, DEFAULT_COST_RATE_TABLE } fr
 
 import User from '../models/User.js';
 import PipelineTemplate from '../models/PipelineTemplate.js';
-import Setting from '../models/Setting.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 
 /**
  * Creates the first OWNER account from SEED_OWNER_NAME / SEED_OWNER_EMAIL / SEED_OWNER_PASSWORD.
@@ -98,12 +98,7 @@ async function seedDefaultPipeline() {
 }
 
 async function upsertSetting(key, value, description) {
-  const result = await Setting.findOneAndUpdate(
-    { key },
-    { $setOnInsert: { key, value, description, updatedAt: new Date() } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-  return result;
+  return settingRepo.createIfMissing(key, value, description);
 }
 
 async function seedSettings() {

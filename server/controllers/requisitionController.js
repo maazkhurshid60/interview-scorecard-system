@@ -8,8 +8,8 @@ import Candidate from '../models/Candidate.js';
 import Interview from '../models/Interview.js';
 import { extractArtifactText } from '../utils/textExtractor.js';
 import * as transcriptProvider from '../services/transcriptProvider.js';
-import Setting from '../models/Setting.js';
-import AuditLog from '../models/AuditLog.js';
+import * as settingRepo from '../repositories/settingRepository.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, normalizeWeights } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
@@ -188,8 +188,7 @@ function escapeRegex(value) {
 
 /** Reads a Setting's scalar value, falling back to a default if missing. */
 async function getSettingValue(key, fallback) {
-  const setting = await Setting.findOne({ key });
-  return setting?.value ?? fallback;
+  return settingRepo.getValue(key, fallback);
 }
 
 /** Normalizes raw questionnaire inputs into objects { question, idealAnswer, requireIdealAnswer }. */
@@ -757,7 +756,7 @@ const update = asyncHandler(async (req, res) => {
       if (normalized[s.key] !== undefined) s.weight = normalized[s.key];
     });
 
-    await AuditLog.create({
+    await auditLog.record({
       action: 'weight_change', userId: req.user._id, requisitionId: requisition._id,
       targetType: 'requisition', targetId: requisition._id.toString(),
       oldValue: oldWeights, newValue: normalized, reason: 'Stage weights updated via requisition edit.',
@@ -776,7 +775,7 @@ const update = asyncHandler(async (req, res) => {
 
   await requisition.save();
   if (statusChange) {
-    await AuditLog.create({
+    await auditLog.record({
       action: 'requisition_status_change', userId: req.user._id, requisitionId: requisition._id,
       targetType: 'requisition', targetId: requisition._id.toString(),
       oldValue: statusChange.oldStatus, newValue: statusChange.newStatus,
@@ -830,7 +829,7 @@ const remove = asyncHandler(async (req, res) => {
   await Scorecard.deleteMany({ requisitionId: requisition._id });
   const interviewResult = await Interview.deleteMany({ requisitionId: requisition._id });
   const applicationResult = await Application.deleteMany({ requisitionId: requisition._id });
-  await AuditLog.deleteMany({ requisitionId: requisition._id });
+  await auditLog.removeForRequisition(requisition._id);
 
   // 4. Clean up stored files (interview artifacts, and each application's offer letter)
   const offerLetterIds = [...new Set(applications.map((application) => application.offerLetterPublicId).filter(Boolean))];
@@ -847,7 +846,7 @@ const remove = asyncHandler(async (req, res) => {
   const reqTitle = requisition.title;
   await requisition.deleteOne();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'requisition_deleted',
     userId: req.user._id,
     targetType: 'requisition',
@@ -922,7 +921,7 @@ const duplicate = asyncHandler(async (req, res) => {
     }
   }
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'requisition_duplicated',
     userId: req.user._id,
     requisitionId: newReq._id,
@@ -1049,7 +1048,7 @@ const updateScorecard = asyncHandler(async (req, res) => {
   scorecard.stages = stages;
   await scorecard.save();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'question_edit', userId: req.user._id, requisitionId: requisition._id,
     targetType: 'scorecard', targetId: scorecard._id.toString(),
     oldValue: oldStages, newValue: scorecard.stages, reason: 'Scorecard manually edited via ScorecardEditor.',

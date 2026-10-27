@@ -1,5 +1,5 @@
 import Application from '../models/Application.js';
-import Setting from '../models/Setting.js';
+import * as settingRepo from '../repositories/settingRepository.js';
 import logger from '../utils/logger.js';
 import { callClaude, getModelIds } from './claudeClient.js';
 import { STAGE_MODEL_TIER } from '../utils/constants.js';
@@ -25,9 +25,9 @@ Respond ONLY with a valid JSON array, no other text, no markdown fences, no prea
 async function resolveModelForStage(stageType) {
   let stageModelTiers = STAGE_MODEL_TIER;
   try {
-    const doc = await Setting.findOne({ key: 'stageModelTiers' });
-    if (doc?.value && typeof doc.value === 'object') {
-      stageModelTiers = doc.value;
+    const configured = await settingRepo.getValue('stageModelTiers');
+    if (configured && typeof configured === 'object') {
+      stageModelTiers = configured;
     }
   } catch (err) {
     logger.warn(`[AIScorer] Failed to read stageModelTiers setting: ${err.message}`);

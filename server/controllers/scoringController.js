@@ -2,7 +2,7 @@ import Interview from '../models/Interview.js';
 import Application from '../models/Application.js';
 import Requisition from '../models/Requisition.js';
 import '../models/Candidate.js'; // registers the Candidate model for populate('candidateId')
-import AuditLog from '../models/AuditLog.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
 import { ValidationError } from '../utils/errors.js';
@@ -79,7 +79,7 @@ async function recomputeAndPersist(application, requisition, userId, reason) {
   await application.save();
 
   if (oldDisposition !== result.disposition) {
-    await AuditLog.create({
+    await auditLog.record({
       action: 'disposition_change', userId, requisitionId: application.requisitionId, applicationId: application._id,
       targetType: 'application', targetId: application._id.toString(),
       oldValue: oldDisposition, newValue: result.disposition, reason,
@@ -173,7 +173,7 @@ const approve = asyncHandler(async (req, res) => {
     interview.status = 'approved';
     await interview.save();
 
-    await AuditLog.create({
+    await auditLog.record({
       action: 'score_approve', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
       targetType: 'interview', targetId: interview._id.toString(),
       newValue: { status: 'approved' },
@@ -236,7 +236,7 @@ const approve = asyncHandler(async (req, res) => {
   interview.markModified('scores');
   await interview.save();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_approve', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
     targetType: 'interview', targetId: interview._id.toString(),
     oldValue: oldScores, newValue: interview.scores.map((s) => ({ attributeId: s.attributeId, approvedScore: s.approvedScore })),
@@ -302,7 +302,7 @@ const override = asyncHandler(async (req, res) => {
       scoreEntry.overriddenBy = req.user._id;
       scoreEntry.overrideReason = trimmedReason;
 
-      await AuditLog.create({
+      await auditLog.record({
         action: 'score_override', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
         targetType: 'score', targetId: attributeId, oldValue, newValue: numScore, reason: trimmedReason,
       });
@@ -315,7 +315,7 @@ const override = asyncHandler(async (req, res) => {
         overrideReason: trimmedReason,
       });
 
-      await AuditLog.create({
+      await auditLog.record({
         action: 'score_override', userId: req.user._id, requisitionId: interview.requisitionId, applicationId: interview.applicationId,
         targetType: 'score', targetId: attributeId, oldValue: null, newValue: numScore, reason: trimmedReason,
       });
@@ -376,7 +376,7 @@ const decision = asyncHandler(async (req, res) => {
   if (finalDecision === 'rejected' && reason) application.rejectionReason = reason;
   await application.save();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'final_decision', userId: req.user._id, requisitionId: application.requisitionId, applicationId: application._id,
     targetType: 'application', targetId: application._id.toString(),
     oldValue: oldDecision, newValue: finalDecision, reason,
@@ -517,7 +517,7 @@ const sendOfferLetter = asyncHandler(async (req, res) => {
   // A resend replaces any earlier offer email that is still waiting or retrying, so the candidate gets one.
   if (emailResult.queued) await cancelPendingEmails({ type: 'offer-letter', applicationId: application._id, exceptJobId: emailResult.jobId });
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'offer_letter_sent',
     userId: req.user._id,
     requisitionId: application.requisitionId,
@@ -588,7 +588,7 @@ const passFail = asyncHandler(async (req, res) => {
 
   await interview.save();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_approve',
     userId: req.user._id,
     requisitionId: interview.requisitionId,
@@ -721,7 +721,7 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
 
   await application.save();
 
-  await AuditLog.create({
+  await auditLog.record({
     action: 'score_override',
     userId: req.user._id,
     requisitionId: requisition._id,

@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import Candidate from '../models/Candidate.js';
 import Application from '../models/Application.js';
 import Interview from '../models/Interview.js';
-import AuditLog from '../models/AuditLog.js';
+import * as auditLog from '../repositories/auditLogRepository.js';
 import Requisition from '../models/Requisition.js';
 import logger from '../utils/logger.js';
 import { asyncHandler } from '../utils/helpers.js';
@@ -255,7 +255,7 @@ const update = asyncHandler(async (req, res) => {
     destroyFileIfUnreferenced(replacedResumePublicId)
       .catch((err) => logger.warn(`[Candidate] Could not clean up old résumé ${replacedResumePublicId}: ${err.message}`));
   }
-  await AuditLog.create({
+  await auditLog.record({
     action: 'candidate_update', userId: req.user._id,
     targetType: 'candidate', targetId: candidate._id.toString(),
     oldValue, newValue: {
@@ -343,7 +343,7 @@ const removeFromRequisition = asyncHandler(async (req, res) => {
 
   // Delete database references first. File cleanup then preserves anything
   // still referenced by the candidate profile or another interview.
-  await AuditLog.deleteMany({ applicationId: application._id });
+  await auditLog.removeForApplication(application._id);
   const interviewResult = await Interview.deleteMany({ applicationId: application._id });
   await application.deleteOne();
 
@@ -387,7 +387,7 @@ const remove = asyncHandler(async (req, res) => {
   ].filter(Boolean))];
   await Promise.all(fileIds.map((publicId) => deleteFile(publicId)));
 
-  await AuditLog.deleteMany({ applicationId: { $in: applicationIds } });
+  await auditLog.removeForApplications(applicationIds);
   const interviewResult = await Interview.deleteMany({ applicationId: { $in: applicationIds } });
   const applicationResult = await Application.deleteMany({ _id: { $in: applicationIds } });
   await candidate.deleteOne();
