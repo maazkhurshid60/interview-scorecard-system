@@ -29,6 +29,45 @@ use. The two versions must offer exactly the same functions: `npm run check:repo
 the Postgres side still lacks (`-- --strict` fails if they differ). `DB_PROVIDER` is set in the root `.env`; leave it as
 `mongo` until the Postgres move is finished.
 
+While the move is in progress, one repository at a time can be switched to Postgres to try it in the real app:
+
+```
+DB_PROVIDER_DEPARTMENT=postgres     (in .env; the names are DEPARTMENT, USER, SETTING, AUDIT_LOG, PIPELINE_TEMPLATE,
+                                     REFRESH_TOKEN, CANDIDATE, APPLICATION, INTERVIEW, REQUISITION, SCORECARD)
+```
+
+The server then connects to both databases and logs which repository uses which. A mistyped name or value stops the
+server at start-up. The two databases hold separate copies of the data, so run `npm run migrate:postgres -- --reset`
+first to refresh the Postgres copy, and expect only the switched repository's screen to be reliable (for example, a job
+opening still reads its department from MongoDB). Remove the line to go back to MongoDB.
+
+## Writing a Postgres repository: the rules, and the proof
+
+A Postgres repository must be indistinguishable from its MongoDB twin. `npm run parity -- <name>` proves it: it runs
+the same calls on both versions (each on its own freshly seeded scratch database, never your real ones) and compares
+every result, every error and the data left behind. The first one (department) found these, so every repository follows
+them (the helpers are in `postgres/helpers.js`):
+
+- **Same shape:** plain objects with `_id` as text; an empty optional value is left out, not `null`.
+- **Same errors,** because `middleware/errorHandler.js` and the API answers depend on them: an invalid id is a
+  `CastError` (`castId`), a taken unique value is a code 11000 duplicate error (`translateError`), a missing required
+  value is a `ValidationError` with Mongoose's wording (`validationError`).
+- **Same ids:** new ids look like ObjectIds (`newId`); only 24 hex characters are valid ids, in any letter case.
+- **Same ordering:** MongoDB sorts text by bytes (`Zeta` before `alpha`); Postgres sorts by language rules. Use
+  `compareBytes`.
+- **Same searching:** Prisma's case-insensitive equals is a `LIKE`, so `%` and `_` act as wildcards. Wrap the text with
+  `escapeLike`.
+- **Same writes:** trim what the Mongoose model trimmed; write nothing (and keep `updatedAt`) when nothing changed.
+- **Numbers and JSON:** Prisma rounds numbers that need 17 digits; see `../prisma/README.md`.
+
+One known, harmless difference: a MongoDB document that never had a value for a field with a default (for example a
+department with no `description`) is read by the app without that field, while its Postgres copy has the default. Records
+the app writes always have it.
+
+Two more, both about JSON values (settings, audit entries, template stages): PostgreSQL keeps the keys of an object in its
+own order, not the order they were written in; and a value that was stored as an explicit `null` by the old data copy is
+read as "no value" (the app treats both the same). Dates inside a JSON value come back as text, not as dates.
+
 ## What comes back
 
 Repositories return **plain objects**: ids are strings, there are no Mongoose documents, and `__v` is dropped

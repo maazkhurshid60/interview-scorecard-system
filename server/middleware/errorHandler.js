@@ -67,8 +67,8 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
     return res.status(400).json({ ...base, error: 'VALIDATION_ERROR', fields: [field], message: `"${field}" must be unique — this value is already in use.` });
   }
 
-  // MongoDB connection/query failures.
-  if (err.name === 'MongoServerError' || err.name === 'MongooseServerSelectionError' || err.name === 'MongoNetworkError') {
+  // Database connection/query failures (MongoDB, or PostgreSQL through Prisma).
+  if (err.name === 'MongoServerError' || err.name === 'MongooseServerSelectionError' || err.name === 'MongoNetworkError' || /^PrismaClient/.test(err.name)) {
     return res.status(500).json({ ...base, error: 'DATABASE_ERROR', message: 'A database error occurred. Scores may not have been saved — please retry.' });
   }
 
