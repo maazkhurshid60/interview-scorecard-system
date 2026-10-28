@@ -7,7 +7,8 @@
  *  - imports a Mongoose model (`models/...`), or
  *  - imports `mongoose` itself.
  *
- * The data layer is `models/` (schemas), `repositories/` (all queries) and `config/db.js` (the connection). Everything
+ * The data layer is `models/` (schemas), `repositories/` (all queries), `config/db.js` (the connection) and `prisma/`
+ * (the Postgres schema and the one-off MongoDB-to-Postgres copy tools). Everything
  * else (routes, controllers, services, middleware, utils, seeds) must go through a repository. This is what keeps the
  * planned move to another database (Postgres + Prisma) down to rewriting the repositories.
  */
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SKIPPED_DIRS = new Set(['node_modules', 'logs']);
-const DATA_LAYER = [/^models\//, /^repositories\//, /^config\/db\.js$/];
+const DATA_LAYER = [/^models\//, /^repositories\//, /^config\/db\.js$/, /^prisma\//];
 
 const RULES = [
   { name: 'imports a model', test: /\b(?:from\s+|import\s+)['"][^'"]*\/models\/[^'"]*['"]/ },
@@ -53,4 +54,4 @@ if (violations.length > 0) {
   console.error('\nMove the query into a repository (server/repositories) and call that instead.');
   process.exit(1);
 }
-console.log('Architecture check passed: only models/, repositories/ and config/db.js touch the database.');
+console.log('Architecture check passed: only models/, repositories/, config/db.js and prisma/ touch the database.');

@@ -73,6 +73,39 @@ field, ...); all 14 were caught. Last result: 347 checks, no mismatch.
 5. **Verification, record by record:** row counts per table, then every field of every record compared between MongoDB
    and Postgres, then the old-vs-new comparison scenarios rerun with the repositories on Prisma.
 
+## Copying the data, and proving the copy is exact
+
+```
+npm run migrate:postgres -- --reset   # reads MongoDB (read only), writes Postgres; --reset empties the tables first (local only)
+npm run verify:postgres               # compares every field of every record between the two
+```
+
+- `migrate.js` keeps ids, fills in the defaults Mongoose filled in when loading, and **does not copy anything silently
+  that cannot be copied**: such a row is skipped and listed with its reason in `logs/migration-report.json`. A row whose
+  parent was skipped or does not exist (an orphan) is skipped too, except a job's department, which is emptied and reported.
+- `verify.js` does not reuse the migration's rules. It works out what every value should be from the Mongoose models and
+  reads Postgres back as exact text. Skipped rows must be absent; every other record must be present and identical.
+- Both were tested on deliberately awkward data (bad enum values, missing required fields, orphans, text where numbers
+  belong) and the verifier was tested by corrupting the copy nine ways (a letter, a decimal, a value inside JSON, one
+  millisecond, a 17th digit, an enum, a deleted row, an extra row); every corruption was caught.
+- To test against another MongoDB (for example a copy of production), set `MIGRATE_MONGO_URI`.
+
+## Known limitation: Prisma rounds numbers that need 17 digits
+
+Found by the verification: **Prisma rounds any decimal number that needs 17 significant digits down to 16**, in a plain
+number column (on write and on read) and inside JSON (on write): `0.16666666666666666` (1/6) is stored as
+`0.1666666666666667`. Writing the same value as raw JSON text is exact. Numbers with 15 digits or fewer are never affected.
+
+- **The data copy is exact:** `migrate.js` writes through `jsonb_populate_recordset` as JSON text, not through Prisma.
+- **Today's app mostly stays clear of it:** weights are rounded to 1/10000ths, scores to 2 decimals. In the current local
+  data only one value is affected (an old audit entry that snapshotted a weight of 1/6); production may hold more such
+  values from older versions, which is why the copy must be exact.
+- **To decide before the repositories are built:** any value the app computes without rounding (for example the AI cost,
+  which adds up costs) can need 17 digits. Writes of JSON columns should go through one small raw-SQL helper, and plain
+  number columns need either the same treatment or rounding at the source, so that a value read back is what was written.
+  Otherwise code that compares a stored value with a recomputed one (for example "did the weights change?") would see a
+  difference in the last digit.
+
 ## Later (not part of the exact match)
 
 Indexes that would speed up Postgres but MongoDB did not have: `candidates.resumeFilePublicId`,

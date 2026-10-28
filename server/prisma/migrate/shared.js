@@ -1,0 +1,197 @@
+import prismaPkg from '@prisma/client';
+
+/**
+ * What the MongoDB -> PostgreSQL copy needs to know about each model: which Mongo collection, which Prisma table, and
+ * every column with its type, whether it is required, its default, and where the value comes from in the Mongo document.
+ *
+ * It mirrors server/prisma/schema.prisma. The verification script (verify.js) does NOT use this list: it works out what
+ * every value should be from the Mongoose models themselves, so a mistake here cannot hide itself.
+ */
+
+const { PrismaClient, ...generated } = prismaPkg;
+export { PrismaClient };
+
+/** The allowed values of a Postgres enum, from the generated Prisma client. */
+export const enumValues = (name) => Object.values(generated[name] || {});
+
+const f = (name, type, options = {}) => ({ name, type, ...options });
+const s = (name, o) => f(name, 's', o); // text
+const n = (name, o) => f(name, 'n', o); // number (double precision)
+const b = (name, o) => f(name, 'b', o); // boolean
+const d = (name, o) => f(name, 'd', o); // date and time
+const j = (name, o) => f(name, 'j', o); // JSON
+const e = (name, enumName, o) => f(name, 'e', { enumName, ...o }); // enum
+
+const REQ = { req: true };
+
+export const MODELS = [
+  { delegate: 'user', collection: 'users', timestamps: 'both', fields: [
+    s('name', REQ), s('email', REQ), s('passwordHash', REQ), s('passwordResetTokenHash'), d('passwordResetExpiresAt'), d('passwordChangedAt'),
+    e('role', 'UserRole', { def: 'recruiter' }), b('active', { def: true }),
+  ] },
+  { delegate: 'department', collection: 'departments', timestamps: 'both', fields: [
+    s('name', REQ), s('description', { def: '' }), s('createdBy'),
+  ] },
+  { delegate: 'pipelineTemplate', collection: 'pipelinetemplates', timestamps: 'both', fields: [
+    s('name', REQ), s('description'), b('isDefault', { def: false }), b('autoWeights', { def: true }), j('stages', { def: [] }),
+  ] },
+  { delegate: 'setting', collection: 'settings', timestamps: 'updatedOnly', fields: [
+    s('key', REQ), j('value'), s('description'),
+  ] },
+  { delegate: 'candidate', collection: 'candidates', timestamps: 'both', fields: [
+    s('name', REQ), s('email', REQ), s('phone'), s('resumeFileUrl'), s('resumeFilePublicId'), s('resumeFileName'), n('resumeFileSize'), s('resumeFileMimeType'), s('notes'),
+  ] },
+  { delegate: 'requisition', collection: 'requisitions', timestamps: 'both', fields: [
+    s('title', REQ), e('employmentType', 'EmploymentType', { def: 'full_time' }),
+    j('fullTimeDetails'), j('partTimeDetails'), j('contractDetails'), j('internshipDetails'), j('temporaryDetails'),
+    s('location', { def: 'Remote' }), e('workplaceType', 'WorkplaceType', { def: 'remote' }), s('officeLocation', { def: '' }), s('remoteRegion', { def: '' }),
+    s('jobDescription', REQ), e('status', 'RequisitionStatus', { def: 'open' }),
+    s('departmentId', { softParent: 'department' }), s('pipelineTemplateId'), s('pipelineTemplateName'), j('stages', { def: [] }), s('scorecardId'),
+    n('hireThreshold', { def: 3.5 }), n('maybeThreshold', { def: 3 }), j('initialScreeningCriteria', { def: [] }), j('questionnaire', { def: [] }),
+    j('interviewAvailability'), d('applicationDeadline'), b('aiScreeningEnabled', { def: true }), d('closedAt'), s('createdBy'),
+  ] },
+  { delegate: 'scorecard', collection: 'scorecards', timestamps: 'both', fields: [
+    s('requisitionId', { ...REQ, parent: 'requisition' }), b('generatedByAI', { def: true }), j('stages', { def: [] }),
+  ] },
+  { delegate: 'application', collection: 'applications', timestamps: 'both', fields: [
+    s('candidateId', { ...REQ, parent: 'candidate' }), s('requisitionId', { ...REQ, parent: 'requisition' }), s('currentStageKey'),
+    e('source', 'ApplicationSource', { def: 'manual' }), s('opportunityDuration'), j('questionnaireAnswers'), j('candidateAvailability'),
+    e('screeningStatus', 'ScreeningStatus', { from: 'screeningJob.status' }), n('screeningAttempts', { from: 'screeningJob.attempts', def: 0 }),
+    d('screeningLockedAt', { from: 'screeningJob.lockedAt' }), d('screeningCompletedAt', { from: 'screeningJob.completedAt' }),
+    s('screeningLastError', { from: 'screeningJob.lastError' }), d('screeningConfirmationEmailSentAt', { from: 'screeningJob.confirmationEmailSentAt' }),
+    j('stageProgress', { def: [] }), j('initialScreening'),
+    n('weightedTotal'), b('allGatesPassed'), e('disposition', 'Disposition'), n('rank'), e('finalDecision', 'FinalDecision'), s('finalDecisionBy'), s('rejectionReason'),
+    s('offerLetterUrl'), s('offerLetterPublicId'), s('offerLetterFileName'), n('offerLetterFileSize'), s('offerLetterFileMimeType'), d('offerLetterUploadedAt'),
+    s('offerLetterTemplateKey'), j('offerLetterFields'), e('offerLetterDeliveryStatus', 'DeliveryStatus'), d('offerLetterSentAt'),
+    e('onboardingFormDeliveryStatus', 'DeliveryStatus'), d('onboardingFormSentAt'),
+  ] },
+  { delegate: 'interview', collection: 'interviews', timestamps: 'both', fields: [
+    s('applicationId', { ...REQ, parent: 'application' }), s('requisitionId', { ...REQ, parent: 'requisition' }), s('stageKey', REQ),
+    e('meetingMode', 'MeetingMode', { def: 'online' }), e('provider', 'TranscriptProvider', { def: 'google_meet' }),
+    s('meetingUri'), s('calendarEventId'), d('meetingStart'), d('meetingEnd'), s('conferenceId'), s('designatedScorerId'),
+    j('candidateAvailability'), b('consentObtained', { def: false }), s('transcriptText'), e('transcriptStatus', 'TranscriptStatus', { def: 'none' }),
+    s('artifactFileUrl'), s('artifactFilePublicId'), s('artifactFileName'), n('artifactFileSize'), s('artifactFileMimeType'),
+    j('scores', { def: [] }), n('stageAverage'), e('status', 'InterviewStatus', { def: 'pending' }),
+    n('aiInputTokens', { from: 'aiTokensUsed.input' }), n('aiOutputTokens', { from: 'aiTokensUsed.output' }), n('aiCostUsd'),
+  ] },
+  { delegate: 'refreshToken', collection: 'refreshtokens', timestamps: 'createdOnly', fields: [
+    s('userId', { ...REQ, parent: 'user' }), s('tokenHash', REQ), s('familyId', REQ), d('familyStartedAt', REQ), d('expiresAt', REQ),
+    d('usedAt'), d('revokedAt'), s('userAgent'), s('ip'),
+  ] },
+  { delegate: 'auditLog', collection: 'auditlogs', timestamps: 'none', fields: [
+    e('action', 'AuditAction', REQ), s('userId'), s('requisitionId'), s('applicationId'), s('targetType'), s('targetId'), j('oldValue'), j('newValue'), s('reason'),
+    d('timestamp', { def: 'now' }),
+  ] },
+];
+
+/** The Postgres table of each model (the @@map names in schema.prisma). */
+const TABLES = { user: 'users', department: 'departments', pipelineTemplate: 'pipeline_templates', setting: 'settings', candidate: 'candidates', requisition: 'requisitions', scorecard: 'scorecards', application: 'applications', interview: 'interviews', refreshToken: 'refresh_tokens', auditLog: 'audit_logs' };
+MODELS.forEach((m) => { m.table = TABLES[m.delegate]; });
+
+// ---------------------------------------------------------------------------------------------------- value helpers
+
+const isObjectId = (v) => v && typeof v === 'object' && (v._bsontype === 'ObjectId' || v._bsontype === 'ObjectID');
+
+/** The text of an id (an ObjectId, or something already text). */
+export const idText = (v) => (isObjectId(v) ? v.toHexString() : String(v));
+
+/** The value at a dotted path (`screeningJob.status`) of a document, or undefined. */
+export const getPath = (doc, path) => path.split('.').reduce((value, key) => (value === undefined || value === null ? undefined : value[key]), doc);
+
+/** Turns what MongoDB stores into plain JSON: ObjectIds become text, dates become ISO text. Absent keys stay absent. */
+export function toJson(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (isObjectId(value)) return value.toHexString();
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map((x) => (x === undefined ? null : toJson(x)));
+  if (value && typeof value === 'object') {
+    if (value._bsontype === 'Decimal128' || value._bsontype === 'Long' || value._bsontype === 'Int32' || value._bsontype === 'Double') return Number(value.toString());
+    if (Buffer.isBuffer(value)) return value.toString('base64');
+    const out = {};
+    for (const [k, v] of Object.entries(value)) { const x = toJson(v); if (x !== undefined) out[k] = x; }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Turns one Mongo document into one Postgres row, or says why it cannot be.
+ * @returns {{row: object, notes: string[], blocking: string[]}} `blocking` lists problems that stop this row being written.
+ */
+export function transform(spec, doc, now = new Date()) {
+  const row = { id: idText(doc._id) };
+  const notes = []; const blocking = [];
+
+  for (const field of spec.fields) {
+    const raw = getPath(doc, field.from || field.name);
+    let value;
+
+    if (raw === undefined) {
+      if (field.def !== undefined) value = field.def === 'now' ? now : (Array.isArray(field.def) ? [] : field.def); // what Mongoose fills in when loading
+      else value = undefined;
+    } else if (raw === null) {
+      value = null;
+    } else {
+      switch (field.type) {
+        case 's':
+          if (typeof raw === 'string') value = raw;
+          else if (isObjectId(raw)) value = raw.toHexString();
+          else if (typeof raw === 'number' || typeof raw === 'boolean') { value = String(raw); notes.push(`${field.name}: ${typeof raw} stored where text is expected; converted to text`); }
+          else { blocking.push(`${field.name}: cannot use a ${typeof raw} as text`); }
+          break;
+        case 'n':
+          if (typeof raw === 'number' && Number.isFinite(raw)) value = raw;
+          else if (typeof raw === 'string' && raw.trim() !== '' && Number.isFinite(Number(raw))) { value = Number(raw); notes.push(`${field.name}: text stored where a number is expected; converted`); }
+          else if (raw && typeof raw === 'object' && raw._bsontype && Number.isFinite(Number(raw.toString()))) value = Number(raw.toString());
+          else blocking.push(`${field.name}: "${String(raw).slice(0, 40)}" is not a number`);
+          break;
+        case 'b':
+          if (typeof raw === 'boolean') value = raw;
+          else if (raw === 'true' || raw === 'false') { value = raw === 'true'; notes.push(`${field.name}: text stored where a boolean is expected; converted`); }
+          else blocking.push(`${field.name}: "${String(raw).slice(0, 40)}" is not true or false`);
+          break;
+        case 'd':
+          if (raw instanceof Date && !Number.isNaN(raw.getTime())) value = raw;
+          else if ((typeof raw === 'string' || typeof raw === 'number') && !Number.isNaN(new Date(raw).getTime())) { value = new Date(raw); notes.push(`${field.name}: ${typeof raw} stored where a date is expected; converted`); }
+          else blocking.push(`${field.name}: "${String(raw).slice(0, 40)}" is not a date`);
+          break;
+        case 'e':
+          if (enumValues(field.enumName).includes(raw)) value = raw;
+          else blocking.push(`${field.name}: "${String(raw).slice(0, 40)}" is not one of [${enumValues(field.enumName).join(', ')}]`);
+          break;
+        case 'j':
+          value = toJson(raw);
+          break;
+        default:
+          blocking.push(`${field.name}: unknown column type ${field.type}`);
+      }
+    }
+
+    if (value === undefined && field.req) blocking.push(`${field.name}: required but missing`);
+    if (value === null && (field.req || field.def !== undefined)) blocking.push(`${field.name}: null stored in a column that cannot be empty`);
+    if (value !== undefined) row[field.name] = value; // JSON columns: null is left out, so the column is simply empty
+    if (field.type === 'j' && value === null) delete row[field.name];
+  }
+
+  // The nested objects Mongoose splits or keeps whole: a candidateAvailability / initialScreening object is kept as JSON
+  // above; an empty one (nothing in it) is left out, as MongoDB's own save would have done.
+  for (const name of ['candidateAvailability', 'initialScreening']) {
+    if (row[name] && typeof row[name] === 'object' && Object.keys(row[name]).length === 0) delete row[name];
+  }
+
+  // dates Mongoose manages
+  const created = doc.createdAt instanceof Date ? doc.createdAt : null;
+  const updated = doc.updatedAt instanceof Date ? doc.updatedAt : null;
+  const fromId = isObjectId(doc._id) ? doc._id.getTimestamp() : now;
+  if (spec.timestamps === 'both') {
+    row.createdAt = created || fromId; if (!created) notes.push(doc.createdAt === undefined ? 'createdAt missing; taken from the id' : 'createdAt is not a date; taken from the id');
+    row.updatedAt = updated || row.createdAt; if (!updated) notes.push(doc.updatedAt === undefined ? 'updatedAt missing; set to createdAt' : 'updatedAt is not a date; set to createdAt');
+  } else if (spec.timestamps === 'createdOnly') {
+    row.createdAt = created || fromId; if (!created) notes.push('createdAt missing; taken from the id');
+  } else if (spec.timestamps === 'updatedOnly') {
+    // Setting.updatedAt is an ordinary field with a default of "now"
+    row.updatedAt = updated || now; if (!updated) notes.push('updatedAt missing; set to now');
+  }
+  return { row, notes, blocking };
+}
