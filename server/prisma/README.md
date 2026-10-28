@@ -1,7 +1,8 @@
-# Postgres + Prisma (draft)
+# Postgres + Prisma
 
-`schema.prisma` is the PostgreSQL design for the 11 models in `server/models/`. **The app does not use it yet**: it still
-runs on MongoDB. It is the starting point for the move, meant to be reviewed before any code depends on it.
+`schema.prisma` is the PostgreSQL design for the 11 models in `server/models/`. The app uses it when `DB_PROVIDER=postgres`
+is set in `.env`; MongoDB stays the default until production is switched. Changes to the schema go through
+`npm run prisma -- migrate dev` (a new folder in `migrations/`), never by editing an applied migration.
 
 ## Why the move is mostly in one place
 
@@ -21,7 +22,12 @@ field, ...); all 14 were caught. Last result: 347 checks, no mismatch.
 
 - **Ids stay text.** Existing ObjectIds (24 hex characters) are copied unchanged, so links already emailed to candidates
   (the availability link contains an interview id) keep working. New rows get an id of the same shape, generated in the
-  repository.
+  repository (`newId` in `repositories/postgres/helpers.js`: 4 bytes of time, 5 bytes unique to the server process, 3 bytes
+  of counter, as MongoDB does, so ids sort by creation time and two servers cannot clash). The database does not generate
+  ids. Auto-increment numbers were rejected: they would break those emailed links, need every link between records
+  rewritten (the exact, verified copy would no longer apply), end the option of switching back to MongoDB, and make ids in
+  URLs guessable. Moving to UUIDs (version 7 sorts by time like these) is possible later as its own planned migration, once
+  MongoDB is retired.
 - **Field names stay as they are** (camelCase). The API keeps returning `_id`; the Prisma repositories map `id` to `_id`
   until the React client is moved to `id`, as a separate step.
 - **Every MongoDB `Number` is a `Float`** (double precision), the lossless choice: it holds anything a Mongoose Number
@@ -100,11 +106,10 @@ number column (on write and on read) and inside JSON (on write): `0.166666666666
 - **Today's app mostly stays clear of it:** weights are rounded to 1/10000ths, scores to 2 decimals. In the current local
   data only one value is affected (an old audit entry that snapshotted a weight of 1/6); production may hold more such
   values from older versions, which is why the copy must be exact.
-- **To decide before the repositories are built:** any value the app computes without rounding (for example the AI cost,
-  which adds up costs) can need 17 digits. Writes of JSON columns should go through one small raw-SQL helper, and plain
-  number columns need either the same treatment or rounding at the source, so that a value read back is what was written.
-  Otherwise code that compares a stored value with a recomputed one (for example "did the weights change?") would see a
-  difference in the last digit.
+- **How the repositories deal with it:** values the app computes without rounding (for example the AI cost, which adds up
+  costs) can need 17 digits, so the Postgres repositories write through raw SQL as JSON text and read back with
+  `to_jsonb(t)::text`, which keeps every digit. A value read back is what was written, so code that compares a stored
+  value with a recomputed one sees no difference in the last digit.
 
 ## Later (not part of the exact match)
 
@@ -113,7 +118,9 @@ Indexes that would speed up Postgres but MongoDB did not have: `candidates.resum
 `requisitions (status, closedAt)`, `applications.screeningStatus`; and case-insensitive uniqueness for `Candidate.email`
 and `Department.name` only after checking the real data for duplicates.
 
-## Before this can run
+## Setting up a database
 
-Add `prisma` and `@prisma/client`, set `DATABASE_URL` for the local Postgres, run the first migration, and apply
-`extra-constraints.sql`. None of that is done by this draft.
+Set `DATABASE_URL`, run `npm run prisma -- migrate deploy` (applies every folder in `migrations/` in order), then
+`npm run migrate:postgres` and `npm run verify:postgres` to copy and check the data, and set `DB_PROVIDER=postgres`.
+The CHECK constraints and the case-insensitive department-name index that Prisma cannot express are already part of the
+first migration; `extra-constraints.sql` documents them and the reasons.

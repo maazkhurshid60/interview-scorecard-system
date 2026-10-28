@@ -1,5 +1,5 @@
-// DRAFT: the PostgreSQL schema for OWNERS TALENT, mirroring the 11 Mongoose models in server/models/.
-// Nothing uses this file yet: the app still runs on MongoDB. See ./README.md for the decisions behind it.
+// The PostgreSQL schema for OWNERS TALENT, mirroring the 11 Mongoose models in server/models/.
+// The app uses it when DB_PROVIDER=postgres (MongoDB remains the default). See ./README.md for the decisions behind it.
 //
 // It is checked against the Mongoose models by an automatic comparison (field by field: type, required, default, enum,
 // index), so a change to either side that makes them disagree is caught.
