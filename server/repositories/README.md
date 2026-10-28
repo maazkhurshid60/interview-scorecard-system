@@ -14,6 +14,21 @@ routes -> controllers -> services -> repositories -> models
   the app wants (`removeAndUnlinkJobs`, `claimForScreening`), not for how the database does it.
 - **Models** are the Mongoose schemas. Only repositories import them.
 
+## Two databases, one switch
+
+```
+repositories/
+  departmentRepository.js ...   a thin front for each repository: loads the MongoDB or the PostgreSQL version
+  provider.js                   reads DB_PROVIDER (mongo, the default, or postgres) and loads the right folder
+  mongo/                        the MongoDB versions (Mongoose), plus plain.js, entity.js and ids.js
+  postgres/                     the PostgreSQL versions (Prisma), being written; client.js is the shared connection
+```
+
+Controllers and services import the same path (`../repositories/departmentRepository.js`) whichever database is in
+use. The two versions must offer exactly the same functions: `npm run check:repositories` shows what each has and what
+the Postgres side still lacks (`-- --strict` fails if they differ). `DB_PROVIDER` is set in the root `.env`; leave it as
+`mongo` until the Postgres move is finished.
+
 ## What comes back
 
 Repositories return **plain objects**: ids are strings, there are no Mongoose documents, and `__v` is dropped

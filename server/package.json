@@ -13,6 +13,7 @@
     "dev": "nodemon index.js",
     "seed": "node seeds/seedDefaults.js",
     "check:architecture": "node scripts/checkArchitecture.js",
+    "check:repositories": "node scripts/checkRepositories.js",
     "prisma": "node --env-file=../.env ./node_modules/prisma/build/index.js",
     "migrate:postgres": "node prisma/migrate/migrate.js",
     "verify:postgres": "node prisma/migrate/verify.js"
