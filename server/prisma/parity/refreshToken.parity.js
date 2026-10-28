@@ -21,6 +21,8 @@ export default {
       token(ID.t3, ID.alice, 'hash-3', 'family-b', { usedAt: T }),
       token(ID.t4, ID.bob, 'hash-4', 'family-c', { revokedAt: T }),
       token(hex(54), ID.bob, 'hash-null-seed', 'family-d', { userAgent: null, ip: null }),
+      token(hex(55), ID.alice, 'hash-expired-1', 'family-e', { expiresAt: new Date('2020-01-01T00:00:00Z') }),
+      token(hex(56), ID.bob, 'hash-expired-2', 'family-e', { expiresAt: new Date('2021-06-01T00:00:00.500Z'), usedAt: T }),
     ],
   }),
 
@@ -61,6 +63,9 @@ export default {
     { name: 'revoke all for user', run: (r) => r.revokeAllForUser(ID.alice) },
     { name: 'revoke all for user: unknown', run: (r) => r.revokeAllForUser(ID.unknown) },
     { name: 'revoke all for user: invalid id', run: (r) => r.revokeAllForUser('nope') },
+    { name: 'remove expired tokens', run: (r) => r.removeExpired() },
+    { name: 'remove expired tokens: none left', run: (r) => r.removeExpired() },
+    { name: 'read after removing expired', run: async (r) => [await r.findByHash('hash-expired-1'), await r.findByHash('hash-1')] },
     { name: 'read after revoking', run: async (r) => [await r.findByHash('hash-1'), await r.findByHash('hash-3'), await r.findByHash('hash-4'), await r.findByHash('hash-new')] },
   ],
 

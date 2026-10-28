@@ -39,3 +39,8 @@ export async function revokeFamily(familyId) {
 export async function revokeAllForUser(userId) {
   await RefreshToken.updateMany({ userId, revokedAt: null }, { revokedAt: new Date() });
 }
+
+/** Deletes every token that has expired and returns how many were deleted (MongoDB also does this by itself, a little later). */
+export async function removeExpired() {
+  return (await RefreshToken.deleteMany({ expiresAt: { $lte: new Date() } })).deletedCount;
+}

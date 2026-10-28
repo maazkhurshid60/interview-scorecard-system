@@ -19,6 +19,7 @@
     "verify:postgres": "node prisma/migrate/verify.js",
     "parity": "node prisma/parity/run.js",
     "parity:real": "node prisma/parity/real-data.js",
+    "smoke:postgres": "node prisma/parity/smoke-server.js",
     "try:department": "node prisma/parity/try-department.js"
   },
   "dependencies": {

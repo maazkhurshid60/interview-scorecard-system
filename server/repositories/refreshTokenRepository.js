@@ -9,3 +9,4 @@ export const findById = impl.findById;
 export const markUsedIfUnused = impl.markUsedIfUnused;
 export const revokeFamily = impl.revokeFamily;
 export const revokeAllForUser = impl.revokeAllForUser;
+export const removeExpired = impl.removeExpired;

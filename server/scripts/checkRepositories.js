@@ -22,6 +22,15 @@ const exportsOf = async (folder, name) => {
 };
 
 let missingFiles = 0; let mismatched = 0; let matching = 0;
+
+// The front file of each repository (repositories/<name>.js) must re-export every function, or code that calls a function
+// the front file forgot to list fails only when that line runs.
+const frontFiles = async (name, mongo) => {
+  const file = path.join(repositories, `${name}.js`);
+  if (!fs.existsSync(file)) return [`has no front file ${name}.js`];
+  const listed = Object.keys(await import(pathToFileURL(file).href));
+  return mongo.filter((n) => !listed.includes(n)).map((n) => `front file ${name}.js does not export ${n}`).concat(listed.filter((n) => !mongo.includes(n)).map((n) => `front file ${name}.js has extra ${n}`));
+};
 console.log(`${'repository'.padEnd(30)}${'mongo'.padStart(7)}${'postgres'.padStart(10)}  status`);
 for (const name of names) {
   const mongo = await exportsOf('mongo', name);
@@ -33,6 +42,8 @@ for (const name of names) {
     if (!lacking.length && !extra.length) { status = 'same functions'; matching += 1; }
     else { status = `DIFFERENT${lacking.length ? ` (postgres lacks: ${lacking.join(', ')})` : ''}${extra.length ? ` (postgres has extra: ${extra.join(', ')})` : ''}`; mismatched += 1; }
   }
+  const front = await frontFiles(name, mongo);
+  if (front.length) { status += ` (${front.join('; ')})`; if (!status.startsWith('DIFFERENT')) { status = `DIFFERENT ${status}`; matching -= 1; mismatched += 1; } }
   console.log(`${name.padEnd(30)}${String(mongo.length).padStart(7)}${String(postgres ? postgres.length : '-').padStart(10)}  ${status}`);
 }
 console.log(`\n${matching} of ${names.length} match, ${missingFiles} not written yet, ${mismatched} different.`);

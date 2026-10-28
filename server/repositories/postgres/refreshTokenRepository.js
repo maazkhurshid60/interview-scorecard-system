@@ -99,3 +99,8 @@ export async function revokeFamily(familyId) {
 export async function revokeAllForUser(userId) {
   await prisma.refreshToken.updateMany({ where: { userId: castId(userId, 'userId'), revokedAt: null }, data: { revokedAt: new Date() } });
 }
+
+/** Deletes every token that has expired and returns how many were deleted (PostgreSQL does not remove them by itself). */
+export async function removeExpired() {
+  return (await prisma.refreshToken.deleteMany({ where: { expiresAt: { lte: new Date() } } })).count;
+}
