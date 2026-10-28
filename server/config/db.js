@@ -64,11 +64,11 @@ async function connectMongo() {
 }
 
 /**
- * Connects to the database(s) the repositories are set to use (see repositories/provider.js): MongoDB by default,
- * PostgreSQL when chosen, or both while the move is in progress. Each is retried once on failure (per the DATABASE_ERROR
- * handling spec) before giving up — the caller decides whether a failed connection should stop the server from starting.
+ * Connects to the database the repositories are set to use (see repositories/provider.js): MongoDB by default, PostgreSQL
+ * when chosen. The connection is retried once on failure (per the DATABASE_ERROR handling spec) before giving up — the
+ * caller decides whether a failed connection should stop the server from starting.
  *
- * @throws {Error} if both the initial attempt and the single retry fail for either database.
+ * @throws {Error} if both the initial attempt and the single retry fail.
  */
 async function connectDB() {
   if (usesPostgres) await connectPostgres();

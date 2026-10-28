@@ -26,20 +26,9 @@ repositories/
 
 Controllers and services import the same path (`../repositories/departmentRepository.js`) whichever database is in
 use. The two versions must offer exactly the same functions: `npm run check:repositories` shows what each has and what
-the Postgres side still lacks (`-- --strict` fails if they differ). `DB_PROVIDER` is set in the root `.env`; leave it as
-`mongo` until the Postgres move is finished.
-
-While the move is in progress, one repository at a time can be switched to Postgres to try it in the real app:
-
-```
-DB_PROVIDER_DEPARTMENT=postgres     (in .env; the names are DEPARTMENT, USER, SETTING, AUDIT_LOG, PIPELINE_TEMPLATE,
-                                     REFRESH_TOKEN, CANDIDATE, APPLICATION, INTERVIEW, REQUISITION, SCORECARD)
-```
-
-The server then connects to both databases and logs which repository uses which. A mistyped name or value stops the
-server at start-up. The two databases hold separate copies of the data, so run `npm run migrate:postgres -- --reset`
-first to refresh the Postgres copy, and expect only the switched repository's screen to be reliable (for example, a job
-opening still reads its department from MongoDB). Remove the line to go back to MongoDB.
+the Postgres side still lacks (`-- --strict` fails if they differ). `DB_PROVIDER` is set in the root `.env` and applies to
+every repository at once; a value other than `mongo` or `postgres` stops the server at start-up. The two databases hold
+separate copies of the data, so run `npm run migrate:postgres -- --reset` to copy MongoDB into Postgres before switching.
 
 ## Writing a Postgres repository: the rules, and the proof
 
