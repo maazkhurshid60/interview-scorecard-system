@@ -1,0 +1,426 @@
+// DRAFT: the PostgreSQL schema for OWNERS TALENT, mirroring the 11 Mongoose models in server/models/.
+// Nothing uses this file yet: the app still runs on MongoDB. See ./README.md for the decisions behind it.
+//
+// It is checked against the Mongoose models by an automatic comparison (field by field: type, required, default, enum,
+// index), so a change to either side that makes them disagree is caught.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ids are text on purpose: existing MongoDB ObjectIds (24 hex characters) are copied as they are, so links already
+// emailed to candidates (for example the availability link, which contains an interview id) keep working. New rows get
+// an id of the same shape, generated in the repository (not by the database).
+//
+// Every MongoDB `Number` is a `Float` here (double precision). That can hold anything a Mongoose Number could, so the
+// migration cannot fail on a decimal; fields that are always whole numbers can be tightened later after checking the data.
+
+// ------------------------------------------------------------------------------------------------------------- enums
+// The values come from server/utils/constants.js and the Mongoose `enum` options; the comparison checks they are equal.
+
+enum UserRole {
+  owner
+  admin
+  hiring_manager
+  recruiter
+  interviewer
+}
+
+enum AuditAction {
+  score_override
+  score_approve
+  question_edit
+  stage_toggle
+  weight_change
+  disposition_change
+  final_decision
+  provider_change
+  key_change
+  transcript_upload
+  consent_capture
+  retention_purge
+  requisition_status_change
+  candidate_update
+  requisition_duplicated
+  offer_letter_sent
+  requisition_deleted
+}
+
+enum EmploymentType {
+  full_time
+  part_time
+  contract
+  internship
+  temporary
+}
+
+enum WorkplaceType {
+  onsite
+  hybrid
+  remote
+}
+
+enum RequisitionStatus {
+  open
+  paused
+  closed
+  draft
+  on_hold // older rows; new ones use `paused`
+}
+
+enum ApplicationSource {
+  public_link
+  manual
+}
+
+enum ScreeningStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum Disposition {
+  HIRE
+  MAYBE
+  NO_HIRE
+}
+
+enum FinalDecision {
+  hired
+  rejected
+  withdrawn
+}
+
+enum DeliveryStatus {
+  pending
+  sent
+}
+
+enum MeetingMode {
+  online
+  in_person
+}
+
+enum TranscriptProvider {
+  google_meet
+  zoom
+  fathom
+  manual
+}
+
+enum TranscriptStatus {
+  none
+  pending
+  ready
+  failed
+}
+
+enum InterviewStatus {
+  pending
+  scheduled
+  transcript_pending
+  scored
+  approved
+}
+
+// ---------------------------------------------------------------------------------------------- users and sessions
+
+model User {
+  id                     String    @id
+  name                   String
+  email                  String    @unique
+  passwordHash           String
+  passwordResetTokenHash String? // only the hash of the emailed token is stored; never returned by default
+  passwordResetExpiresAt DateTime?
+  passwordChangedAt      DateTime?
+  role                   UserRole  @default(recruiter)
+  active                 Boolean   @default(true)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  refreshTokens RefreshToken[]
+
+  @@index([role])
+  @@map("users")
+}
+
+// One row per issued refresh token (only a SHA-256 hash of it is stored). MongoDB deleted expired rows by itself (a TTL
+// index); Postgres has no such thing, so a small scheduled cleanup must delete rows past `expiresAt`.
+model RefreshToken {
+  id              String    @id
+  userId          String
+  tokenHash       String    @unique
+  familyId        String
+  familyStartedAt DateTime
+  expiresAt       DateTime
+  usedAt          DateTime?
+  revokedAt       DateTime?
+  userAgent       String?
+  ip              String?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ------------------------------------------------------------------------------------------------ admin-editable data
+
+// Settings are key/value: thresholds, retention days, model tiers, credentials, spend counters. The value can be a
+// number, text, list or object, so it is JSON.
+model Setting {
+  id          String   @id
+  key         String   @unique
+  value       Json?
+  description String?
+  updatedAt   DateTime @default(now()) // set by the app when a value changes
+
+  @@map("settings")
+}
+
+// No foreign keys on purpose: entries must outlive the user, job or application they mention (an entry about a
+// deleted user is still shown), and old data may point at things that no longer exist.
+model AuditLog {
+  id            String      @id
+  action        AuditAction
+  userId        String?
+  requisitionId String?
+  applicationId String?
+  targetType    String?
+  targetId      String?
+  oldValue      Json?
+  newValue      Json?
+  reason        String?
+  timestamp     DateTime    @default(now())
+
+  @@index([action])
+  @@index([requisitionId])
+  @@index([applicationId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+model Department {
+  id          String   @id
+  name        String   @unique
+  description String   @default("")
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requisitions Requisition[]
+
+  @@map("departments")
+}
+
+// The stage lists a job opening is created from. Each stage is a small object, kept as JSON.
+model PipelineTemplate {
+  id          String   @id
+  name        String   @unique
+  description String?
+  isDefault   Boolean  @default(false)
+  autoWeights Boolean  @default(true)
+  stages      Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isDefault])
+  @@map("pipeline_templates")
+}
+
+// ----------------------------------------------------------------------------------------------------- hiring data
+
+model Candidate {
+  id                 String   @id
+  name               String
+  email              String
+  phone              String?
+  resumeFileUrl      String?
+  resumeFilePublicId String?
+  resumeFileName     String?
+  resumeFileSize     Float?
+  resumeFileMimeType String?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  applications Application[]
+
+  @@index([name])
+  @@index([email])
+  @@map("candidates")
+}
+
+model Requisition {
+  id                       String            @id
+  title                    String
+  employmentType           EmploymentType    @default(full_time)
+  fullTimeDetails          Json?
+  partTimeDetails          Json?
+  contractDetails          Json?
+  internshipDetails        Json?
+  temporaryDetails         Json?
+  location                 String            @default("Remote")
+  workplaceType            WorkplaceType     @default(remote)
+  officeLocation           String            @default("")
+  remoteRegion             String            @default("")
+  jobDescription           String
+  status                   RequisitionStatus @default(open)
+  departmentId             String?
+  pipelineTemplateId       String? // a snapshot of the template's stages is stored below, so no foreign key
+  pipelineTemplateName     String?
+  stages                   Json              @default("[]") // copy of the template's stages at creation
+  scorecardId              String? // the scorecard points back at this job, so this side has no foreign key
+  hireThreshold            Float             @default(3.5)
+  maybeThreshold           Float             @default(3)
+  initialScreeningCriteria Json              @default("[]")
+  questionnaire            Json              @default("[]")
+  interviewAvailability    Json?
+  applicationDeadline      DateTime?
+  aiScreeningEnabled       Boolean           @default(true)
+  closedAt                 DateTime? // drives the transcript retention purge
+  createdBy                String?
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+
+  department   Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  applications Application[]
+  interviews   Interview[]
+  scorecards   Scorecard[]
+
+  @@index([title])
+  @@index([workplaceType])
+  @@index([status])
+  @@index([departmentId])
+  @@map("requisitions")
+}
+
+// The rubric of one job opening: stages, each with the attributes scored in it, kept as JSON.
+model Scorecard {
+  id            String   @id
+  requisitionId String
+  generatedByAI Boolean  @default(true)
+  stages        Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  @@index([requisitionId])
+  @@map("scorecards")
+}
+
+// One candidate applying to one job opening.
+// In the repository, the screening* columns appear as the nested `screeningJob` object, exactly as the app has it today.
+model Application {
+  id                    String            @id
+  candidateId           String
+  requisitionId         String
+  currentStageKey       String?
+  source                ApplicationSource @default(manual)
+  opportunityDuration   String?
+  questionnaireAnswers  Json?
+  candidateAvailability Json? // { preferredDate, startTime, endTime, notes, submittedAt }
+
+  // background AI screening of a public application
+  screeningStatus                  ScreeningStatus?
+  screeningAttempts                Float            @default(0)
+  screeningLockedAt                DateTime?
+  screeningCompletedAt             DateTime?
+  screeningLastError               String?
+  screeningConfirmationEmailSentAt DateTime?
+
+  stageProgress    Json  @default("[]") // [{ stageKey, status, stageAverage, passed }]
+  initialScreening Json? // { aiScore, aiJustification, passed, overridden, overriddenBy, overrideReason }
+
+  // results computed by the scoring engine
+  weightedTotal   Float?
+  allGatesPassed  Boolean?
+  disposition     Disposition?
+  rank            Float?
+  finalDecision   FinalDecision?
+  finalDecisionBy String?
+  rejectionReason String?
+
+  // offer letter and onboarding form (application-level documents)
+  offerLetterUrl               String?
+  offerLetterPublicId          String?
+  offerLetterFileName          String?
+  offerLetterFileSize          Float?
+  offerLetterFileMimeType      String?
+  offerLetterUploadedAt        DateTime?
+  offerLetterTemplateKey       String?
+  offerLetterFields            Json?
+  offerLetterDeliveryStatus    DeliveryStatus?
+  offerLetterSentAt            DateTime?
+  onboardingFormDeliveryStatus DeliveryStatus?
+  onboardingFormSentAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  candidate   Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  interviews  Interview[]
+
+  @@index([candidateId])
+  @@index([requisitionId])
+  @@index([requisitionId, weightedTotal(sort: Desc)])
+  @@map("applications")
+}
+
+// One stage of one application, with its meeting, transcript or artifact file, scores and status.
+// In the repository, aiInputTokens / aiOutputTokens appear as the nested `aiTokensUsed` object.
+model Interview {
+  id            String @id
+  applicationId String
+  requisitionId String
+  stageKey      String
+
+  meetingMode        MeetingMode        @default(online)
+  provider           TranscriptProvider @default(google_meet)
+  meetingUri         String?
+  calendarEventId    String?
+  meetingStart       DateTime?
+  meetingEnd         DateTime?
+  conferenceId       String?
+  designatedScorerId String?
+
+  candidateAvailability Json? // { preferredDate, startTime, endTime, notes, submittedAt }
+
+  consentObtained      Boolean          @default(false)
+  transcriptText       String?
+  transcriptStatus     TranscriptStatus @default(none)
+  artifactFileUrl      String?
+  artifactFilePublicId String?
+  artifactFileName     String?
+  artifactFileSize     Float?
+  artifactFileMimeType String?
+
+  scores       Json            @default("[]") // [{ attributeId, aiScore, aiJustification, approvedScore, overridden, overriddenBy, overrideReason }]
+  stageAverage Float?
+  status       InterviewStatus @default(pending)
+
+  aiInputTokens  Float?
+  aiOutputTokens Float?
+  aiCostUsd      Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([requisitionId])
+  @@map("interviews")
+}

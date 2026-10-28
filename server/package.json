@@ -12,11 +12,13 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "seed": "node seeds/seedDefaults.js",
-    "check:architecture": "node scripts/checkArchitecture.js"
+    "check:architecture": "node scripts/checkArchitecture.js",
+    "prisma": "node --env-file=../.env ./node_modules/prisma/build/index.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",
     "@aws-sdk/s3-request-presigner": "^3.1152.0",
+    "@prisma/client": "^6.19.3",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
     "bullmq": "^6.5.0",
@@ -43,6 +45,7 @@
     "sanitize-html": "^2.18.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.7"
+    "nodemon": "^3.1.7",
+    "prisma": "^6.19.3"
   }
 }
