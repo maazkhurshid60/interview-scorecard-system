@@ -68,6 +68,16 @@ Two more, both about JSON values (settings, audit entries, template stages): Pos
 own order, not the order they were written in; and a value that was stored as an explicit `null` by the old data copy is
 read as "no value" (the app treats both the same). Dates inside a JSON value come back as text, not as dates.
 
+Two more, for records that point at each other (a refresh token at its user, an application at its candidate and job
+opening): PostgreSQL enforces the link, so a record cannot point at something that does not exist, and deleting the
+parent deletes the records that point at it. MongoDB allowed both. And a field saved as an explicit `null` is read back as
+"not set" (it was `null` in MongoDB); saving `null` where nothing was set still counts as a change, as before.
+
+The records engine (`postgres/records.js`, with the models described in `postgres/schemas.js`) does for candidates,
+applications, interviews, job openings and scorecards what Mongoose did: defaults, checks with Mongoose's own wording, nested
+groups and lists, and writing only what changed. Mongoose reports problems in a set order (what was not given first, last
+field first; then what was given, in the order it was given), so the engine does too.
+
 ## What comes back
 
 Repositories return **plain objects**: ids are strings, there are no Mongoose documents, and `__v` is dropped

@@ -97,6 +97,28 @@ async function seedBoth(documents) {
   return seededIds;
 }
 
+// ------------------------------------------------------------------------------------------------ what is left behind
+
+/**
+ * The data a table holds after a scenario, in a form that can be compared between the two databases without using the
+ * repositories: the MongoDB documents go through the same conversion the data copy uses, the PostgreSQL rows are read
+ * as they are. Empty values are left out on both sides.
+ */
+export function tableState(delegate) {
+  const spec = MODELS.find((m) => m.delegate === delegate);
+  const dateFields = new Set([...spec.fields.filter((f) => f.type === 'd').map((f) => f.name), 'createdAt', 'updatedAt']);
+  const clean = (row) => Object.fromEntries(Object.entries(row).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => [k, v]));
+  const byId = (a, b) => String(a.id).localeCompare(String(b.id));
+  return {
+    mongo: async ({ mongo }) => (await mongo.collection(spec.collection).find().toArray()).map((doc) => clean(transform(spec, doc).row)).sort(byId),
+    postgres: async ({ prisma }) => (await prisma.$queryRawUnsafe(`SELECT to_jsonb(t)::text AS j FROM "${spec.table}" t`)).map((r) => {
+      const row = JSON.parse(r.j);
+      for (const name of dateFields) if (typeof row[name] === 'string') row[name] = new Date(`${row[name]}Z`);
+      return clean(row);
+    }).sort(byId),
+  };
+}
+
 // --------------------------------------------------------------------------------------------------- comparing
 
 const isoRecent = (date) => Math.abs(Date.now() - date.getTime()) < 30 * 60 * 1000;
