@@ -16,10 +16,10 @@ const processBytes = crypto.randomBytes(5);
  * A new id of the same shape as a MongoDB ObjectId (24 hex characters: 4 bytes of time, 5 bytes unique to this process,
  * 3 bytes of counter), so new rows sort by creation time just as ObjectIds do.
  */
-export function newId() {
+export function newId(seconds = Math.floor(Date.now() / 1000)) {
   counter = (counter + 1) % 0x1000000;
   const buffer = Buffer.alloc(12);
-  buffer.writeUInt32BE(Math.floor(Date.now() / 1000), 0);
+  buffer.writeUInt32BE(seconds >>> 0, 0);
   processBytes.copy(buffer, 4);
   buffer.writeUIntBE(counter, 9, 3);
   return buffer.toString('hex');

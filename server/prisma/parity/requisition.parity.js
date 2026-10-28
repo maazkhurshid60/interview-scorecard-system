@@ -1,0 +1,122 @@
+import { oid, tableState } from './harness.js';
+
+/** Parity scenario for requisitionRepository. */
+
+const hex = (n) => n.toString(16).padStart(24, '0');
+const at = (iso) => new Date(iso);
+export const ID = { user: hex(1), d1: hex(5), d2: hex(6), r1: hex(21), r2: hex(22), r3: hex(23), r4: hex(24), r5: hex(25), r6: hex(26), sc1: hex(61), sc2: hex(62), unknown: hex(99) };
+
+const stage = (key, order, extra = {}) => ({ key, label: key, stageType: 'hr_screen', inputType: 'transcript', enabled: true, order, weight: 0.5, passThreshold: 3, ...extra });
+// a job opening as the app stores it: with every default Mongoose fills in
+const req = (id, title, created, extra = {}) => ({
+  _id: oid(id), title, employmentType: 'full_time', location: 'Remote', workplaceType: 'remote', officeLocation: '', remoteRegion: '', jobDescription: 'Describe the job', status: 'open',
+  stages: [], hireThreshold: 3.5, maybeThreshold: 3, initialScreeningCriteria: [], questionnaire: [], applicationDeadline: null, aiScreeningEnabled: true,
+  createdAt: at(created), updatedAt: at(created), ...extra,
+});
+
+export default {
+  repository: 'requisitionRepository',
+
+  seed: () => ({
+    users: [{ _id: oid(ID.user), name: 'Owner', email: 'owner@example.com', passwordHash: 'x', role: 'owner', active: true, createdAt: at('2026-01-01T00:00:00Z'), updatedAt: at('2026-01-01T00:00:00Z') }],
+    departments: [
+      { _id: oid(ID.d1), name: 'Engineering', description: 'Builds things', createdAt: at('2026-01-01T00:00:00Z'), updatedAt: at('2026-01-01T00:00:00Z') },
+      { _id: oid(ID.d2), name: 'Sales', description: '', createdAt: at('2026-01-01T00:00:00Z'), updatedAt: at('2026-01-01T00:00:00Z') },
+    ],
+    requisitions: [
+      req(ID.r1, 'Senior Engineer', '2026-02-01T10:00:00.100Z', {
+        employmentType: 'contract', contractDetails: { duration: '6 months', workingHours: '9-5', paymentRate: '100/h' }, workplaceType: 'hybrid', officeLocation: 'Lahore', location: 'Lahore (Hybrid)',
+        departmentId: oid(ID.d1), pipelineTemplateId: oid(hex(77)), pipelineTemplateName: 'Standard', scorecardId: oid(ID.sc1), createdBy: oid(ID.user),
+        stages: [stage('hr_screen', 1, { weight: 0.30000000000000004 }), stage('technical', 2, { stageType: 'technical', inputType: 'artifact', weight: 0.7, passThreshold: 4.25 })],
+        hireThreshold: 4.1, maybeThreshold: 3.2,
+        initialScreeningCriteria: [{ criteria: 'Years of experience', requirement: 'at least', minimumValue: '5', maximumValue: '', relevantField: 'experience' }, { criteria: 'English', requirement: '', minimumValue: '', maximumValue: '', relevantField: '' }],
+        questionnaire: [{ question: 'Why us?', idealAnswer: 'Because', requireIdealAnswer: true }, { question: 'Notice period?', idealAnswer: '', requireIdealAnswer: false }],
+        interviewAvailability: { startDate: at('2026-03-01T00:00:00Z'), endDate: null, startTime: '09:00', endTime: '18:00', timezone: 'Asia/Karachi', notes: 'Mornings' },
+        applicationDeadline: at('2026-03-15T23:59:59.999Z'),
+      }),
+      req(ID.r2, 'Sales Closer', '2026-02-02T10:00:00.200Z', { employmentType: 'internship', internshipDetails: { duration: '3 months', paidStatus: 'unpaid', workingHours: '' }, departmentId: oid(ID.d2), status: 'paused' }),
+      req(ID.r3, 'Closed Role Alpha', '2026-02-03T10:00:00.300Z', { status: 'closed', closedAt: at('2026-02-20T00:00:00.500Z'), employmentType: 'temporary', temporaryDetails: { startDate: at('2026-04-01T00:00:00Z'), endDate: null, workingHours: 'nights' } }),
+      req(ID.r4, 'Legacy On Hold', '2026-02-04T10:00:00.400Z', { status: 'on_hold', employmentType: 'part_time', partTimeDetails: { weeklyHours: '20', workingHours: 'flexible' }, departmentId: oid(ID.d1) }),
+      req(ID.r5, 'Closed Role Beta', '2026-02-05T10:00:00.500Z', { status: 'closed', closedAt: at('2026-03-20T00:00:00Z'), employmentType: 'full_time', fullTimeDetails: { workingHours: '10-6' } }),
+      req(ID.r6, '100%_Role (draft)', '2026-02-06T10:00:00.600Z', { status: 'draft' }),
+    ],
+  }),
+
+  steps: [
+    { name: 'find by id: everything stored', run: (r) => r.findById(ID.r1) },
+    { name: 'find by id: only the basics', run: (r) => r.findById(ID.r6) },
+    { name: 'find by id: each kind of details', run: async (r) => [await r.findById(ID.r2), await r.findById(ID.r3), await r.findById(ID.r4), await r.findById(ID.r5)] },
+    { name: 'find by id: capital letters', run: (r) => r.findById(ID.r1.toUpperCase()) },
+    { name: 'find by id: unknown', run: (r) => r.findById(ID.unknown) },
+    { name: 'find by id: invalid', run: (r) => r.findById('nope') },
+    { name: 'find with department', run: (r) => r.findByIdWithDepartment(ID.r1) },
+    { name: 'find with department: department with no description', run: (r) => r.findByIdWithDepartment(ID.r2) },
+    { name: 'find with department: none set', run: (r) => r.findByIdWithDepartment(ID.r6) },
+    { name: 'find with department: unknown', run: (r) => r.findByIdWithDepartment(ID.unknown) },
+    { name: 'find fields', run: (r) => r.findFields(ID.r1, 'title employmentType location status') },
+    { name: 'find fields: one that is not stored', run: (r) => r.findFields(ID.r6, 'scorecardId title') },
+    { name: 'find fields: unknown', run: (r) => r.findFields(ID.unknown, 'title') },
+    { name: 'find public view', run: (r) => r.findPublicView(ID.r1) },
+    { name: 'find public view: basics', run: (r) => r.findPublicView(ID.r6) },
+    { name: 'find public view: unknown', run: (r) => r.findPublicView(ID.unknown) },
+    { name: 'titles and statuses', run: (r) => r.listTitlesAndStatuses([ID.r1, ID.r3, ID.unknown]) },
+    { name: 'titles and statuses: none', run: (r) => r.listTitlesAndStatuses([]) },
+    { name: 'titles and statuses: invalid', run: (r) => r.listTitlesAndStatuses(['nope']) },
+    { name: 'titles sorted (byte order: capitals first)', run: (r) => r.listTitles([ID.r1, ID.r2, ID.r3, ID.r4, ID.r5, ID.r6]) },
+    { name: 'titles and stages', run: (r) => r.findTitlesAndStages([ID.r1, ID.r2]) },
+    { name: 'find open by title', run: (r) => r.findOpenByTitle('senior engineer') },
+    { name: 'find open by title: ALL CAPS', run: (r) => r.findOpenByTitle('SENIOR ENGINEER') },
+    { name: 'find open by title: not open', run: (r) => r.findOpenByTitle('sales closer') },
+    { name: 'find open by title: leaving out itself', run: (r) => r.findOpenByTitle('Senior Engineer', { exceptId: ID.r1 }) },
+    { name: 'find open by title: only part of the title', run: (r) => r.findOpenByTitle('Senior') },
+    { name: 'find open by title: % is not a wildcard', run: (r) => r.findOpenByTitle('Senior%') },
+    { name: 'find open by title: regex characters', run: (r) => r.findOpenByTitle('100%_Role (draft)') },
+    { name: 'find open by title: invalid exceptId', run: (r) => r.findOpenByTitle('x', { exceptId: 'nope' }) },
+    { name: 'list all (newest first, with department names)', run: (r) => r.list() },
+    { name: 'list: by status', run: (r) => r.list({ status: 'closed' }) },
+    { name: 'list: paused includes on hold', run: (r) => r.list({ status: 'paused' }) },
+    { name: 'list: by department', run: (r) => r.list({ departmentId: ID.d1 }) },
+    { name: 'list: status and department', run: (r) => r.list({ status: 'open', departmentId: ID.d1 }) },
+    { name: 'list: invalid department', run: (r) => r.list({ departmentId: 'nope' }) },
+    { name: 'closed before a date', run: (r) => r.listClosedBefore(new Date('2026-03-01T00:00:00Z')) },
+    { name: 'closed before a later date', run: (r) => r.listClosedBefore(new Date('2026-12-01T00:00:00Z')) },
+    { name: 'closed before: exactly on the closing time', run: (r) => r.listClosedBefore(new Date('2026-02-20T00:00:00.500Z')) },
+    { name: 'closed before: invalid date', run: (r) => r.listClosedBefore('not a date') },
+    { name: 'create: only the required values (defaults fill in)', run: (r) => r.create({ title: 'Brand New Job', jobDescription: 'Do things' }) },
+    { name: 'create: title is trimmed', run: (r) => r.create({ title: '   Trimmed Title   ', jobDescription: 'Do things' }) },
+    { name: 'create: a lot given', run: (r) => r.create({ title: 'Everything Job', jobDescription: 'All of it', employmentType: 'temporary', temporaryDetails: { startDate: '2026-05-01', workingHours: 'days' }, workplaceType: 'onsite', officeLocation: 'Karachi', location: 'Karachi', status: 'draft', departmentId: ID.d2, pipelineTemplateId: hex(78), pipelineTemplateName: 'Custom', stages: [{ key: 'a', label: 'A', stageType: 'final', inputType: 'pass_fail', order: 1 }, stage('b', 2, { weight: 0.1 + 0.2 })], hireThreshold: 4, maybeThreshold: '3.3', initialScreeningCriteria: [{ criteria: 'C' }], questionnaire: [{ question: 'Q' }], interviewAvailability: { startDate: '2026-06-01T00:00:00Z' }, applicationDeadline: '2026-07-01T12:00:00.123Z', aiScreeningEnabled: false, createdBy: ID.user, closedAt: '2026-08-01' }) },
+    { name: 'create: details kinds', run: async (r) => [await r.create({ title: 'Part Time Job', jobDescription: 'x', employmentType: 'part_time', partTimeDetails: { weeklyHours: '10' } }), await r.create({ title: 'Intern Job', jobDescription: 'x', employmentType: 'internship', internshipDetails: {} }), await r.create({ title: 'Full Time Job', jobDescription: 'x', fullTimeDetails: {} })] },
+    { name: 'create: unknown fields dropped', run: (r) => r.create({ title: 'Extras Job', jobDescription: 'x', surprise: 1, stages: [{ key: 'k', label: 'L', stageType: 'final', inputType: 'pass_fail', order: 1, extra: 2 }] }) },
+    { name: 'create: nothing', run: (r) => r.create({}) },
+    { name: 'create: title too short', run: (r) => r.create({ title: 'abc', jobDescription: 'x' }) },
+    { name: 'create: title only spaces', run: (r) => r.create({ title: '      ', jobDescription: 'x' }) },
+    { name: 'create: values not allowed', run: (r) => r.create({ title: 'Bad Values', jobDescription: 'x', employmentType: 'forever', workplaceType: 'moon', status: 'maybe', hireThreshold: 9, maybeThreshold: 0 }) },
+    { name: 'create: stage problems', run: (r) => r.create({ title: 'Bad Stages', jobDescription: 'x', stages: [{}, { key: 'k', label: 'L', stageType: 'zzz', inputType: 'pass_fail', order: 1, passThreshold: 7 }] }) },
+    { name: 'create: criteria and questionnaire problems', run: (r) => r.create({ title: 'Bad Lists', jobDescription: 'x', initialScreeningCriteria: [{ requirement: 'r' }], questionnaire: [{ idealAnswer: 'a' }] }) },
+    { name: 'create: internship pay not allowed', run: (r) => r.create({ title: 'Bad Intern', jobDescription: 'x', internshipDetails: { paidStatus: 'maybe' } }) },
+    { name: 'create: invalid ids and dates', run: (r) => r.create({ title: 'Bad Ids', jobDescription: 'x', departmentId: 'nope', createdBy: 'nope', applicationDeadline: 'not a date' }) },
+    { name: 'create: no title and bad status', run: (r) => r.create({ jobDescription: 'x', status: 'maybe' }) },
+    { name: 'save: change a stage in place', run: async (r) => { const q = await r.findById(ID.r1); q.stages[0].enabled = false; q.stages[1].weight = 1; q.status = 'paused'; await r.save(q); return q; } },
+    { name: 'save: nothing changed (nothing to write)', run: async (r) => { const q = await r.findById(ID.r1); await r.save(q); return q; } },
+    { name: 'save: stages replaced', run: async (r) => { const q = await r.findById(ID.r2); q.stages = [stage('x', 1), stage('y', 2)]; await r.save(q); return q; } },
+    { name: 'save: details replaced', run: async (r) => { const q = await r.findById(ID.r2); q.internshipDetails = { duration: '6 months', paidStatus: 'paid' }; q.closedAt = new Date('2026-09-09T09:09:09.009Z'); await r.save(q); return q; } },
+    { name: 'save: criteria changed', run: async (r) => { const q = await r.findById(ID.r1); q.initialScreeningCriteria.push({ criteria: 'Extra' }); q.questionnaire[0].idealAnswer = 'Changed'; await r.save(q); return q; } },
+    { name: 'save: with the department filled in', run: async (r) => { const q = await r.findByIdWithDepartment(ID.r4); q.status = 'open'; await r.save(q); return q; } },
+    { name: 'save: invalid title', run: async (r) => { const q = await r.findById(ID.r6); q.title = 'ab'; await r.save(q); return q; } },
+    { name: 'save: invalid threshold and status', run: async (r) => { const q = await r.findById(ID.r6); q.hireThreshold = 11; q.status = 'zzz'; await r.save(q); return q; } },
+    { name: 'save: read afterwards', run: async (r) => [await r.findById(ID.r1), await r.findById(ID.r2), await r.findById(ID.r4)] },
+    { name: 'set scorecard', run: (r) => r.setScorecard(ID.r2, ID.sc2) },
+    { name: 'set scorecard: same again (the update time still moves)', run: (r) => r.setScorecard(ID.r2, ID.sc2) },
+    { name: 'set scorecard: to nothing', run: (r) => r.setScorecard(ID.r2, null) },
+    { name: 'set scorecard: unknown job opening (nothing happens)', run: (r) => r.setScorecard(ID.unknown, ID.sc1) },
+    { name: 'set scorecard: invalid job opening id', run: (r) => r.setScorecard('nope', ID.sc1) },
+    { name: 'set scorecard: invalid scorecard id', run: (r) => r.setScorecard(ID.r2, 'nope') },
+    { name: 'read after setting scorecards', run: async (r) => { const q = await r.findById(ID.r2); if (q.scorecardId === null) delete q.scorecardId; return q; } },
+    { name: 'remove', run: (r) => r.remove(ID.r6) },
+    { name: 'remove: already gone', run: (r) => r.remove(ID.r6) },
+    { name: 'remove: invalid', run: (r) => r.remove('nope') },
+    { name: 'list at the end', run: async (r) => (await r.list()).map((q) => ({ _id: q._id, title: q.title, status: q.status })).sort((a, b) => a.title.localeCompare(b.title)) },
+  ],
+
+  state: tableState('requisition'),
+};

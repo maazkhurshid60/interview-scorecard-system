@@ -90,6 +90,11 @@ function revive(spec, value) {
     if (!isPlainObject(value)) return value;
     const out = {};
     for (const [key, inner] of Object.entries(value)) out[key] = spec.fields[key] ? revive(spec.fields[key], inner) : inner;
+    for (const [key, inner] of Object.entries(spec.fields)) { // what is missing gets its default, as Mongoose fills it in on loading
+      if (out[key] !== undefined) continue;
+      const fallback = inner.kind === 'array' ? [] : defaultOf(inner);
+      if (fallback !== undefined) out[key] = fallback;
+    }
     return out;
   }
   return value;
@@ -160,7 +165,8 @@ function castValue(spec, value, path, problems) {
     case 'subdoc': case 'nested': {
       if (value === undefined || value === null) return value;
       if (!isPlainObject(value)) { note(`Cast to Embedded failed for value ${JSON.stringify(value)} (type ${typeof value}) at path "${leaf}"`); return undefined; }
-      return castObject(spec, value, path, problems);
+      const object = castObject(spec, value, path, problems);
+      return spec.kind === 'nested' && !Object.keys(object).length ? undefined : object; // an empty group is not kept, as Mongoose does not keep it
     }
     case 'array': {
       if (value === undefined || value === null) return value;
@@ -182,6 +188,7 @@ function castObject(spec, input, path, problems) {
   Object.defineProperty(out, PROVIDED, { value: Object.keys(input), enumerable: false });
   for (const [key, inner] of Object.entries(spec.fields)) {
     let value = castValue(inner, input[key], [...path, key], problems);
+    if (value === undefined && inner.kind === 'array') value = []; // a list is never missing: Mongoose gives an empty one
     if (value === undefined && inner.kind === 'nested') { // a group shows its leaf defaults even when nothing was given (Mongoose does the same)
       const defaults = castObject(inner, {}, [...path, key], problems);
       if (Object.keys(defaults).length) value = defaults;
@@ -210,7 +217,7 @@ function checkValue(spec, value, path, problems, { inSubdoc }) {
   if (spec.enum && !spec.enum.includes(value)) add(`\`${value}\` is not a valid enum value for path \`${leaf}\`.`);
   else if (spec.min !== undefined && value < spec.min) add(`Path \`${leaf}\` (${value}) is less than minimum allowed value (${spec.min}).`);
   else if (spec.max !== undefined && value > spec.max) add(`Path \`${leaf}\` (${value}) is more than maximum allowed value (${spec.max}).`);
-  else if (spec.minlength !== undefined && String(value).length < spec.minlength) add(`Path \`${leaf}\` (\`${value}\`) is shorter than the minimum allowed length (${spec.minlength}).`);
+  else if (spec.minlength !== undefined && String(value).length < spec.minlength) add(`Path \`${leaf}\` (\`${value}\`, length ${String(value).length}) is shorter than the minimum allowed length (${spec.minlength}).`);
   else if (spec.validate && !spec.validate(value)) add(spec.message || `Validator failed for path \`${leaf}\` with value \`${value}\``);
 }
 
@@ -262,7 +269,7 @@ export function assign(model, doc, changes) {
     let cast;
     if (spec.kind === 'nested' || spec.kind === 'subdoc') {
       cast = castValue(spec, value, path, problems);
-      if (spec.kind === 'nested' && isPlainObject(cast)) { // a replaced group: what is not given is gone
+      if (spec.kind === 'nested' && isPlainObject(value)) { // a replaced group: what is not given is gone
         removeGroup(model, next, path, spec);
         forced = true;
       }
