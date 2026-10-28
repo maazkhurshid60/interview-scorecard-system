@@ -64,14 +64,18 @@ One known, harmless difference: a MongoDB document that never had a value for a 
 department with no `description`) is read by the app without that field, while its Postgres copy has the default. Records
 the app writes always have it.
 
-Two more, both about JSON values (settings, audit entries, template stages): PostgreSQL keeps the keys of an object in its
-own order, not the order they were written in; and a value that was stored as an explicit `null` by the old data copy is
-read as "no value" (the app treats both the same). Dates inside a JSON value come back as text, not as dates.
+One more, about JSON values (settings, audit entries, template stages): PostgreSQL keeps the keys of an object in its own
+order, not the order they were written in, and dates inside a JSON value come back as text, not as dates.
 
 Two more, for records that point at each other (a refresh token at its user, an application at its candidate and job
 opening): PostgreSQL enforces the link, so a record cannot point at something that does not exist, and deleting the
-parent deletes the records that point at it. MongoDB allowed both. And a field saved as an explicit `null` is read back as
-"not set" (it was `null` in MongoDB); saving `null` where nothing was set still counts as a change, as before.
+parent deletes the records that point at it. MongoDB allowed both.
+
+**Explicit nulls.** MongoDB told a field saved as `null` from one never set (the ranking sort and the audit screen depend on
+it); an empty column cannot. Every table therefore has a `nullFields` column listing the fields saved as an explicit
+`null`. The data copy fills it, every write keeps it up to date, and reads turn it back into `null`. A field whose default
+is `null` (a disposition, a revoked-at date) needs no note. `npm run parity:real` reads your real data through both
+versions and compares every answer.
 
 The records engine (`postgres/records.js`, with the models described in `postgres/schemas.js`) does for candidates,
 applications, interviews, job openings and scorecards what Mongoose did: defaults, checks with Mongoose's own wording, nested

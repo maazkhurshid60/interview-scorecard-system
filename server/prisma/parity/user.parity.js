@@ -1,4 +1,4 @@
-import { oid } from './harness.js';
+import { oid, tableState } from './harness.js';
 
 /** Parity scenario for userRepository. */
 
@@ -23,6 +23,7 @@ export default {
       user(ID.tie, 'Tia Tie', 'tia@example.com', { createdAt: new Date('2026-01-05T00:00:00Z') }), // same creation time as the one before
       user(ID.reset, 'Reggie Reset', 'reggie@example.com', { passwordResetTokenHash: 'reset-hash', passwordResetExpiresAt: future, createdAt: new Date('2026-01-06T00:00:00Z') }),
       user(ID.expired, 'Eddie Expired', 'eddie@example.com', { passwordResetTokenHash: 'old-hash', passwordResetExpiresAt: past, createdAt: new Date('2026-01-07T00:00:00Z') }),
+      user(hex(10), 'Nina Null', 'nina@example.com', { passwordChangedAt: null, createdAt: new Date('2026-01-09T00:00:00Z') }),
       user(ID.owner2, 'Oscar Owner', 'oscar@example.com', { role: 'owner', active: false, createdAt: new Date('2026-01-08T00:00:00Z') }),
     ],
   }),
@@ -68,6 +69,9 @@ export default {
     { name: 'update: role and active', run: (r) => r.update(ID.rec, { role: 'interviewer', active: false }) },
     { name: 'update: password and change date', run: (r) => r.update(ID.rec, { passwordHash: 'new-hash', passwordChangedAt: new Date('2026-04-01T10:00:00.750Z') }) },
     { name: 'update: same change date again (nothing to write)', run: (r) => r.update(ID.rec, { passwordChangedAt: new Date('2026-04-01T10:00:00.750Z') }) },
+    { name: 'update: change date set to null', run: (r) => r.update(ID.zed, { passwordChangedAt: null }) },
+    { name: 'update: change date null again (nothing to write)', run: (r) => r.update(ID.zed, { passwordChangedAt: null }) },
+    { name: 'update: change date over a null', run: (r) => r.update(hex(10), { passwordChangedAt: new Date('2026-07-01T00:00:00.5Z') }) },
     { name: 'update: email taken by another', run: (r) => r.update(ID.zed, { email: 'olivia@example.com' }) },
     { name: 'update: email', run: (r) => r.update(ID.zed, { email: 'alpha2@example.com' }) },
     { name: 'update: role not allowed', run: (r) => r.update(ID.zed, { role: 'boss' }) },
@@ -96,7 +100,8 @@ export default {
     { name: 'list all at the end', run: (r) => r.listAll() },
   ],
 
-  state: {
+  state: tableState('user'),
+  oldState: {
     mongo: async ({ mongo }) => sorted((await mongo.collection('users').find().toArray()).map((u) => ({ _id: u._id, name: u.name, email: u.email, passwordHash: u.passwordHash, passwordResetTokenHash: u.passwordResetTokenHash, passwordResetExpiresAt: u.passwordResetExpiresAt, passwordChangedAt: u.passwordChangedAt, role: u.role, active: u.active, createdAt: u.createdAt, updatedAt: u.updatedAt }))),
     postgres: async ({ prisma }) => sorted((await prisma.user.findMany()).map((u) => ({ _id: u.id, name: u.name, email: u.email, passwordHash: u.passwordHash, passwordResetTokenHash: u.passwordResetTokenHash ?? undefined, passwordResetExpiresAt: u.passwordResetExpiresAt ?? undefined, passwordChangedAt: u.passwordChangedAt ?? undefined, role: u.role, active: u.active, createdAt: u.createdAt, updatedAt: u.updatedAt }))),
   },

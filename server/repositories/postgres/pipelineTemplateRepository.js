@@ -1,5 +1,6 @@
 import { prisma } from './client.js';
-import { castBoolean, castId, castNumber, castString, compareBytes, dateParam, jsonParam, newId, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castId, castNumber, castString, compareBytes, dateParam, jsonParam, newId, nullSet, sameJson, translateError, validationError } from './helpers.js';
+import { nullsExpr } from './records.js';
 
 /**
  * Everything the app needs from the database about hiring process templates, on PostgreSQL. It offers exactly the
@@ -26,7 +27,7 @@ const withStageDefaults = (stage) => ({
 const toTemplate = (row) => ({
   _id: row.id,
   name: row.name,
-  ...(hasValue(row.description) ? { description: row.description } : {}),
+  ...(hasValue(row.description) ? { description: row.description } : (nullSet(row).has('description') ? { description: null } : {})),
   isDefault: row.isDefault,
   autoWeights: row.autoWeights,
   stages: (Array.isArray(row.stages) ? row.stages : []).map(withStageDefaults),
@@ -126,9 +127,9 @@ export async function create({ name, description, stages, autoWeights, isDefault
   const now = dateParam(new Date());
   try {
     await prisma.$executeRawUnsafe(
-      `INSERT INTO pipeline_templates (id, name, description, "isDefault", "autoWeights", stages, "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::text::timestamp, $7::text::timestamp)`,
-      id, values.name, values.description ?? null, values.isDefault ?? false, values.autoWeights ?? true, jsonParam(values.stages), now,
+      `INSERT INTO pipeline_templates (id, name, description, "isDefault", "autoWeights", stages, "createdAt", "updatedAt", "nullFields")
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::text::timestamp, $7::text::timestamp, $8::jsonb)`,
+      id, values.name, values.description ?? null, values.isDefault ?? false, values.autoWeights ?? true, jsonParam(values.stages), now, values.description === null ? JSON.stringify(['description']) : null,
     );
   } catch (error) {
     throw translateError(error, { name: values.name }, ['name']);
@@ -153,6 +154,7 @@ export async function update(id, changes = {}) {
     if (!(field in values) || sameJson(values[field], current[field])) continue;
     params.push(field === 'stages' ? jsonParam(values[field]) : (values[field] ?? null));
     sets.push(`"${field}" = $${params.length}${field === 'stages' ? '::jsonb' : ''}`);
+    if (field === 'description') sets.push(`"nullFields" = ${nullsExpr(values.description === null ? { add: ['description'] } : { remove: ['description'] })}`);
   }
   if (!sets.length) return current;
   params.push(dateParam(new Date()));

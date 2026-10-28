@@ -1,4 +1,4 @@
-import { oid } from './harness.js';
+import { oid, tableState } from './harness.js';
 
 /** Parity scenario for refreshTokenRepository. */
 
@@ -20,6 +20,7 @@ export default {
       token(ID.t2, ID.alice, 'hash-2', 'family-a'),
       token(ID.t3, ID.alice, 'hash-3', 'family-b', { usedAt: T }),
       token(ID.t4, ID.bob, 'hash-4', 'family-c', { revokedAt: T }),
+      token(hex(54), ID.bob, 'hash-null-seed', 'family-d', { userAgent: null, ip: null }),
     ],
   }),
 
@@ -30,6 +31,7 @@ export default {
     { name: 'find by hash: revoked token', run: (r) => r.findByHash('hash-4') },
     { name: 'find by hash: other case (no match)', run: (r) => r.findByHash('HASH-1') },
     { name: 'find by hash: with % (no wildcard)', run: (r) => r.findByHash('hash-%') },
+    { name: 'find by hash: explicit null user agent', run: (r) => r.findByHash('hash-null-seed') },
     { name: 'find by hash: unknown', run: (r) => r.findByHash('nothing') },
     { name: 'find by id', run: (r) => r.findById(ID.t1) },
     { name: 'find by id: capital letters', run: (r) => r.findById(ID.t1.toUpperCase()) },
@@ -38,6 +40,7 @@ export default {
     { name: 'create: everything', run: (r) => r.create({ userId: ID.bob, tokenHash: 'hash-new', familyId: 'family-n', familyStartedAt: new Date('2026-02-01T00:00:00.5Z'), expiresAt: future, userAgent: 'Chrome', ip: '10.0.0.9' }) },
     { name: 'create: no user agent or address', run: (r) => r.create({ userId: ID.alice, tokenHash: 'hash-new2', familyId: 'family-n', familyStartedAt: T, expiresAt: future }) },
     { name: 'create: dates as text', run: (r) => r.create({ userId: ID.alice, tokenHash: 'hash-new3', familyId: 'family-n', familyStartedAt: '2026-02-01T00:00:00.000Z', expiresAt: '2030-01-01' }) },
+    { name: 'create: explicit null user agent and address', run: (r) => r.create({ userId: ID.alice, tokenHash: 'hash-null', familyId: 'f', familyStartedAt: T, expiresAt: future, userAgent: null, ip: null }) },
     { name: 'create: same hash again', run: (r) => r.create({ userId: ID.alice, tokenHash: 'hash-new', familyId: 'family-z', familyStartedAt: T, expiresAt: future }) },
     { name: 'create: nothing at all', run: (r) => r.create({}) },
     { name: 'create: empty hash', run: (r) => r.create({ userId: ID.alice, tokenHash: '', familyId: 'f', familyStartedAt: T, expiresAt: future }) },
@@ -61,7 +64,8 @@ export default {
     { name: 'read after revoking', run: async (r) => [await r.findByHash('hash-1'), await r.findByHash('hash-3'), await r.findByHash('hash-4'), await r.findByHash('hash-new')] },
   ],
 
-  state: {
+  state: tableState('refreshToken'),
+  oldState: {
     mongo: async ({ mongo }) => sorted((await mongo.collection('refreshtokens').find().toArray()).map((t) => ({ _id: t._id, userId: t.userId, tokenHash: t.tokenHash, familyId: t.familyId, familyStartedAt: t.familyStartedAt, expiresAt: t.expiresAt, usedAt: t.usedAt, revokedAt: t.revokedAt, userAgent: t.userAgent, ip: t.ip, createdAt: t.createdAt }))),
     postgres: async ({ prisma }) => sorted((await prisma.refreshToken.findMany()).map((t) => ({ _id: t.id, userId: t.userId, tokenHash: t.tokenHash, familyId: t.familyId, familyStartedAt: t.familyStartedAt, expiresAt: t.expiresAt, usedAt: t.usedAt, revokedAt: t.revokedAt, userAgent: t.userAgent ?? undefined, ip: t.ip ?? undefined, createdAt: t.createdAt }))),
   },

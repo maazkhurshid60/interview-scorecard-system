@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castError, castIdField, castString, dateParam, jsonOut, jsonParam, newId, validationError } from './helpers.js';
+import { castError, castIdField, castString, dateParam, jsonOut, jsonParam, newId, nullSet, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about the audit log, on PostgreSQL. It offers exactly the functions of
@@ -7,7 +7,7 @@ import { castError, castIdField, castString, dateParam, jsonOut, jsonParam, newI
  * raw SQL as text (Prisma would round numbers that need 17 digits) and read back as text.
  */
 
-const COLUMNS = `id, action::text AS action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue"::text AS "oldValueText", "newValue"::text AS "newValueText", reason, "timestamp"`;
+const COLUMNS = `id, action::text AS action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue"::text AS "oldValueText", "newValue"::text AS "newValueText", reason, "timestamp", "nullFields"`;
 const ACTIONS = ['score_override', 'score_approve', 'question_edit', 'stage_toggle', 'weight_change', 'disposition_change', 'final_decision',
   'provider_change', 'key_change', 'transcript_upload', 'consent_capture', 'retention_purge', 'requisition_status_change', 'candidate_update',
   'requisition_duplicated', 'offer_letter_sent', 'requisition_deleted'];
@@ -16,19 +16,23 @@ const has = (value) => value !== null && value !== undefined;
 
 /** An audit row as the app has always seen it. An empty optional value is left out, as MongoDB left it out. */
 const toEntry = (row) => {
-  const oldValue = jsonOut(row.oldValueText);
-  const newValue = jsonOut(row.newValueText);
+  const nulls = nullSet(row);
+  const empty = (field) => (nulls.has(field) ? null : undefined); // a field saved as an explicit null reads as null
+  const stored = (text, field) => { const value = jsonOut(text); return value === undefined ? empty(field) : value; };
+  const oldValue = stored(row.oldValueText, 'oldValue');
+  const newValue = stored(row.newValueText, 'newValue');
+  const text = (field) => (has(row[field]) ? { [field]: row[field] } : (nulls.has(field) ? { [field]: null } : {}));
   return {
     _id: row.id,
     action: row.action,
-    ...(has(row.userId) ? { userId: row.userId } : {}),
-    ...(has(row.requisitionId) ? { requisitionId: row.requisitionId } : {}),
-    ...(has(row.applicationId) ? { applicationId: row.applicationId } : {}),
-    ...(has(row.targetType) ? { targetType: row.targetType } : {}),
-    ...(has(row.targetId) ? { targetId: row.targetId } : {}),
+    ...text('userId'),
+    ...text('requisitionId'),
+    ...text('applicationId'),
+    ...text('targetType'),
+    ...text('targetId'),
     ...(oldValue !== undefined ? { oldValue } : {}),
     ...(newValue !== undefined ? { newValue } : {}),
-    ...(has(row.reason) ? { reason: row.reason } : {}),
+    ...text('reason'),
     timestamp: row.timestamp,
   };
 };
@@ -61,12 +65,13 @@ export async function record(entry = {}) {
   }
   if (Object.keys(problems).length) throw validationError('AuditLog', problems);
 
+  const nulled = ['userId', 'requisitionId', 'applicationId', 'targetType', 'targetId', 'reason', 'oldValue', 'newValue'].filter((field) => entry[field] === null).sort();
   const id = newId();
   await prisma.$executeRawUnsafe(
-    `INSERT INTO audit_logs (id, action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue", "newValue", reason, "timestamp")
-     VALUES ($1, $2::"AuditAction", $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11::text::timestamp)`,
+    `INSERT INTO audit_logs (id, action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue", "newValue", reason, "timestamp", "nullFields")
+     VALUES ($1, $2::"AuditAction", $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11::text::timestamp, $12::jsonb)`,
     id, action, userId ?? null, requisitionId ?? null, applicationId ?? null, targetType ?? null, targetId ?? null,
-    jsonParam(entry.oldValue), jsonParam(entry.newValue), reason ?? null, dateParam(when),
+    entry.oldValue === null ? null : jsonParam(entry.oldValue), entry.newValue === null ? null : jsonParam(entry.newValue), reason ?? null, dateParam(when), nulled.length ? JSON.stringify(nulled) : null,
   );
   const [row] = await prisma.$queryRawUnsafe(`SELECT ${COLUMNS} FROM audit_logs WHERE id = $1`, id);
   return toEntry(row);

@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castId, compareBytes, escapeLike, newId, requiredMessage, translateError, validationError } from './helpers.js';
+import { castId, compareBytes, escapeLike, newId, nextNulls, nullSet, requiredMessage, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about departments, on PostgreSQL. It offers exactly the functions of
@@ -12,7 +12,7 @@ const toDepartment = (row) => ({
   _id: row.id,
   name: row.name,
   description: row.description,
-  ...(row.createdBy !== null && row.createdBy !== undefined ? { createdBy: row.createdBy } : {}),
+  ...(row.createdBy !== null && row.createdBy !== undefined ? { createdBy: row.createdBy } : (nullSet(row).has('createdBy') ? { createdBy: null } : {})),
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });
@@ -62,6 +62,7 @@ export async function create({ name, description, createdBy }) {
         name: cleanName,
         ...(description !== undefined && description !== null ? { description: String(description).trim() } : {}),
         ...(createdBy !== undefined && createdBy !== null ? { createdBy: castId(createdBy, 'createdBy') } : {}),
+        ...(createdBy === null ? { nullFields: nextNulls(null, { add: ['createdBy'] }) } : {}),
       },
     });
     return toDepartment(row);

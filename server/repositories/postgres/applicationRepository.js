@@ -1,6 +1,6 @@
 import { prisma } from './client.js';
 import { castDate, castId, castNumber } from './helpers.js';
-import { assign, buildDoc, findDoc, insertDoc, pick, selectDocs, selectNames, writeChanges } from './records.js';
+import { assign, buildDoc, findDoc, insertDoc, nullsExpr, pick, selectDocs, selectNames, writeChanges } from './records.js';
 import { Application, Candidate } from './schemas.js';
 import { saveEntity, track } from './entity.js';
 
@@ -217,19 +217,19 @@ async function updateOne(id, sets, params) {
 /** Records that the offer letter email was really delivered. */
 export async function markOfferLetterSent(id, at) {
   const when = dateFor(at, 'offerLetterSentAt');
-  await updateOne(id, `"offerLetterDeliveryStatus" = 'sent', "offerLetterSentAt" = $2::text::timestamp`, [when]);
+  await updateOne(id, `"offerLetterDeliveryStatus" = 'sent', "offerLetterSentAt" = $2::text::timestamp, "nullFields" = ${nullsExpr(when === null ? { add: ['offerLetterSentAt'], remove: ['offerLetterDeliveryStatus'] } : { remove: ['offerLetterDeliveryStatus', 'offerLetterSentAt'] })}`, [when]);
 }
 
 /** Records that the onboarding form email was really delivered. */
 export async function markOnboardingFormSent(id, at) {
   const when = dateFor(at, 'onboardingFormSentAt');
-  await updateOne(id, `"onboardingFormDeliveryStatus" = 'sent', "onboardingFormSentAt" = $2::text::timestamp`, [when]);
+  await updateOne(id, `"onboardingFormDeliveryStatus" = 'sent', "onboardingFormSentAt" = $2::text::timestamp, "nullFields" = ${nullsExpr(when === null ? { add: ['onboardingFormSentAt'], remove: ['onboardingFormDeliveryStatus'] } : { remove: ['onboardingFormDeliveryStatus', 'onboardingFormSentAt'] })}`, [when]);
 }
 
 /** Records that the application confirmation email was really delivered. */
 export async function markConfirmationEmailSent(id, at) {
   const when = dateFor(at, 'screeningJob.confirmationEmailSentAt');
-  await updateOne(id, `"screeningConfirmationEmailSentAt" = $2::text::timestamp`, [when]);
+  await updateOne(id, `"screeningConfirmationEmailSentAt" = $2::text::timestamp, "nullFields" = ${nullsExpr(when === null ? { add: ['screeningJob.confirmationEmailSentAt'] } : { remove: ['screeningJob.confirmationEmailSentAt'] })}`, [when]);
 }
 
 /** Saves the changes made to an application that was loaded through this repository (see `entity.js`). */
@@ -247,7 +247,8 @@ export async function listForRanking(requisitionId) {
 export async function setRank(id, rank) {
   const done = castNumber(rank, 'rank');
   if (done.problem) throw Object.assign(new Error(done.problem), { name: 'CastError', kind: 'Number', path: 'rank', value: rank });
-  await updateOne(id, '"rank" = $2::text::double precision', [done.value === null || done.value === undefined ? null : String(done.value)]);
+  const empty = done.value === null || done.value === undefined;
+  await updateOne(id, `"rank" = $2::text::double precision, "nullFields" = ${nullsExpr(empty ? { add: ['rank'] } : { remove: ['rank'] })}`, [empty ? null : String(done.value)]);
 }
 
 // ---- background screening of public applications (see services/applicationProcessor.js) ----
@@ -259,7 +260,8 @@ export async function setRank(id, rank) {
 export async function claimForScreening(id) {
   const now = new Date().toISOString();
   const claimed = await prisma.$queryRawUnsafe(
-    `UPDATE applications SET "screeningStatus" = 'processing', "screeningLockedAt" = $2::text::timestamp, "screeningAttempts" = "screeningAttempts" + 1, "updatedAt" = $2::text::timestamp
+    `UPDATE applications SET "screeningStatus" = 'processing', "screeningLockedAt" = $2::text::timestamp, "screeningAttempts" = "screeningAttempts" + 1, "updatedAt" = $2::text::timestamp,
+       "nullFields" = ${nullsExpr({ remove: ['screeningJob.status', 'screeningJob.lockedAt'] })}
      WHERE id = $1 AND "screeningStatus" IN ('pending', 'processing') RETURNING id`, castId(id, '_id'), now);
   return claimed.length ? full(await findDoc(Application, claimed[0].id)) : null;
 }
@@ -270,7 +272,8 @@ export async function finishScreening(id, { status, lastError }) {
   await prisma.$executeRawUnsafe(
     `UPDATE applications SET "screeningStatus" = $2::"ScreeningStatus", "screeningLastError" = $3,
        "screeningCompletedAt" = CASE WHEN $2::"ScreeningStatus" = 'pending' THEN "screeningCompletedAt" ELSE $4::text::timestamp END,
-       "screeningLockedAt" = NULL, "updatedAt" = $4::text::timestamp WHERE id = $1`, castId(id, '_id'), status, lastError || null, now);
+       "screeningLockedAt" = NULL, "updatedAt" = $4::text::timestamp,
+       "nullFields" = ${nullsExpr({ add: lastError ? [] : ['screeningJob.lastError'], remove: ['screeningJob.status', 'screeningJob.lockedAt', ...(lastError ? ['screeningJob.lastError'] : []), ...(status === 'pending' ? [] : ['screeningJob.completedAt'])] })} WHERE id = $1`, castId(id, '_id'), status, lastError || null, now);
 }
 
 /**
@@ -282,10 +285,12 @@ export async function releaseStaleScreenings({ staleBefore, maxAttempts }) {
   const now = new Date().toISOString();
   await prisma.$transaction([
     prisma.$executeRawUnsafe(
-      `UPDATE applications SET "screeningStatus" = 'failed', "screeningCompletedAt" = $3::text::timestamp, "screeningLastError" = 'Stopped: processing kept being interrupted.', "screeningLockedAt" = NULL, "updatedAt" = $3::text::timestamp
+      `UPDATE applications SET "screeningStatus" = 'failed', "screeningCompletedAt" = $3::text::timestamp, "screeningLastError" = 'Stopped: processing kept being interrupted.', "screeningLockedAt" = NULL, "updatedAt" = $3::text::timestamp,
+         "nullFields" = ${nullsExpr({ remove: ['screeningJob.status', 'screeningJob.completedAt', 'screeningJob.lastError', 'screeningJob.lockedAt'] })}
        WHERE "screeningStatus" = 'processing' AND "screeningLockedAt" < $1::text::timestamp AND "screeningAttempts" >= $2`, before, maxAttempts, now),
     prisma.$executeRawUnsafe(
-      `UPDATE applications SET "screeningStatus" = 'pending', "screeningLockedAt" = NULL, "updatedAt" = $3::text::timestamp
+      `UPDATE applications SET "screeningStatus" = 'pending', "screeningLockedAt" = NULL, "updatedAt" = $3::text::timestamp,
+         "nullFields" = ${nullsExpr({ remove: ['screeningJob.status', 'screeningJob.lockedAt'] })}
        WHERE "screeningStatus" = 'processing' AND "screeningLockedAt" < $1::text::timestamp AND "screeningAttempts" < $2`, before, maxAttempts, now),
   ]);
 }

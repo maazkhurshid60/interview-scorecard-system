@@ -1,4 +1,4 @@
-import { oid } from './harness.js';
+import { oid, tableState } from './harness.js';
 
 /** Parity scenario for auditLogRepository. */
 
@@ -33,6 +33,8 @@ export default {
       entry(8, 'stage_toggle', '2026-03-08T10:00:00.008Z', { user: ID.alice, req: ID.req1, newValue: false }),
       entry(9, 'final_decision', '2026-03-09T10:00:00.009Z', { user: ID.bob, req: ID.req2, app: ID.app2, reason: '100% sure_' }),
       entry(10, 'offer_letter_sent', '2026-03-10T10:00:00.010Z', { user: ID.alice, app: ID.app3 }),
+      log(11, 'key_change', '2026-03-11T10:00:00.011Z', { userId: null, oldValue: null, newValue: 5, reason: null, targetId: null }),
+      log(12, 'key_change', '2026-03-12T10:00:00.012Z', { requisitionId: oid(ID.req1), oldValue: 'x', newValue: null }),
     ],
   }),
 
@@ -67,6 +69,8 @@ export default {
     { name: 'record: text and list values', run: (r) => r.record({ action: 'stage_toggle', oldValue: 'text', newValue: [1, 2] }) },
     { name: 'record: ids as capital letters', run: (r) => r.record({ action: 'stage_toggle', userId: ID.bob.toUpperCase() }) },
     { name: 'record: a number as target id', run: (r) => r.record({ action: 'stage_toggle', targetId: 42 }) },
+    { name: 'record: explicit nulls', run: (r) => r.record({ action: 'key_change', userId: null, requisitionId: null, applicationId: null, targetType: null, targetId: null, oldValue: null, newValue: null, reason: null }) },
+    { name: 'record: some explicit nulls', run: (r) => r.record({ action: 'key_change', oldValue: null, newValue: 1, userId: ID.alice, reason: null }) },
     { name: 'record: no action', run: (r) => r.record({ userId: ID.alice }) },
     { name: 'record: empty action', run: (r) => r.record({ action: '' }) },
     { name: 'record: action not allowed', run: (r) => r.record({ action: 'made_up' }) },
@@ -87,7 +91,8 @@ export default {
     { name: 'search at the end', run: (r) => r.search({ page: 1, limit: 100 }) },
   ],
 
-  state: {
+  state: tableState('auditLog'),
+  oldState: {
     mongo: async ({ mongo }) => sorted((await mongo.collection('auditlogs').find().toArray()).map((a) => ({ _id: a._id, action: a.action, userId: a.userId, requisitionId: a.requisitionId, applicationId: a.applicationId, targetType: a.targetType, targetId: a.targetId, oldValue: a.oldValue, newValue: a.newValue, reason: a.reason, timestamp: a.timestamp }))),
     postgres: async ({ prisma }) => sorted((await prisma.$queryRawUnsafe(`SELECT id, action::text AS action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue"::text AS o, "newValue"::text AS n, reason, "timestamp" FROM audit_logs`)).map((a) => ({ _id: a.id, action: a.action, userId: a.userId ?? undefined, requisitionId: a.requisitionId ?? undefined, applicationId: a.applicationId ?? undefined, targetType: a.targetType ?? undefined, targetId: a.targetId ?? undefined, oldValue: a.o === null ? undefined : JSON.parse(a.o), newValue: a.n === null ? undefined : JSON.parse(a.n), reason: a.reason ?? undefined, timestamp: a.timestamp }))),
   },

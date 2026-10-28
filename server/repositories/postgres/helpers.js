@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import { inspect } from 'node:util';
+import prismaPkg from '@prisma/client';
+
+const { Prisma } = prismaPkg;
 
 /**
  * Small pieces every PostgreSQL repository needs, so that it behaves exactly like its MongoDB twin: ids that look like
@@ -193,4 +196,18 @@ export function castDate(value, path) {
   else if (typeof value === 'string') date = new Date(!Number.isNaN(Number(value)) && (Number(value) >= 275761 || Number(value) < 0) ? Number(value) : value);
   else date = new Date(NaN);
   return Number.isNaN(date.getTime()) ? { problem: castFailureMessage('date', path, value) } : { value: date };
+}
+
+// ---------------------------------------------------------------------------------------------- explicit nulls
+
+/**
+ * MongoDB told a field saved as an explicit `null` from one that was never set; an empty column cannot. Each table has a
+ * `nullFields` column listing the paths saved as an explicit null.
+ */
+export const nullSet = (row) => new Set(Array.isArray(row && row.nullFields) ? row.nullFields : []);
+
+/** The new `nullFields` value for a Prisma write: the current list plus the paths in `add`, minus those in `remove`. */
+export function nextNulls(current, { add = [], remove = [] } = {}) {
+  const list = [...new Set([...(Array.isArray(current) ? current : []), ...add])].filter((path) => add.includes(path) || !remove.includes(path)).sort();
+  return list.length ? list : Prisma.DbNull;
 }

@@ -123,6 +123,11 @@ for (const [modelName, delegate] of Object.entries(MODEL_TO_DELEGATE)) {
       else if (info.instance === 'Boolean') ok = actual === (expected === 'true' ? true : expected === 'false' ? false : expected);
       else ok = actual === (typeof expected === 'string' ? expected : String(expected)); // String and enums
       if (!ok) addProblem(modelName, id, target, canon(expected), actual instanceof Date ? actual.toISOString() : actual);
+      // a field stored as an explicit null must be recorded as one (unless its Mongoose default is null), and nothing else may be
+      const shouldBeRecorded = raw === null && !repairedFields.has(`${id}:${target}`) && !(info.options && info.options.default === null);
+      const nullPath = group ? target : p;
+      const isRecorded = Array.isArray(row.nullFields) && row.nullFields.includes(nullPath);
+      if (shouldBeRecorded !== isRecorded) addProblem(modelName, id, `${nullPath} (explicit null)`, shouldBeRecorded ? 'recorded' : 'not recorded', isRecorded ? 'recorded' : 'not recorded');
     }
   }
   // rows in Postgres that are not in MongoDB at all

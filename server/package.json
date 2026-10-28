@@ -18,6 +18,7 @@
     "migrate:postgres": "node prisma/migrate/migrate.js",
     "verify:postgres": "node prisma/migrate/verify.js",
     "parity": "node prisma/parity/run.js",
+    "parity:real": "node prisma/parity/real-data.js",
     "try:department": "node prisma/parity/try-department.js"
   },
   "dependencies": {

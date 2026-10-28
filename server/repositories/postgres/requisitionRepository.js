@@ -1,6 +1,6 @@
 import { prisma } from './client.js';
 import { castDate, castId, castIdField, compareBytes, escapeLike } from './helpers.js';
-import { buildDoc, findDoc, insertDoc, pick, selectDocs, selectNames } from './records.js';
+import { buildDoc, findDoc, insertDoc, nullsExpr, pick, selectDocs, selectNames } from './records.js';
 import { saveEntity, track } from './entity.js';
 import { Requisition } from './schemas.js';
 
@@ -120,7 +120,8 @@ export async function setScorecard(id, scorecardId) {
   const requisitionId = castId(id, '_id');
   const target = castIdField(scorecardId, 'scorecardId');
   if (target.problem) throw Object.assign(new Error(target.problem.replace(' because of "BSONError"', '')), { name: 'CastError', kind: 'ObjectId', path: 'scorecardId', value: scorecardId });
-  await prisma.$executeRawUnsafe('UPDATE requisitions SET "scorecardId" = $2, "updatedAt" = $3::text::timestamp WHERE id = $1', requisitionId, target.value ?? null, new Date().toISOString());
+  const empty = target.value === null || target.value === undefined;
+  await prisma.$executeRawUnsafe(`UPDATE requisitions SET "scorecardId" = $2, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(empty ? { add: ['scorecardId'] } : { remove: ['scorecardId'] })} WHERE id = $1`, requisitionId, empty ? null : target.value, new Date().toISOString());
 }
 
 /** Deletes one job opening (and, with it, its applications, interviews and scorecards, which PostgreSQL removes by itself). */

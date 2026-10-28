@@ -48,7 +48,7 @@ export const MODELS = [
     s('jobDescription', REQ), e('status', 'RequisitionStatus', { def: 'open' }),
     s('departmentId', { softParent: 'department' }), s('pipelineTemplateId'), s('pipelineTemplateName'), j('stages', { def: [] }), s('scorecardId'),
     n('hireThreshold', { def: 3.5 }), n('maybeThreshold', { def: 3 }), j('initialScreeningCriteria', { def: [] }), j('questionnaire', { def: [] }),
-    j('interviewAvailability'), d('applicationDeadline'), b('aiScreeningEnabled', { def: true }), d('closedAt'), s('createdBy'),
+    j('interviewAvailability'), d('applicationDeadline', { defNull: true }), b('aiScreeningEnabled', { def: true }), d('closedAt'), s('createdBy'),
   ] },
   { delegate: 'scorecard', collection: 'scorecards', timestamps: 'both', fields: [
     s('requisitionId', { ...REQ, parent: 'requisition' }), b('generatedByAI', { def: true }), j('stages', { def: [] }),
@@ -60,7 +60,7 @@ export const MODELS = [
     d('screeningLockedAt', { from: 'screeningJob.lockedAt' }), d('screeningCompletedAt', { from: 'screeningJob.completedAt' }),
     s('screeningLastError', { from: 'screeningJob.lastError' }), d('screeningConfirmationEmailSentAt', { from: 'screeningJob.confirmationEmailSentAt' }),
     j('stageProgress', { def: [] }), j('initialScreening'),
-    n('weightedTotal'), b('allGatesPassed'), e('disposition', 'Disposition'), n('rank'), e('finalDecision', 'FinalDecision'), s('finalDecisionBy'), s('rejectionReason'),
+    n('weightedTotal'), b('allGatesPassed'), e('disposition', 'Disposition', { defNull: true }), n('rank'), e('finalDecision', 'FinalDecision', { defNull: true }), s('finalDecisionBy'), s('rejectionReason'),
     s('offerLetterUrl'), s('offerLetterPublicId'), s('offerLetterFileName'), n('offerLetterFileSize'), s('offerLetterFileMimeType'), d('offerLetterUploadedAt'),
     s('offerLetterTemplateKey'), j('offerLetterFields'), e('offerLetterDeliveryStatus', 'DeliveryStatus'), d('offerLetterSentAt'),
     e('onboardingFormDeliveryStatus', 'DeliveryStatus'), d('onboardingFormSentAt'),
@@ -76,7 +76,7 @@ export const MODELS = [
   ] },
   { delegate: 'refreshToken', collection: 'refreshtokens', timestamps: 'createdOnly', fields: [
     s('userId', { ...REQ, parent: 'user' }), s('tokenHash', REQ), s('familyId', REQ), d('familyStartedAt', REQ), d('expiresAt', REQ),
-    d('usedAt'), d('revokedAt'), s('userAgent'), s('ip'),
+    d('usedAt', { defNull: true }), d('revokedAt', { defNull: true }), s('userAgent'), s('ip'),
   ] },
   { delegate: 'auditLog', collection: 'auditlogs', timestamps: 'none', fields: [
     e('action', 'AuditAction', REQ), s('userId'), s('requisitionId'), s('applicationId'), s('targetType'), s('targetId'), j('oldValue'), j('newValue'), s('reason'),
@@ -122,6 +122,7 @@ export function toJson(value) {
 export function transform(spec, doc, now = new Date()) {
   const row = { id: idText(doc._id) };
   const notes = []; const blocking = [];
+  const nulls = []; // paths of the fields stored as an explicit null (MongoDB tells that from "not set"; an empty column cannot)
 
   for (const field of spec.fields) {
     const raw = getPath(doc, field.from || field.name);
@@ -132,6 +133,7 @@ export function transform(spec, doc, now = new Date()) {
       else value = undefined;
     } else if (raw === null) {
       value = null;
+      if (!field.defNull) nulls.push(field.from || field.name); // a field whose default is null is not recorded: it reads as null anyway
     } else {
       switch (field.type) {
         case 's':
@@ -179,6 +181,8 @@ export function transform(spec, doc, now = new Date()) {
   for (const name of ['candidateAvailability', 'initialScreening']) {
     if (row[name] && typeof row[name] === 'object' && Object.keys(row[name]).length === 0) delete row[name];
   }
+
+  if (nulls.length) row.nullFields = nulls.sort();
 
   // dates Mongoose manages
   const created = doc.createdAt instanceof Date ? doc.createdAt : null;

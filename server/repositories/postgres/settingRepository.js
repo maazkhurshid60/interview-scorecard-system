@@ -1,5 +1,6 @@
 import { prisma } from './client.js';
-import { compareBytes, dateParam, jsonOut, jsonParam, newId } from './helpers.js';
+import { compareBytes, dateParam, jsonOut, jsonParam, newId, nullSet } from './helpers.js';
+import { nullsExpr } from './records.js';
 
 /**
  * Everything the app needs from the database about settings, on PostgreSQL. It offers exactly the functions of
@@ -7,16 +8,18 @@ import { compareBytes, dateParam, jsonOut, jsonParam, newId } from './helpers.js
  * text (Prisma would round numbers that need 17 digits) and read back as text.
  */
 
-const COLUMNS = `id, "key", "value"::text AS "valueText", description, "updatedAt"`;
+const COLUMNS = `id, "key", "value"::text AS "valueText", description, "updatedAt", "nullFields"`;
 
 /** A settings row as the app has always seen it. An empty value or description is left out, as MongoDB left it out. */
 const toSetting = (row) => {
-  const value = jsonOut(row.valueText);
+  const nulls = nullSet(row);
+  const stored = jsonOut(row.valueText);
+  const value = stored === undefined && nulls.has('value') ? null : stored;
   return {
     _id: row.id,
     key: row.key,
     ...(value !== undefined ? { value } : {}),
-    ...(row.description !== null && row.description !== undefined ? { description: row.description } : {}),
+    ...(row.description !== null && row.description !== undefined ? { description: row.description } : (nulls.has('description') ? { description: null } : {})),
     updatedAt: row.updatedAt,
   };
 };
@@ -57,7 +60,7 @@ export async function updateValue(key, value) {
     const rows = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE "key" = $1 FOR UPDATE`, String(key));
     if (!rows.length) return null;
     const oldValue = toSetting(rows[0]).value;
-    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp WHERE id = $1`, rows[0].id, jsonParam(value), dateParam(new Date()));
+    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(value === null ? { add: ['value'] } : { remove: ['value'] })} WHERE id = $1`, rows[0].id, value === null ? null : jsonParam(value), dateParam(new Date()));
     const [updated] = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE id = $1`, rows[0].id);
     return { oldValue, setting: toSetting(updated) };
   });
@@ -66,8 +69,9 @@ export async function updateValue(key, value) {
 /** Creates the setting if it does not exist yet; an existing one is left untouched. */
 export async function createIfMissing(key, value, description) {
   await prisma.$executeRawUnsafe(
-    `INSERT INTO settings (id, "key", "value", description, "updatedAt") VALUES ($1, $2, $3::jsonb, $4, $5::text::timestamp) ON CONFLICT ("key") DO NOTHING`,
-    newId(), String(key), jsonParam(value), description === undefined ? null : description, dateParam(new Date()),
+    `INSERT INTO settings (id, "key", "value", description, "updatedAt", "nullFields") VALUES ($1, $2, $3::jsonb, $4, $5::text::timestamp, $6::jsonb) ON CONFLICT ("key") DO NOTHING`,
+    newId(), String(key), value === null ? null : jsonParam(value), description === undefined || description === null ? null : description, dateParam(new Date()),
+    (value === null || description === null) ? JSON.stringify([...(description === null ? ['description'] : []), ...(value === null ? ['value'] : [])].sort()) : null,
   );
   return findByKey(key);
 }
@@ -81,7 +85,7 @@ async function changeLocked(key, change) {
     await tx.$executeRawUnsafe(`INSERT INTO settings (id, "key", "updatedAt") VALUES ($1, $2, $3::text::timestamp) ON CONFLICT ("key") DO NOTHING`, newId(), String(key), dateParam(new Date()));
     const [row] = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE "key" = $1 FOR UPDATE`, String(key));
     const next = change(jsonOut(row.valueText), row.id);
-    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp WHERE id = $1`, row.id, jsonParam(next), dateParam(new Date()));
+    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr({ remove: ['value'] })} WHERE id = $1`, row.id, jsonParam(next), dateParam(new Date()));
   });
 }
 

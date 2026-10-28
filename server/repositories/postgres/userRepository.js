@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castBoolean, castDate, castId, castString, compareBytes, newId, translateError, validationError } from './helpers.js';
+import { castBoolean, castDate, castId, castString, compareBytes, newId, nextNulls, nullSet, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about user accounts, on PostgreSQL. It offers exactly the functions of
@@ -14,19 +14,23 @@ const has = (value) => value !== null && value !== undefined;
  * A user row as the app has always seen it. An empty `passwordChangedAt` is left out, as MongoDB left it out. The
  * password-reset fields are only given when asked for (`withReset`), as with the `select: false` of the Mongoose model.
  */
-const toUser = (row, { withReset = false } = {}) => ({
+const toUser = (row, { withReset = false } = {}) => {
+  const nulls = nullSet(row);
+  const optional = (field, wanted = true) => (!wanted ? {} : (has(row[field]) ? { [field]: row[field] } : (nulls.has(field) ? { [field]: null } : {})));
+  return {
   _id: row.id,
   name: row.name,
   email: row.email,
   passwordHash: row.passwordHash,
-  ...(withReset && has(row.passwordResetTokenHash) ? { passwordResetTokenHash: row.passwordResetTokenHash } : {}),
-  ...(withReset && has(row.passwordResetExpiresAt) ? { passwordResetExpiresAt: row.passwordResetExpiresAt } : {}),
-  ...(has(row.passwordChangedAt) ? { passwordChangedAt: row.passwordChangedAt } : {}),
+  ...optional('passwordResetTokenHash', withReset),
+  ...optional('passwordResetExpiresAt', withReset),
+  ...optional('passwordChangedAt'),
   role: row.role,
   active: row.active,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
-});
+  };
+};
 
 const withoutSecrets = (row) => { const { passwordHash, ...user } = toUser(row); void passwordHash; return user; };
 
@@ -127,7 +131,15 @@ export async function update(id, changes = {}) {
   const fields = ['name', 'email', 'role', 'active', 'passwordHash', 'passwordChangedAt'].filter((field) => changes[field] !== undefined);
   const values = build(changes, fields, { creating: false });
   const data = Object.fromEntries(fields.filter((field) => !sameValue(values[field], row[field])).map((field) => [field, values[field]]));
+  // a value saved as an explicit null where none was set is a change (and the reverse); the list of explicit nulls follows
+  const held = nullSet(row);
+  for (const field of fields.filter((f) => f === 'passwordChangedAt')) {
+    if (values[field] === null && !held.has(field)) data[field] = null;
+  }
   if (!Object.keys(data).length) return toUser(row);
+  if ('passwordChangedAt' in data || (fields.includes('passwordChangedAt') && held.has('passwordChangedAt'))) {
+    data.nullFields = nextNulls(row.nullFields, values.passwordChangedAt === null ? { add: ['passwordChangedAt'] } : { remove: ['passwordChangedAt'] });
+  }
   try {
     return toUser(await prisma.user.update({ where: { id: row.id }, data: { ...data, updatedAt: new Date() } }));
   } catch (error) {
@@ -159,7 +171,11 @@ export async function savePasswordResetToken(id, { tokenHash, expiresAt }) {
   const data = {};
   if (!sameValue(hash.value, row.passwordResetTokenHash)) data.passwordResetTokenHash = hash.value ?? null;
   if (!sameValue(expires.value, row.passwordResetExpiresAt)) data.passwordResetExpiresAt = expires.value ?? null;
-  if (Object.keys(data).length) await prisma.user.update({ where: { id: row.id }, data: { ...data, updatedAt: new Date() } });
+  const held = nullSet(row); const add = []; const remove = [];
+  for (const [field, value] of [['passwordResetTokenHash', hash.value], ['passwordResetExpiresAt', expires.value]]) {
+    if (value === null) { add.push(field); if (!held.has(field)) data[field] = null; } else if (value !== undefined) remove.push(field);
+  }
+  if (Object.keys(data).length) await prisma.user.update({ where: { id: row.id }, data: { ...data, nullFields: nextNulls(row.nullFields, { add, remove }), updatedAt: new Date() } });
 }
 
 /** The active user holding this password-reset token hash, if it has not expired yet, or null. */
@@ -180,8 +196,10 @@ export async function completePasswordReset(id, { passwordHash, passwordChangedA
   if (Object.keys(problems).length) throw validationError('User', problems);
   const data = {};
   if (!sameValue(hash.value, row.passwordHash)) data.passwordHash = hash.value;
-  if (row.passwordResetTokenHash !== null) data.passwordResetTokenHash = null;
-  if (row.passwordResetExpiresAt !== null) data.passwordResetExpiresAt = null;
-  if (!sameValue(changed.value, row.passwordChangedAt)) data.passwordChangedAt = changed.value ?? null;
-  if (Object.keys(data).length) await prisma.user.update({ where: { id: row.id }, data: { ...data, updatedAt: new Date() } });
+  const held = nullSet(row);
+  if (row.passwordResetTokenHash !== null || held.has('passwordResetTokenHash')) data.passwordResetTokenHash = null;
+  if (row.passwordResetExpiresAt !== null || held.has('passwordResetExpiresAt')) data.passwordResetExpiresAt = null;
+  if (!sameValue(changed.value, row.passwordChangedAt) || (changed.value === null && !held.has('passwordChangedAt'))) data.passwordChangedAt = changed.value ?? null;
+  const remove = ['passwordResetTokenHash', 'passwordResetExpiresAt', ...(changed.value === null ? [] : ['passwordChangedAt'])];
+  if (Object.keys(data).length) await prisma.user.update({ where: { id: row.id }, data: { ...data, nullFields: nextNulls(row.nullFields, { add: changed.value === null ? ['passwordChangedAt'] : [], remove }), updatedAt: new Date() } });
 }

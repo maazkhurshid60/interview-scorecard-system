@@ -145,6 +145,8 @@ model User {
   updatedAt              DateTime  @updatedAt
 
   refreshTokens RefreshToken[]
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([role])
   @@map("users")
@@ -166,6 +168,8 @@ model RefreshToken {
   createdAt       DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([userId])
   @@index([familyId])
@@ -183,6 +187,8 @@ model Setting {
   value       Json?
   description String?
   updatedAt   DateTime @default(now()) // set by the app when a value changes
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@map("settings")
 }
@@ -201,6 +207,8 @@ model AuditLog {
   newValue      Json?
   reason        String?
   timestamp     DateTime    @default(now())
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([action])
   @@index([requisitionId])
@@ -218,6 +226,8 @@ model Department {
   updatedAt   DateTime @updatedAt
 
   requisitions Requisition[]
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@map("departments")
 }
@@ -232,6 +242,8 @@ model PipelineTemplate {
   stages      Json     @default("[]")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([isDefault])
   @@map("pipeline_templates")
@@ -254,6 +266,8 @@ model Candidate {
   updatedAt          DateTime @updatedAt
 
   applications Application[]
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([name])
   @@index([email])
@@ -296,6 +310,8 @@ model Requisition {
   applications Application[]
   interviews   Interview[]
   scorecards   Scorecard[]
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([title])
   @@index([workplaceType])
@@ -314,6 +330,8 @@ model Scorecard {
   updatedAt     DateTime @updatedAt
 
   requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([requisitionId])
   @@map("scorecards")
@@ -371,6 +389,8 @@ model Application {
   candidate   Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   interviews  Interview[]
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([candidateId])
   @@index([requisitionId])
@@ -419,6 +439,8 @@ model Interview {
 
   application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  nullFields Json? // paths of the fields saved as an explicit null (see repositories/README.md)
+
 
   @@index([applicationId])
   @@index([requisitionId])

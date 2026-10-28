@@ -1,4 +1,4 @@
-import { oid } from './harness.js';
+import { oid, tableState } from './harness.js';
 
 /**
  * Parity scenario for departmentRepository: the same calls on the MongoDB and the PostgreSQL version must give the same
@@ -29,6 +29,7 @@ export default {
       dept(ID.under, 'a_b', { description: '' }),
       dept(ID.emile, 'Émile', { description: 'accented' }),
       dept(ID.support, 'Support', { description: '' }), // no creator stored
+      dept(hex(20), 'Null Creator', { description: '', createdBy: null }),
     ],
     requisitions: [
       job(1, 'Open Job One', 'open', ID.eng), job(2, 'Open Job Two', 'open', ID.eng), job(3, 'Closed Job', 'closed', ID.eng),
@@ -42,6 +43,7 @@ export default {
     { name: 'find by id', run: (r) => r.findById(ID.eng) },
     { name: 'find by id: no creator stored', run: (r) => r.findById(ID.support) },
     { name: 'find by id, capital letters in the id', run: (r) => r.findById(ID.eng.toUpperCase().replace(/0/g, '0')) },
+    { name: 'find by id: explicit null creator', run: (r) => r.findById(hex(20)) },
     { name: 'find by id: unknown', run: (r) => r.findById(ID.unknown) },
     { name: 'find by id: invalid text', run: (r) => r.findById('not-an-id') },
     { name: 'find by id: empty text', run: (r) => r.findById('') },
@@ -61,6 +63,7 @@ export default {
     { name: 'create: spaces around name and description', run: (r) => r.create({ name: '  Marketing  ', description: '  Grows the brand  ', createdBy: ID.user }) },
     { name: 'create: same name again', run: (r) => r.create({ name: 'Marketing', description: '', createdBy: ID.user }) },
     { name: 'create: same name in another case (allowed)', run: (r) => r.create({ name: 'marketing', description: '', createdBy: ID.user }) },
+    { name: 'create: explicit null creator', run: (r) => r.create({ name: 'NullCreator', createdBy: null }) },
     { name: 'create: no description, no creator', run: (r) => r.create({ name: 'Finance' }) },
     { name: 'create: only spaces as name', run: (r) => r.create({ name: '   ', description: '' }) },
     { name: 'create: no name', run: (r) => r.create({}) },
@@ -86,7 +89,8 @@ export default {
   ],
 
   // what is left in the database afterwards (the same fields from both, in a comparable form)
-  state: {
+  state: tableState('department'),
+  oldState: {
     mongo: async ({ mongo }) => ({
       departments: (await mongo.collection('departments').find().toArray()).map((d) => ({ _id: d._id, name: d.name, description: d.description, createdBy: d.createdBy, createdAt: d.createdAt, updatedAt: d.updatedAt })).sort((a, b) => String(a._id).localeCompare(String(b._id))),
       requisitions: (await mongo.collection('requisitions').find().toArray()).map((j) => ({ _id: j._id, title: j.title, status: j.status, departmentId: j.departmentId, updatedAt: j.updatedAt })).sort((a, b) => String(a._id).localeCompare(String(b._id))),

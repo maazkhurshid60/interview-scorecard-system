@@ -1,4 +1,4 @@
-import { oid } from './harness.js';
+import { oid, tableState } from './harness.js';
 
 /** Parity scenario for pipelineTemplateRepository. */
 
@@ -23,6 +23,7 @@ export default {
       tpl(ID.legacy, 'Legacy', { stages: [{ key: 'hr_screen', label: 'HR', stageType: 'hr_screen', inputType: 'transcript', order: 1 }] }), // old data: no enabled, weight, passThreshold, description
       tpl(ID.zeta, 'Zeta', { stages: good }),
       tpl(ID.alpha, 'alpha', { stages: good }),
+      tpl(hex(15), 'Null described', { description: null, stages: good }),
     ],
   }),
 
@@ -35,6 +36,7 @@ export default {
     { name: 'find by id: invalid', run: (r) => r.findById('nope') },
     { name: 'find default', run: (r) => r.findDefault() },
     { name: 'create: full', run: (r) => r.create({ name: 'Sales', description: 'For sales', stages: good, autoWeights: false, isDefault: false }) },
+    { name: 'create: explicit null description', run: (r) => r.create({ name: 'NullDesc', description: null }) },
     { name: 'create: only a name', run: (r) => r.create({ name: 'Bare' }) },
     { name: 'create: defaults for enabled, weight, pass mark', run: (r) => r.create({ name: 'Defaults', stages: [{ key: 'k', label: 'L', stageType: 'final', inputType: 'pass_fail', order: 1 }] }) },
     { name: 'create: 17-digit weights', run: (r) => r.create({ name: 'Weights', stages: [stage('a', 1, { weight: 0.1 + 0.2 }), stage('b', 2, { weight: 0.7 })] }) },
@@ -55,6 +57,9 @@ export default {
     { name: 'update: same values again (nothing to write)', run: (r) => r.update(ID.tech, { name: 'Technical', autoWeights: false }) },
     { name: 'update: nothing at all', run: (r) => r.update(ID.zeta, {}) },
     { name: 'update: description only', run: (r) => r.update(ID.zeta, { description: 'Now described' }) },
+    { name: 'update: description set to null', run: (r) => r.update(ID.zeta, { description: null }) },
+    { name: 'update: description null again (nothing to write)', run: (r) => r.update(ID.zeta, { description: null }) },
+    { name: 'update: description over a null', run: (r) => r.update(hex(15), { description: 'now text' }) },
     { name: 'update: stages', run: (r) => r.update(ID.alpha, { stages: [stage('x', 1, { weight: 0.1 + 0.2 }), stage('y', 2, { weight: 0.7 })] }) },
     { name: 'update: same stages again (nothing to write)', run: (r) => r.update(ID.alpha, { stages: [stage('x', 1, { weight: 0.1 + 0.2 }), stage('y', 2, { weight: 0.7 })] }) },
     { name: 'update: stages with the same content in another key order', run: (r) => r.update(ID.alpha, { stages: [{ order: 1, weight: 0.1 + 0.2, key: 'x', label: 'x', stageType: 'hr_screen', inputType: 'transcript', enabled: true, passThreshold: 3 }, stage('y', 2, { weight: 0.7 })] }) },
@@ -77,7 +82,8 @@ export default {
     { name: 'list all at the end', run: (r) => r.listAll() },
   ],
 
-  state: {
+  state: tableState('pipelineTemplate'),
+  oldState: {
     mongo: async ({ mongo }) => sorted((await mongo.collection('pipelinetemplates').find().toArray()).map((t) => ({ _id: t._id, name: t.name, description: t.description, isDefault: t.isDefault, autoWeights: t.autoWeights, stages: t.stages, createdAt: t.createdAt, updatedAt: t.updatedAt }))),
     postgres: async ({ prisma }) => sorted((await prisma.$queryRawUnsafe(`SELECT id, name, description, "isDefault", "autoWeights", stages::text AS stages, "createdAt", "updatedAt" FROM pipeline_templates`)).map((t) => ({ _id: t.id, name: t.name, description: t.description ?? undefined, isDefault: t.isDefault, autoWeights: t.autoWeights, stages: JSON.parse(t.stages), createdAt: t.createdAt, updatedAt: t.updatedAt }))),
   },

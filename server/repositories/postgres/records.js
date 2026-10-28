@@ -124,6 +124,10 @@ export function rowToDoc(model, row) {
   for (const [key, spec] of Object.entries(model.fields)) { // lists always exist, as Mongoose gives an empty list
     if (spec.kind === 'array' && doc[key] === undefined) doc[key] = [];
   }
+  for (const path of Array.isArray(row.nullFields) ? row.nullFields : []) { // fields saved as an explicit null read as null, not as missing
+    const parts = path.split('.');
+    if (getPath(doc, parts) === undefined) setPath(doc, parts, null);
+  }
   if (['both', 'createdOnly'].includes(model.timestamps)) doc.createdAt = toDate(row.createdAt);
   if (model.timestamps === 'both') doc.updatedAt = toDate(row.updatedAt);
   return doc;
@@ -311,7 +315,13 @@ const columnValue = (spec, value) => {
 /** Every column of a record, as it would be stored. */
 export function docToColumns(model, doc) {
   const out = {};
-  for (const { path, col, spec } of model.columns) out[col] = columnValue(spec, getPath(doc, path));
+  const nulls = [];
+  for (const { path, col, spec } of model.columns) {
+    const value = getPath(doc, path);
+    out[col] = columnValue(spec, value);
+    if (value === null && spec.default !== null) nulls.push(path.join('.')); // an explicit null is told apart from a missing value (a default of null needs no note)
+  }
+  out.nullFields = nulls.length ? nulls.sort() : null;
   return out;
 }
 
@@ -351,6 +361,15 @@ export async function writeChanges(model, before, after, { now = new Date() } = 
     throw translateError(error, {}, uniqueFields(model));
   }
   return { ...after, ...(model.timestamps === 'both' ? { updatedAt: now } : {}) };
+}
+
+/**
+ * SQL for the `nullFields` column after a direct update: the paths in `add` are now saved as an explicit null, those in
+ * `remove` now hold a value or nothing. The list stays sorted, and the column is empty when nothing is left.
+ */
+export function nullsExpr({ add = [], remove = [] } = {}) {
+  const list = (paths) => `ARRAY[${paths.map((path) => `'${path}'`).join(', ')}]::text[]`;
+  return `(SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM (SELECT DISTINCT v FROM (SELECT jsonb_array_elements_text(COALESCE("nullFields", '[]'::jsonb)) AS v UNION ALL SELECT unnest(${list(add)})) u WHERE v <> ALL(${list([...remove, ...[]].filter((path) => !add.includes(path)))})) d)`;
 }
 
 /** The record with this id, or null. */
