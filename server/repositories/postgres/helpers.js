@@ -182,3 +182,15 @@ export function sameJson(a, b) {
   const others = Object.keys(b).filter((k) => b[k] !== undefined);
   return keys.length === others.length && keys.every((k) => sameJson(a[k], b[k]));
 }
+
+/** Mongoose's Date cast: dates, numbers and date text become a date; empty text becomes null; anything else cannot. */
+export function castDate(value, path) {
+  if (value === undefined || value === null) return { value };
+  if (value === '') return { value: null };
+  let date;
+  if (value instanceof Date) date = value;
+  else if (typeof value === 'number') date = new Date(value);
+  else if (typeof value === 'string') date = new Date(!Number.isNaN(Number(value)) && (Number(value) >= 275761 || Number(value) < 0) ? Number(value) : value);
+  else date = new Date(NaN);
+  return Number.isNaN(date.getTime()) ? { problem: castFailureMessage('date', path, value) } : { value: date };
+}
