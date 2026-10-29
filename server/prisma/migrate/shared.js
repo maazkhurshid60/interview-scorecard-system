@@ -24,13 +24,17 @@ const e = (name, enumName, o) => f(name, 'e', { enumName, ...o }); // enum
 
 const REQ = { req: true };
 
+// A column that holds the id of another record is written s('name', { ref: 'user' }) (or, when the database enforces the link,
+// { parent: ... } / { softParent: ... }, which also name the record pointed at). The copy reads the old MongoDB id as text and
+// translates it to the new number. 'jsonRefs' lists the places inside a JSON column that hold such an id.
+
 export const MODELS = [
   { delegate: 'user', collection: 'users', timestamps: 'both', fields: [
     s('name', REQ), s('email', REQ), s('passwordHash', REQ), s('passwordResetTokenHash'), d('passwordResetExpiresAt'), d('passwordChangedAt'),
     e('role', 'UserRole', { def: 'recruiter' }), b('active', { def: true }),
   ] },
   { delegate: 'department', collection: 'departments', timestamps: 'both', fields: [
-    s('name', REQ), s('description', { def: '' }), s('createdBy'),
+    s('name', REQ), s('description', { def: '' }), s('createdBy', { ref: 'user' }),
   ] },
   { delegate: 'pipelineTemplate', collection: 'pipelinetemplates', timestamps: 'both', fields: [
     s('name', REQ), s('description'), b('isDefault', { def: false }), b('autoWeights', { def: true }), j('stages', { def: [] }),
@@ -41,14 +45,14 @@ export const MODELS = [
   { delegate: 'candidate', collection: 'candidates', timestamps: 'both', fields: [
     s('name', REQ), s('email', REQ), s('phone'), s('resumeFileUrl'), s('resumeFilePublicId'), s('resumeFileName'), n('resumeFileSize'), s('resumeFileMimeType'), s('notes'),
   ] },
-  { delegate: 'requisition', collection: 'requisitions', timestamps: 'both', fields: [
+  { delegate: 'requisition', collection: 'requisitions', timestamps: 'both', publicToken: true, fields: [
     s('title', REQ), e('employmentType', 'EmploymentType', { def: 'full_time' }),
     j('fullTimeDetails'), j('partTimeDetails'), j('contractDetails'), j('internshipDetails'), j('temporaryDetails'),
     s('location', { def: 'Remote' }), e('workplaceType', 'WorkplaceType', { def: 'remote' }), s('officeLocation', { def: '' }), s('remoteRegion', { def: '' }),
     s('jobDescription', REQ), e('status', 'RequisitionStatus', { def: 'open' }),
-    s('departmentId', { softParent: 'department' }), s('pipelineTemplateId'), s('pipelineTemplateName'), j('stages', { def: [] }), s('scorecardId'),
+    s('departmentId', { softParent: 'department' }), s('pipelineTemplateId', { ref: 'pipelineTemplate' }), s('pipelineTemplateName'), j('stages', { def: [] }), s('scorecardId', { ref: 'scorecard' }),
     n('hireThreshold', { def: 3.5 }), n('maybeThreshold', { def: 3 }), j('initialScreeningCriteria', { def: [] }), j('questionnaire', { def: [] }),
-    j('interviewAvailability'), d('applicationDeadline', { defNull: true }), b('aiScreeningEnabled', { def: true }), d('closedAt'), s('createdBy'),
+    j('interviewAvailability'), d('applicationDeadline', { defNull: true }), b('aiScreeningEnabled', { def: true }), d('closedAt'), s('createdBy', { ref: 'user' }),
   ] },
   { delegate: 'scorecard', collection: 'scorecards', timestamps: 'both', fields: [
     s('requisitionId', { ...REQ, parent: 'requisition' }), b('generatedByAI', { def: true }), j('stages', { def: [] }),
@@ -60,26 +64,26 @@ export const MODELS = [
     d('screeningLockedAt', { from: 'screeningJob.lockedAt' }), d('screeningCompletedAt', { from: 'screeningJob.completedAt' }),
     s('screeningLastError', { from: 'screeningJob.lastError' }), d('screeningConfirmationEmailSentAt', { from: 'screeningJob.confirmationEmailSentAt' }),
     j('stageProgress', { def: [] }), j('initialScreening'),
-    n('weightedTotal'), b('allGatesPassed'), e('disposition', 'Disposition', { defNull: true }), n('rank'), e('finalDecision', 'FinalDecision', { defNull: true }), s('finalDecisionBy'), s('rejectionReason'),
+    n('weightedTotal'), b('allGatesPassed'), e('disposition', 'Disposition', { defNull: true }), n('rank'), e('finalDecision', 'FinalDecision', { defNull: true }), s('finalDecisionBy', { ref: 'user' }), s('rejectionReason'),
     s('offerLetterUrl'), s('offerLetterPublicId'), s('offerLetterFileName'), n('offerLetterFileSize'), s('offerLetterFileMimeType'), d('offerLetterUploadedAt'),
     s('offerLetterTemplateKey'), j('offerLetterFields'), e('offerLetterDeliveryStatus', 'DeliveryStatus'), d('offerLetterSentAt'),
     e('onboardingFormDeliveryStatus', 'DeliveryStatus'), d('onboardingFormSentAt'),
-  ] },
-  { delegate: 'interview', collection: 'interviews', timestamps: 'both', fields: [
+  ], jsonRefs: [{ field: 'initialScreening', key: 'overriddenBy', target: 'user' }] },
+  { delegate: 'interview', collection: 'interviews', timestamps: 'both', publicToken: true, fields: [
     s('applicationId', { ...REQ, parent: 'application' }), s('requisitionId', { ...REQ, parent: 'requisition' }), s('stageKey', REQ),
     e('meetingMode', 'MeetingMode', { def: 'online' }), e('provider', 'TranscriptProvider', { def: 'google_meet' }),
-    s('meetingUri'), s('calendarEventId'), d('meetingStart'), d('meetingEnd'), s('conferenceId'), s('designatedScorerId'),
+    s('meetingUri'), s('calendarEventId'), d('meetingStart'), d('meetingEnd'), s('conferenceId'), s('designatedScorerId', { ref: 'user' }),
     j('candidateAvailability'), b('consentObtained', { def: false }), s('transcriptText'), e('transcriptStatus', 'TranscriptStatus', { def: 'none' }),
     s('artifactFileUrl'), s('artifactFilePublicId'), s('artifactFileName'), n('artifactFileSize'), s('artifactFileMimeType'),
     j('scores', { def: [] }), n('stageAverage'), e('status', 'InterviewStatus', { def: 'pending' }),
     n('aiInputTokens', { from: 'aiTokensUsed.input' }), n('aiOutputTokens', { from: 'aiTokensUsed.output' }), n('aiCostUsd'),
-  ] },
+  ], jsonRefs: [{ field: 'scores', each: true, key: 'overriddenBy', target: 'user' }] },
   { delegate: 'refreshToken', collection: 'refreshtokens', timestamps: 'createdOnly', fields: [
     s('userId', { ...REQ, parent: 'user' }), s('tokenHash', REQ), s('familyId', REQ), d('familyStartedAt', REQ), d('expiresAt', REQ),
     d('usedAt', { defNull: true }), d('revokedAt', { defNull: true }), s('userAgent'), s('ip'),
   ] },
   { delegate: 'auditLog', collection: 'auditlogs', timestamps: 'none', fields: [
-    e('action', 'AuditAction', REQ), s('userId'), s('requisitionId'), s('applicationId'), s('targetType'), s('targetId'), j('oldValue'), j('newValue'), s('reason'),
+    e('action', 'AuditAction', REQ), s('userId', { ref: 'user' }), s('requisitionId', { ref: 'requisition' }), s('applicationId', { ref: 'application' }), s('targetType'), s('targetId'), j('oldValue'), j('newValue'), s('reason'),
     d('timestamp', { def: 'now' }),
   ] },
 ];
@@ -106,6 +110,43 @@ export function numberIds(oldIds) {
   const numbers = new Map(sorted.map((id, i) => [id, i + 1]));
   if (numbers.size !== oldIds.length) throw new Error('Two records have the same id; they cannot be numbered.');
   return numbers;
+}
+
+/**
+ * Replaces, in one row, every old id that points at another record with that record's new number.
+ * - A link column ({ ref } / { parent } / { softParent }) holds the old id as text; it becomes the new number.
+ * - 'jsonRefs' name the ids kept inside a JSON column (for example a score's `overriddenBy`); they become numbers too.
+ * A link to a record that does not exist (or was not copied) cannot be a number: it is removed and a note is added, so it is
+ * counted in the report and never silent.
+ * @param {object} spec the model description
+ * @param {object} row the row being built (changed in place)
+ * @param {(target: string, oldId: string) => (number|undefined)} numberOf the new number of a record, or undefined if there is none
+ * @param {string[]} notes receives one note per link that had to be removed
+ */
+export function translateLinks(spec, row, numberOf, notes) {
+  for (const field of spec.fields) {
+    const target = field.ref || field.parent || field.softParent;
+    if (!target || row[field.name] === undefined || row[field.name] === null) continue;
+    const number = numberOf(target, String(row[field.name]));
+    if (number === undefined) { delete row[field.name]; notes.push(`${field.name}: pointed at a ${target} that does not exist; set to empty`); } else row[field.name] = number;
+  }
+  for (const link of spec.jsonRefs || []) {
+    const holder = row[link.field];
+    if (holder === undefined || holder === null) continue;
+    for (const item of link.each ? (Array.isArray(holder) ? holder : []) : [holder]) {
+      if (!item || typeof item !== 'object' || item[link.key] === undefined || item[link.key] === null) continue;
+      const number = numberOf(link.target, String(item[link.key]));
+      if (number === undefined) { delete item[link.key]; notes.push(`${link.field}.${link.key}: pointed at a ${link.target} that does not exist; removed`); } else item[link.key] = number;
+    }
+  }
+}
+
+/** How many strings inside a JSON value are the old id of a record (an id that was not translated). */
+export function countOldIds(value, oldIds) {
+  if (typeof value === 'string') return oldIds.has(value) ? 1 : 0;
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + countOldIds(item, oldIds), 0);
+  if (value && typeof value === 'object') return Object.values(value).reduce((sum, item) => sum + countOldIds(item, oldIds), 0);
+  return 0;
 }
 
 /** The value at a dotted path (`screeningJob.status`) of a document, or undefined. */

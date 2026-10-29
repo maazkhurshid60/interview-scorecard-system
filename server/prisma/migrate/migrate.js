@@ -5,8 +5,10 @@
  *   npm run migrate:postgres -- --reset      first empties every table (only allowed on a local database)
  *
  * MongoDB is only READ, never changed. Every record gets a new number as its id (1, 2, 3, ... in the order the records were
- * created); the old MongoDB id of each record is paired with its new number while the copy runs. A skipped record leaves a
- * gap in the numbers, which is harmless. Values a Mongoose model would have filled in when loading
+ * created); the old MongoDB id of each record is paired with its new number while the copy runs, and every link between
+ * records (a candidate id inside an application, a user id inside an audit entry or a score) is rewritten to the new
+ * number. A link to a record that does not exist is emptied and counted in the report. A skipped record leaves a gap in
+ * the numbers, which is harmless. Values a Mongoose model would have filled in when loading
  * (defaults) are filled in. Anything that cannot be copied is NOT copied silently: the row is skipped and listed in the
  * report (logs/migration-report.json) with the reason. A row whose parent was skipped or does not exist is skipped too
  * (it would otherwise be an orphan), except a job's department, which is set to empty and reported.
@@ -18,7 +20,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
-import { MODELS, PrismaClient, idText, numberIds, transform } from './shared.js';
+import { randomUUID } from 'node:crypto';
+import { MODELS, PrismaClient, countOldIds, idText, numberIds, transform, translateLinks } from './shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reset = process.argv.includes('--reset');
@@ -59,8 +62,12 @@ for (const spec of MODELS) {
   newIds[spec.delegate] = numberIds(found.map((doc) => idText(doc._id)));
 }
 
+const allOldIds = new Set(Object.values(newIds).flatMap((numbers) => [...numbers.keys()]));
+
 // ---- copy, parents before children
 const written = {}; // delegate -> Set of OLD ids written (links in a document still hold old ids when they are checked)
+/** The new number of a record: only if it was copied (a table not copied yet, for a link that points forward, is checked afterwards). */
+const numberOf = (target, oldId) => (written[target] && !written[target].has(oldId) ? undefined : newIds[target].get(oldId));
 const report = { startedAt: new Date(started).toISOString(), mongo: mongoose.connection.name, models: {} };
 let anySkipped = false;
 
@@ -76,6 +83,12 @@ for (const spec of MODELS) {
       if (field.softParent && row[field.name] && !parentSet.has(row[field.name])) { repaired.push({ id: row.id, field: field.name, was: row[field.name], change: `${field.name} pointed at a ${field.softParent} that does not exist (${row[field.name]}); set to empty` }); delete row[field.name]; }
     }
     if (blocking.length) { skipped.push({ id: row.id, reasons: blocking }); continue; }
+    translateLinks(spec, row, numberOf, rowNotes);
+    for (const field of spec.fields) { // record ids inside other JSON values are not translated: they are counted, never silent
+      const left = field.type === 'j' && row[field.name] !== undefined ? countOldIds(row[field.name], allOldIds) : 0;
+      if (left) rowNotes.push(`${field.name}: ${left} record id(s) inside the JSON were left as the old text (not translated)`);
+    }
+    if (spec.publicToken) row.publicToken = randomUUID(); // the database default does not apply to rows written like this
     rowNotes.forEach((n) => { notes[n] = (notes[n] || 0) + 1; });
     oldIds.push(row.id);
     row.id = newIds[spec.delegate].get(row.id); // the transform gave the old id; from here on the row has its new number
@@ -94,6 +107,17 @@ for (const spec of MODELS) {
   report.models[spec.delegate] = { collection: spec.collection, read: docs.length, written: rows.length, skipped, repaired, notes, highestNumber: rows.length ? rows[rows.length - 1].id : 0 };
   const flag = skipped.length ? `  SKIPPED ${skipped.length}` : '';
   console.log(`  ${spec.collection.padEnd(20)} read ${String(docs.length).padStart(6)}   written ${String(rows.length).padStart(6)}${flag}${repaired.length ? `   repaired ${repaired.length}` : ''}`);
+}
+
+// ---- links that point forward (a job opening's scorecard) or that the database does not enforce: if the record they name was
+// not copied, the link is emptied (it cannot point at nothing) and counted
+for (const spec of MODELS) {
+  for (const field of spec.fields) {
+    if (!field.ref || field.parent || field.softParent) continue;
+    const target = MODELS.find((m) => m.delegate === field.ref);
+    const emptied = await prisma.$executeRawUnsafe(`UPDATE "${spec.table}" SET "${field.name}" = NULL WHERE "${field.name}" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "${target.table}" t WHERE t.id = "${spec.table}"."${field.name}")`);
+    if (emptied) report.models[spec.delegate].notes[`${field.name}: pointed at a ${field.ref} that was not copied; set to empty`] = emptied;
+  }
 }
 
 // ---- check what Postgres now holds
