@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castError, castIdField, castString, dateParam, jsonOut, jsonParam, newId, nullSet, validationError } from './helpers.js';
+import { castId, castIdField, castString, dateParam, idOut, jsonOut, jsonParam, nullSet, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about the audit log, on PostgreSQL. It offers exactly the functions of
@@ -21,13 +21,13 @@ const toEntry = (row) => {
   const stored = (text, field) => { const value = jsonOut(text); return value === undefined ? empty(field) : value; };
   const oldValue = stored(row.oldValueText, 'oldValue');
   const newValue = stored(row.newValueText, 'newValue');
-  const text = (field) => (has(row[field]) ? { [field]: row[field] } : (nulls.has(field) ? { [field]: null } : {}));
+  const text = (field, out = (v) => v) => (has(row[field]) ? { [field]: out(row[field]) } : (nulls.has(field) ? { [field]: null } : {}));
   return {
-    _id: row.id,
+    _id: idOut(row.id),
     action: row.action,
-    ...text('userId'),
-    ...text('requisitionId'),
-    ...text('applicationId'),
+    ...text('userId', idOut),
+    ...text('requisitionId', idOut),
+    ...text('applicationId', idOut),
     ...text('targetType'),
     ...text('targetId'),
     ...(oldValue !== undefined ? { oldValue } : {}),
@@ -39,7 +39,7 @@ const toEntry = (row) => {
 
 /**
  * Records one audit entry.
- * @param {{action: string, userId?: string, requisitionId?: string, applicationId?: string, targetType?: string,
+ * @param {{action: string, userId?: string|number, requisitionId?: string|number, applicationId?: string|number, targetType?: string,
  *   targetId?: string, oldValue?: any, newValue?: any, reason?: string}} entry
  */
 export async function record(entry = {}) {
@@ -66,11 +66,10 @@ export async function record(entry = {}) {
   if (Object.keys(problems).length) throw validationError('AuditLog', problems);
 
   const nulled = ['userId', 'requisitionId', 'applicationId', 'targetType', 'targetId', 'reason', 'oldValue', 'newValue'].filter((field) => entry[field] === null).sort();
-  const id = newId();
-  await prisma.$executeRawUnsafe(
-    `INSERT INTO audit_logs (id, action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue", "newValue", reason, "timestamp", "nullFields")
-     VALUES ($1, $2::"AuditAction", $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11::text::timestamp, $12::jsonb)`,
-    id, action, userId ?? null, requisitionId ?? null, applicationId ?? null, targetType ?? null, targetId ?? null,
+  const [{ id }] = await prisma.$queryRawUnsafe(
+    `INSERT INTO audit_logs (action, "userId", "requisitionId", "applicationId", "targetType", "targetId", "oldValue", "newValue", reason, "timestamp", "nullFields")
+     VALUES ($1::"AuditAction", $2::int, $3::int, $4::int, $5, $6, $7::jsonb, $8::jsonb, $9, $10::text::timestamp, $11::jsonb) RETURNING id`,
+    action, userId ?? null, requisitionId ?? null, applicationId ?? null, targetType ?? null, targetId ?? null,
     entry.oldValue === null ? null : jsonParam(entry.oldValue), entry.newValue === null ? null : jsonParam(entry.newValue), reason ?? null, dateParam(when), nulled.length ? JSON.stringify(nulled) : null,
   );
   const [row] = await prisma.$queryRawUnsafe(`SELECT ${COLUMNS} FROM audit_logs WHERE id = $1`, id);
@@ -113,20 +112,13 @@ export async function search({ requisitionId, applicationId, userId, action, dat
 
   const userIds = [...new Set(rows.map((row) => row.userId).filter(has))];
   const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } }) : [];
-  const byId = new Map(users.map((user) => [user.id, { _id: user.id, name: user.name, email: user.email }]));
+  const byId = new Map(users.map((user) => [user.id, { _id: idOut(user.id), name: user.name, email: user.email }]));
   const entries = rows.map((row) => {
     const entry = toEntry(row);
     if (has(row.userId)) entry.userId = byId.get(row.userId) || null; // a user who no longer exists shows as null, as with MongoDB
     return entry;
   });
   return { entries, total };
-}
-
-/** The id text, or the error MongoDB gives for a bad one in a query. */
-function castId(value, path) {
-  const result = castIdField(value, path);
-  if (result.problem) throw castError(path, value);
-  return result.value;
 }
 
 /** Deletes every entry about one job application. */

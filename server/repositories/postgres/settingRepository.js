@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { compareBytes, dateParam, jsonOut, jsonParam, newId, nullSet } from './helpers.js';
+import { compareBytes, dateParam, idOut, jsonOut, jsonParam, nullSet } from './helpers.js';
 import { nullsExpr } from './records.js';
 
 /**
@@ -16,7 +16,7 @@ const toSetting = (row) => {
   const stored = jsonOut(row.valueText);
   const value = stored === undefined && nulls.has('value') ? null : stored;
   return {
-    _id: row.id,
+    _id: idOut(row.id),
     key: row.key,
     ...(value !== undefined ? { value } : {}),
     ...(row.description !== null && row.description !== undefined ? { description: row.description } : (nulls.has('description') ? { description: null } : {})),
@@ -68,9 +68,10 @@ export async function updateValue(key, value) {
 
 /** Creates the setting if it does not exist yet; an existing one is left untouched. */
 export async function createIfMissing(key, value, description) {
+  // the WHERE NOT EXISTS keeps an existing setting from using up a number of the table's counter (the seed runs at every start)
   await prisma.$executeRawUnsafe(
-    `INSERT INTO settings (id, "key", "value", description, "updatedAt", "nullFields") VALUES ($1, $2, $3::jsonb, $4, $5::text::timestamp, $6::jsonb) ON CONFLICT ("key") DO NOTHING`,
-    newId(), String(key), value === null ? null : jsonParam(value), description === undefined || description === null ? null : description, dateParam(new Date()),
+    `INSERT INTO settings ("key", "value", description, "updatedAt", "nullFields") SELECT $1::text, $2::jsonb, $3::text, $4::text::timestamp, $5::jsonb WHERE NOT EXISTS (SELECT 1 FROM settings WHERE "key" = $1::text) ON CONFLICT ("key") DO NOTHING`,
+    String(key), value === null ? null : jsonParam(value), description === undefined || description === null ? null : description, dateParam(new Date()),
     (value === null || description === null) ? JSON.stringify([...(description === null ? ['description'] : []), ...(value === null ? ['value'] : [])].sort()) : null,
   );
   return findByKey(key);
@@ -82,7 +83,7 @@ export async function createIfMissing(key, value, description) {
  */
 async function changeLocked(key, change) {
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`INSERT INTO settings (id, "key", "updatedAt") VALUES ($1, $2, $3::text::timestamp) ON CONFLICT ("key") DO NOTHING`, newId(), String(key), dateParam(new Date()));
+    await tx.$executeRawUnsafe(`INSERT INTO settings ("key", "updatedAt") SELECT $1::text, $2::text::timestamp WHERE NOT EXISTS (SELECT 1 FROM settings WHERE "key" = $1::text) ON CONFLICT ("key") DO NOTHING`, String(key), dateParam(new Date()));
     const [row] = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE "key" = $1 FOR UPDATE`, String(key));
     const next = change(jsonOut(row.valueText), row.id);
     await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr({ remove: ['value'] })} WHERE id = $1`, row.id, jsonParam(next), dateParam(new Date()));
@@ -123,7 +124,7 @@ export async function incrementEntry(key, entry, amount) {
       throw mongoError(`Cannot create field '${entry}' in element {value: ${shown(current)}}`, 28);
     }
     if (current[entry] === undefined) return { ...current, [entry]: add };
-    if (typeof current[entry] !== 'number') throw mongoError(`Cannot apply $inc to a value of non-numeric type. {_id: ObjectId('${rowId}')} has the field '${entry}' of non-numeric type ${bsonType(current[entry])}`, 14);
+    if (typeof current[entry] !== 'number') throw mongoError(`Cannot apply $inc to a value of non-numeric type. {_id: ${rowId}} has the field '${entry}' of non-numeric type ${bsonType(current[entry])}`, 14);
     return { ...current, [entry]: current[entry] + add }; // added here, as doubles, so the sum is the one MongoDB would have stored
   });
 }

@@ -43,6 +43,12 @@ export function castSubdocId(value) {
   return /^[0-9a-fA-F]{24}$/.test(text) ? text.toLowerCase() : undefined;
 }
 
+/**
+ * An id as the app sees it: text ("7"), as ids have always been to the controllers, the services and the client, even though the
+ * database holds a number. An empty value (no link) stays empty. Use it on every id a repository hands out.
+ */
+export const idOut = (value) => (value === null || value === undefined ? value : String(value));
+
 /** The largest number a table's id can hold (the database column is a 4-byte integer). */
 export const MAX_ID = 2147483647;
 

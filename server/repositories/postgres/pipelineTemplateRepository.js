@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castBoolean, castId, castNumber, castString, compareBytes, dateParam, jsonParam, newId, nullSet, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castId, castNumber, castString, compareBytes, dateParam, idOut, jsonParam, nullSet, sameJson, translateError, validationError } from './helpers.js';
 import { nullsExpr } from './records.js';
 
 /**
@@ -25,7 +25,7 @@ const withStageDefaults = (stage) => ({
 
 /** A template row as the app has always seen it. An empty description is left out, as MongoDB left it out. */
 const toTemplate = (row) => ({
-  _id: row.id,
+  _id: idOut(row.id),
   name: row.name,
   ...(hasValue(row.description) ? { description: row.description } : (nullSet(row).has('description') ? { description: null } : {})),
   isDefault: row.isDefault,
@@ -123,13 +123,13 @@ export async function findDefault() {
 /** Creates a template and returns it. */
 export async function create({ name, description, stages, autoWeights, isDefault } = {}) {
   const values = build({ name, description, stages, autoWeights, isDefault }, { creating: true });
-  const id = newId();
   const now = dateParam(new Date());
+  let id;
   try {
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO pipeline_templates (id, name, description, "isDefault", "autoWeights", stages, "createdAt", "updatedAt", "nullFields")
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::text::timestamp, $7::text::timestamp, $8::jsonb)`,
-      id, values.name, values.description ?? null, values.isDefault ?? false, values.autoWeights ?? true, jsonParam(values.stages), now, values.description === null ? JSON.stringify(['description']) : null,
+    [{ id }] = await prisma.$queryRawUnsafe(
+      `INSERT INTO pipeline_templates (name, description, "isDefault", "autoWeights", stages, "createdAt", "updatedAt", "nullFields")
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::text::timestamp, $6::text::timestamp, $7::jsonb) RETURNING id`,
+      values.name, values.description ?? null, values.isDefault ?? false, values.autoWeights ?? true, jsonParam(values.stages), now, values.description === null ? JSON.stringify(['description']) : null,
     );
   } catch (error) {
     throw translateError(error, { name: values.name }, ['name']);
