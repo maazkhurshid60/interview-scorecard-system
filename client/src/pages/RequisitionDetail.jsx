@@ -554,7 +554,8 @@ export default function RequisitionDetail() {
               size="icon"
               aria-label="Copy candidate apply link"
               onClick={() => {
-                const url = `${window.location.origin}/apply/${requisition._id}`;
+                // the link carries the job's random public token (a plain number could be guessed); without one (MongoDB) it is the id
+                const url = `${window.location.origin}/apply/${requisition.publicToken || requisition._id}`;
                 navigator.clipboard.writeText(url);
                 toast.success('Public candidate application link copied to clipboard!');
               }}
