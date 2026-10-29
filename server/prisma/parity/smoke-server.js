@@ -11,7 +11,10 @@
  *      from, or give jobs to, an app you have running;
  *   4. signs in and calls the real endpoints (lists, details, and a few safe changes), checking each answer;
  *   5. stops the server and removes the scratch database.
- * It never calls an AI, sends an email or uploads a file.
+ * It never calls an AI, sends an email, posts to Slack or uploads a file. That is made certain three ways, because the copied data
+ * holds real candidates and your .env holds real credentials: the server is started WITHOUT Redis (so nothing can be queued or
+ * sent in the background), WITHOUT the Gmail, Slack, AI, Google and captcha keys, and the secrets stored in the copied settings
+ * are deleted from the scratch database. A check at the end confirms that no email was queued.
  */
 import '../../config/env.js';
 import { execFileSync, spawn } from 'node:child_process';
@@ -30,9 +33,16 @@ const PASSWORD = 'Smoke-Test-123!';
 const devUrl = new URL(process.env.DATABASE_URL);
 if (!['localhost', '127.0.0.1', '::1'].includes(devUrl.hostname)) throw new Error('The smoke test only runs against a local Postgres.');
 const smokeUrl = new URL(devUrl.toString()); smokeUrl.pathname = `/${SMOKE_DB}`;
-const env = { ...process.env, DATABASE_URL: smokeUrl.toString(), DB_PROVIDER: 'postgres', PORT: String(PORT), BULLMQ_PREFIX: 'smoketest' };
+// nothing that could reach the outside world: no queue (Redis), no mail, no Slack, no AI, no Google, no captcha service
+const SECRET_SETTINGS = ['anthropicApiKey', 'googleClientId', 'googleClientSecret', 'googleRefreshToken', 'slackWebhookUrl', 'gmailUser', 'gmailAppPassword'];
+const env = {
+  ...process.env, DATABASE_URL: smokeUrl.toString(), DB_PROVIDER: 'postgres', PORT: String(PORT), BULLMQ_PREFIX: 'smoketest',
+  REDIS_URL: '', GMAIL_USER: '', GMAIL_APP_PASSWORD: '', SLACK_WEBHOOK_URL: '', ANTHROPIC_API_KEY: '',
+  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', GOOGLE_REFRESH_TOKEN: '', TURNSTILE_SITE_KEY: '', TURNSTILE_SECRET_KEY: '',
+};
 
 const admin = new PrismaClient({ datasourceUrl: devUrl.toString() });
+const smokeDb = new PrismaClient({ datasourceUrl: smokeUrl.toString() });
 const run = (script, args) => {
   try { return execFileSync(process.execPath, [path.join(serverDir, script), ...args], { cwd: serverDir, env, stdio: 'pipe' }).toString(); }
   catch (error) {
@@ -45,6 +55,7 @@ let server; const serverLog = [];
 async function cleanup() {
   if (server && !server.killed) { server.kill('SIGINT'); await new Promise((r) => setTimeout(r, 1500)); if (!server.killed) server.kill(); }
   try { await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${SMOKE_DB}" WITH (FORCE)`); } catch { /* left behind: harmless */ }
+  await smokeDb.$disconnect().catch(() => {});
   await admin.$disconnect();
 }
 
@@ -59,6 +70,7 @@ try {
   let copy; // the copy exits with a warning code when it skipped rows (here: tokens of deleted users), which is fine
   try { copy = run(path.join('prisma', 'migrate', 'migrate.js'), ['--reset']); } catch (error) { if (!/Done in/.test(error.message)) throw error; copy = error.message; }
   console.log(`  ${copy.split('\n').find((l) => l.includes('read,')) || 'data copied'}`);
+  await smokeDb.$executeRawUnsafe('DELETE FROM settings WHERE "key" = ANY($1::text[])', SECRET_SETTINGS); // a copied credential must not be usable
 
   process.env.DATABASE_URL = smokeUrl.toString(); // for the repositories used below
   const users = await import(pathToFileURL(path.join(serverDir, 'repositories', 'postgres', 'userRepository.js')).href);
@@ -123,12 +135,52 @@ try {
     await expect('one job opening', 'GET', `/api/requisitions/${requisition._id}`, undefined, (d) => (d.requisition || d)._id === requisition._id);
     await expect('its scorecard', 'GET', `/api/requisitions/${requisition._id}/scorecard`);
     await expect('its ranking', 'GET', `/api/requisitions/${requisition._id}/ranking`);
-    await expect('its public view', 'GET', `/api/requisitions/${requisition._id}/public`);
   }
   const candidate = lists.candidates[0];
   if (candidate) await expect('one candidate', 'GET', `/api/candidates/${candidate._id}`);
   const interview = lists.interviews[0];
   if (interview) await expect('one interview', 'GET', `/api/interviews/${interview._id}`);
+
+  // ---- the public links (no sign-in): the random token, the old id of a link shared before the move, and the plain number (refused)
+  let availabilityLinkChecked = false;
+  if (requisition && interview) {
+    await smokeDb.$executeRawUnsafe('UPDATE requisitions SET status = \'open\', "applicationDeadline" = NULL WHERE id = $1::int', Number(requisition._id)); // so the public page can be seen
+    const [job] = await smokeDb.$queryRawUnsafe('SELECT "publicToken" AS token, "legacyId" AS legacy FROM requisitions WHERE id = $1::int', Number(requisition._id));
+    const [meeting] = await smokeDb.$queryRawUnsafe('SELECT "publicToken" AS token, "legacyId" AS legacy FROM interviews WHERE id = $1::int', Number(interview._id));
+    check('the job list gives each job its public token', requisition.publicToken === job.token && /^[0-9a-f-]{36}$/.test(job.token), JSON.stringify(requisition.publicToken));
+    const anon = async (method, url, body) => { const saved = cookies; cookies = {}; try { return await call(method, url, body); } finally { cookies = saved; } };
+    const status = async (method, url, body) => (await anon(method, url, body)).status;
+    console.log('\n  public job page and applying (a link works by token or by old id, never by the plain number):');
+    for (const [label, ref, want] of [['token', job.token, 200], ['old id', job.legacy, 200], ['old id in capital letters', String(job.legacy).toUpperCase(), 200], ['plain number', requisition._id, 404], ['junk', 'abc', 404], ['an old-looking id that belongs to nobody', 'ffffffffffffffffffffffff', 404]]) {
+      const got = await status('GET', `/api/requisitions/${ref}/public`);
+      check(`job page by ${label}: ${want}`, got === want, `got ${got}`);
+    }
+    const viaToken = await anon('POST', `/api/requisitions/${job.token}/apply`, {});
+    const viaOld = await anon('POST', `/api/requisitions/${job.legacy}/apply`, {});
+    const viaNumber = await anon('POST', `/api/requisitions/${requisition._id}/apply`, {});
+    check('apply by token and by old id reach the application checks (400: no name or email sent), by plain number 404', viaToken.status === 400 && viaOld.status === 400 && viaNumber.status === 404, `${viaToken.status} ${viaOld.status} ${viaNumber.status}`);
+    console.log('\n  public availability page:');
+    for (const [label, ref, want] of [['token', meeting.token, 200], ['old id', meeting.legacy, 200], ['plain number', interview._id, 404], ['junk', 'abc', 404]]) {
+      const got = await status('GET', `/api/interviews/${ref}/availability/public`);
+      check(`availability page by ${label}: ${want}`, got === want, `got ${got}`);
+    }
+    const sent = await anon('POST', `/api/interviews/${meeting.token}/availability/public`, { preferredDate: '2026-12-01', notes: 'by token' });
+    const sentOld = await anon('POST', `/api/interviews/${meeting.legacy}/availability/public`, { preferredDate: '2026-12-02', notes: 'by old id' });
+    const saved = (await smokeDb.$queryRawUnsafe('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::int', Number(interview._id)))[0].a;
+    check('submitting availability by token and by old id works, and is saved', sent.status === 200 && sentOld.status === 200 && saved && saved.notes === 'by old id', `${sent.status} ${sentOld.status} ${JSON.stringify(saved)}`);
+    const refused = await anon('POST', `/api/interviews/${interview._id}/availability/public`, { preferredDate: '2026-12-03', notes: 'by number' });
+    const after = (await smokeDb.$queryRawUnsafe('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::int', Number(interview._id)))[0].a;
+    check('submitting availability by the plain number is refused (404) and saves nothing', refused.status === 404 && after.notes === 'by old id', `${refused.status} ${JSON.stringify(after)}`);
+    const request = await call('POST', `/api/interviews/${interview._id}/request-availability`, {});
+    check('"request availability" gives a link with the token, not the number', request.status === 200 && request.data.availabilityUrl.endsWith(`/interview/${meeting.token}/availability`), `${request.status} ${request.data && request.data.availabilityUrl}`);
+    check('no email was queued or sent (there is no queue and no mail account in this test)', request.data && request.data.queued === false, JSON.stringify(request.data && [request.data.queued, request.data.emailReason]));
+    availabilityLinkChecked = request.status === 200;
+    if (availabilityLinkChecked) {
+      const ref = request.data.availabilityUrl.split('/interview/')[1].split('/availability')[0];
+      check('and that link opens the availability page', (await status('GET', `/api/interviews/${ref}/availability/public`)) === 200);
+    }
+    console.log('');
+  }
 
   // a few changes (on the scratch copy only)
   const department = await expect('create a department', 'POST', '/api/departments', { name: 'Smoke Department', description: 'temporary' }, (d) => (d.department || d)._id, 201);
@@ -158,7 +210,8 @@ try {
   await expect('log out', 'POST', '/api/auth/logout');
   await expect('after logging out, who am I is refused', 'GET', '/api/auth/me', undefined, () => true, 401);
 
-  const problems = serverLog.filter((line) => /\b(error|ERROR)\b|Unhandled|TypeError|Prisma/.test(line) && !/Redis|ECONNREFUSED/.test(line));
+  check('old shared links were logged each time they were used (so it is known when none are left)', serverLog.filter((l) => /old shared link/.test(l)).length >= 4, `${serverLog.filter((l) => /old shared link/.test(l)).length} lines`);
+  const problems = serverLog.filter((line) => /\b(error|ERROR)\b|Unhandled|TypeError|Prisma/.test(line) && !/Redis|ECONNREFUSED|ValidationError/.test(line)); // a ValidationError is the right answer to the bad input some checks send on purpose
   console.log(`\nServer log: ${problems.length ? `${problems.length} line(s) mention errors:` : 'no errors logged.'}`);
   for (const line of problems.slice(0, 12)) console.log(`   ${line.slice(0, 220)}`);
 } catch (error) {
