@@ -95,6 +95,19 @@ const isObjectId = (v) => v && typeof v === 'object' && (v._bsontype === 'Object
 /** The text of an id (an ObjectId, or something already text). */
 export const idText = (v) => (isObjectId(v) ? v.toHexString() : String(v));
 
+/**
+ * Gives every old id a new number: 1, 2, 3, ... in the order the records were created (an ObjectId starts with the time it
+ * was made, so sorting the ids as text puts them in creation order).
+ * @param {string[]} oldIds the ids of one collection, as text
+ * @returns {Map<string, number>} old id -> new number
+ */
+export function numberIds(oldIds) {
+  const sorted = [...oldIds].sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+  const numbers = new Map(sorted.map((id, i) => [id, i + 1]));
+  if (numbers.size !== oldIds.length) throw new Error('Two records have the same id; they cannot be numbered.');
+  return numbers;
+}
+
 /** The value at a dotted path (`screeningJob.status`) of a document, or undefined. */
 export const getPath = (doc, path) => path.split('.').reduce((value, key) => (value === undefined || value === null ? undefined : value[key]), doc);
 
