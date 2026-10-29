@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castDate, castError, castId, castIdField, castString, newId, nextNulls, nullSet, translateError, validationError } from './helpers.js';
+import { castDate, castError, castId, castIdField, castString, idOut, nextNulls, nullSet, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about login refresh tokens, on PostgreSQL. It offers exactly the functions
@@ -14,8 +14,8 @@ const has = (value) => value !== null && value !== undefined;
 
 /** A token row as the app has always seen it: `usedAt` and `revokedAt` are null until set; an empty user agent or address is left out. */
 const toToken = (row) => ({
-  _id: row.id,
-  userId: row.userId,
+  _id: idOut(row.id),
+  userId: idOut(row.userId),
   tokenHash: row.tokenHash,
   familyId: row.familyId,
   familyStartedAt: row.familyStartedAt,
@@ -52,7 +52,7 @@ export async function create({ userId, tokenHash, familyId, familyStartedAt, exp
 
   try {
     const row = await prisma.refreshToken.create({
-      data: { id: newId(), ...values, userAgent: values.userAgent ?? null, ip: values.ip ?? null, createdAt: new Date(), nullFields: nextNulls(null, { add: ['userAgent', 'ip'].filter((field) => values[field] === null) }) },
+      data: { ...values, userAgent: values.userAgent ?? null, ip: values.ip ?? null, createdAt: new Date(), nullFields: nextNulls(null, { add: ['userAgent', 'ip'].filter((field) => values[field] === null) }) },
     });
     return toToken(row);
   } catch (error) {
