@@ -120,7 +120,8 @@ export function numberIds(oldIds) {
  * counted in the report and never silent.
  * @param {object} spec the model description
  * @param {object} row the row being built (changed in place)
- * @param {(target: string, oldId: string) => (number|undefined)} numberOf the new number of a record, or undefined if there is none
+ * @param {(target: string, oldId: string, inJson?: boolean) => (number|undefined)} numberOf the new number of a record, or undefined if there is none
+ *   (`inJson` is true for an id kept inside a JSON column)
  * @param {string[]} notes receives one note per link that had to be removed
  */
 export function translateLinks(spec, row, numberOf, notes) {
@@ -135,7 +136,7 @@ export function translateLinks(spec, row, numberOf, notes) {
     if (holder === undefined || holder === null) continue;
     for (const item of link.each ? (Array.isArray(holder) ? holder : []) : [holder]) {
       if (!item || typeof item !== 'object' || item[link.key] === undefined || item[link.key] === null) continue;
-      const number = numberOf(link.target, String(item[link.key]));
+      const number = numberOf(link.target, String(item[link.key]), true);
       if (number === undefined) { delete item[link.key]; notes.push(`${link.field}.${link.key}: pointed at a ${link.target} that does not exist; removed`); } else item[link.key] = number;
     }
   }

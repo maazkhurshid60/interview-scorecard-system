@@ -1,4 +1,4 @@
-import { oid } from './harness.js';
+import { oid, tableState } from './harness.js';
 
 /** Parity scenario for candidateRepository. */
 
@@ -6,7 +6,6 @@ const hex = (n) => n.toString(16).padStart(24, '0');
 export const ID = { a: hex(1), b: hex(2), c: hex(3), d: hex(4), e: hex(5), f: hex(6), g: hex(7), unknown: hex(99) };
 const at = (iso) => new Date(iso);
 const cand = (id, name, email, created, extra = {}) => ({ _id: oid(id), name, email, createdAt: at(created), updatedAt: at(created), ...extra });
-const sorted = (list) => list.sort((a, b) => String(a._id).localeCompare(String(b._id)));
 
 export default {
   repository: 'candidateRepository',
@@ -93,8 +92,5 @@ export default {
     { name: 'list at the end (by name, the new ones were made in the same millisecond)', run: async (r) => (await r.listPage({ limit: 50, page: 1 })).candidates.sort((a, b) => String(a.name).localeCompare(String(b.name))) },
   ],
 
-  state: {
-    mongo: async ({ mongo }) => sorted((await mongo.collection('candidates').find().toArray()).map((c) => ({ _id: c._id, name: c.name, email: c.email, phone: c.phone, resumeFileUrl: c.resumeFileUrl, resumeFilePublicId: c.resumeFilePublicId, resumeFileName: c.resumeFileName, resumeFileSize: c.resumeFileSize, resumeFileMimeType: c.resumeFileMimeType, notes: c.notes, createdAt: c.createdAt, updatedAt: c.updatedAt }))),
-    postgres: async ({ prisma }) => sorted((await prisma.$queryRawUnsafe(`SELECT to_jsonb(t)::text AS j FROM candidates t`)).map((r) => { const c = JSON.parse(r.j); const o = (v) => (v === null ? undefined : v); return { _id: c.id, name: c.name, email: c.email, phone: o(c.phone), resumeFileUrl: o(c.resumeFileUrl), resumeFilePublicId: o(c.resumeFilePublicId), resumeFileName: o(c.resumeFileName), resumeFileSize: o(c.resumeFileSize), resumeFileMimeType: o(c.resumeFileMimeType), notes: o(c.notes), createdAt: new Date(`${c.createdAt}Z`), updatedAt: new Date(`${c.updatedAt}Z`) }; })),
-  },
+  state: tableState('candidate'),
 };
