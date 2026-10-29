@@ -91,6 +91,7 @@ for (const spec of MODELS) {
     if (spec.publicToken) row.publicToken = randomUUID(); // the database default does not apply to rows written like this
     rowNotes.forEach((n) => { notes[n] = (notes[n] || 0) + 1; });
     oldIds.push(row.id);
+    if (spec.legacyId) row.legacyId = row.id; // keep the old id, so links already shared (/apply/<old id>) can still find this record
     row.id = newIds[spec.delegate].get(row.id); // the transform gave the old id; from here on the row has its new number
     rows.push(row);
   }

@@ -45,7 +45,7 @@ export const MODELS = [
   { delegate: 'candidate', collection: 'candidates', timestamps: 'both', fields: [
     s('name', REQ), s('email', REQ), s('phone'), s('resumeFileUrl'), s('resumeFilePublicId'), s('resumeFileName'), n('resumeFileSize'), s('resumeFileMimeType'), s('notes'),
   ] },
-  { delegate: 'requisition', collection: 'requisitions', timestamps: 'both', publicToken: true, fields: [
+  { delegate: 'requisition', collection: 'requisitions', timestamps: 'both', legacyId: true, publicToken: true, fields: [
     s('title', REQ), e('employmentType', 'EmploymentType', { def: 'full_time' }),
     j('fullTimeDetails'), j('partTimeDetails'), j('contractDetails'), j('internshipDetails'), j('temporaryDetails'),
     s('location', { def: 'Remote' }), e('workplaceType', 'WorkplaceType', { def: 'remote' }), s('officeLocation', { def: '' }), s('remoteRegion', { def: '' }),
@@ -69,7 +69,7 @@ export const MODELS = [
     s('offerLetterTemplateKey'), j('offerLetterFields'), e('offerLetterDeliveryStatus', 'DeliveryStatus'), d('offerLetterSentAt'),
     e('onboardingFormDeliveryStatus', 'DeliveryStatus'), d('onboardingFormSentAt'),
   ], jsonRefs: [{ field: 'initialScreening', key: 'overriddenBy', target: 'user' }] },
-  { delegate: 'interview', collection: 'interviews', timestamps: 'both', publicToken: true, fields: [
+  { delegate: 'interview', collection: 'interviews', timestamps: 'both', legacyId: true, publicToken: true, fields: [
     s('applicationId', { ...REQ, parent: 'application' }), s('requisitionId', { ...REQ, parent: 'requisition' }), s('stageKey', REQ),
     e('meetingMode', 'MeetingMode', { def: 'online' }), e('provider', 'TranscriptProvider', { def: 'google_meet' }),
     s('meetingUri'), s('calendarEventId'), d('meetingStart'), d('meetingEnd'), s('conferenceId'), s('designatedScorerId', { ref: 'user' }),
