@@ -56,8 +56,20 @@ function canon(v) {
   return v;
 }
 const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+/** The value without any NUL character in its text or its keys: PostgreSQL cannot store them, so the copy takes them out (and reports it). */
+function noNul(value) {
+  const NUL = String.fromCharCode(0);
+  if (typeof value === 'string') return value.split(NUL).join('');
+  if (Array.isArray(value)) return value.map(noNul);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k.split(NUL).join(''), noNul(v)]));
+  return value;
+}
 
 const prisma = new PrismaClient();
+// This script only READS MongoDB. Loading the models below would otherwise make Mongoose create their indexes (and any missing
+// collection) on the database it is connected to, which must never happen on a live database.
+mongoose.set('autoIndex', false);
+mongoose.set('autoCreate', false);
 await mongoose.connect(mongoUri);
 const mongo = mongoose.connection.db;
 const reportPath = process.env.MIGRATE_REPORT_PATH || path.join(serverDir, 'logs', 'migration-report.json');
@@ -87,7 +99,7 @@ function linkNumber(targetModel, raw) {
 /** The JSON value a column must hold: the same as in MongoDB, with the ids inside it replaced by numbers. */
 function expectedJson(modelName, field, raw) {
   const link = JSON_LINKS[modelName];
-  const value = canon(raw);
+  const value = noNul(canon(raw));
   if (!link || link.field !== field || value === null || value === undefined) return value;
   for (const item of link.each ? (Array.isArray(value) ? value : []) : [value]) {
     if (!item || typeof item !== 'object' || item[link.key] === undefined || item[link.key] === null) continue;
@@ -161,7 +173,7 @@ for (const [modelName, delegate] of Object.entries(MODEL_TO_DELEGATE)) {
         else expected = null;
       } else if (isLink) expected = linkNumber(info.options.ref, raw); // the number of the record pointed at, or null
       else if (isJson) expected = expectedJson(modelName, target, raw);
-      else expected = raw;
+      else expected = typeof raw === 'string' ? noNul(raw) : raw;
       if (group && expected && typeof expected === 'object' && !Array.isArray(expected) && Object.keys(expected).length === 0) expected = null; // an empty nested object is stored as empty
 
       if (expected === '<any date>') { if (!(actual instanceof Date)) addProblem(modelName, id, target, 'a date', actual); continue; }

@@ -153,18 +153,31 @@ export function countOldIds(value, oldIds) {
 /** The value at a dotted path (`screeningJob.status`) of a document, or undefined. */
 export const getPath = (doc, path) => path.split('.').reduce((value, key) => (value === undefined || value === null ? undefined : value[key]), doc);
 
-/** Turns what MongoDB stores into plain JSON: ObjectIds become text, dates become ISO text. Absent keys stay absent. */
-export function toJson(value) {
+/**
+ * Text without its NUL characters (U+0000). PostgreSQL cannot store a NUL in text or JSON at all (it refuses the whole row), and a
+ * NUL is an invisible control character that only ever gets into text by accident (for example from a PDF). `counter.removed`
+ * counts how many were taken out, so the copy can report it.
+ */
+export function withoutNul(text, counter) {
+  if (typeof text !== 'string' || !text.includes('\u0000')) return text;
+  const parts = text.split('\u0000');
+  if (counter) counter.removed += parts.length - 1;
+  return parts.join('');
+}
+
+/** Turns what MongoDB stores into plain JSON: ObjectIds become text, dates become ISO text, NUL characters are taken out. Absent keys stay absent. */
+export function toJson(value, counter) {
   if (value === undefined) return undefined;
   if (value === null) return null;
+  if (typeof value === 'string') return withoutNul(value, counter);
   if (isObjectId(value)) return value.toHexString();
   if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return value.map((x) => (x === undefined ? null : toJson(x)));
+  if (Array.isArray(value)) return value.map((x) => (x === undefined ? null : toJson(x, counter)));
   if (value && typeof value === 'object') {
     if (value._bsontype === 'Decimal128' || value._bsontype === 'Long' || value._bsontype === 'Int32' || value._bsontype === 'Double') return Number(value.toString());
     if (Buffer.isBuffer(value)) return value.toString('base64');
     const out = {};
-    for (const [k, v] of Object.entries(value)) { const x = toJson(v); if (x !== undefined) out[k] = x; }
+    for (const [k, v] of Object.entries(value)) { const x = toJson(v, counter); if (x !== undefined) out[withoutNul(k, counter)] = x; }
     return out;
   }
   return value;
@@ -192,7 +205,7 @@ export function transform(spec, doc, now = new Date()) {
     } else {
       switch (field.type) {
         case 's':
-          if (typeof raw === 'string') value = raw;
+          if (typeof raw === 'string') { const counter = { removed: 0 }; value = withoutNul(raw, counter); if (counter.removed) notes.push(`${field.name}: ${counter.removed} NUL character(s) removed (PostgreSQL cannot store them)`); }
           else if (isObjectId(raw)) value = raw.toHexString();
           else if (typeof raw === 'number' || typeof raw === 'boolean') { value = String(raw); notes.push(`${field.name}: ${typeof raw} stored where text is expected; converted to text`); }
           else { blocking.push(`${field.name}: cannot use a ${typeof raw} as text`); }
@@ -217,9 +230,12 @@ export function transform(spec, doc, now = new Date()) {
           if (enumValues(field.enumName).includes(raw)) value = raw;
           else blocking.push(`${field.name}: "${String(raw).slice(0, 40)}" is not one of [${enumValues(field.enumName).join(', ')}]`);
           break;
-        case 'j':
-          value = toJson(raw);
+        case 'j': {
+          const counter = { removed: 0 };
+          value = toJson(raw, counter);
+          if (counter.removed) notes.push(`${field.name}: ${counter.removed} NUL character(s) removed (PostgreSQL cannot store them)`);
           break;
+        }
         default:
           blocking.push(`${field.name}: unknown column type ${field.type}`);
       }

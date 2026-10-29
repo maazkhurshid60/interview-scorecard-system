@@ -45,8 +45,8 @@ const check = (name, ok, detail = '') => { if (!ok) failed += 1; console.log(`  
 // ---- the awkward data. Ids are made in the order records were "created", so a record's number is its place in its list.
 const { ObjectId } = mongoose.Types;
 const make = (count) => Array.from({ length: count }, () => new ObjectId());
-const [U1, U2, U3, U4, U5] = make(5); const [D1, D2, D3] = make(3); const [P1] = make(1); const [S1, S2] = make(2);
-const [C1, C2, C3, C4] = make(4); const [R1, R2, R3, R4] = make(4); const [SC1, SC2, SC3] = make(3); const [A1, A2, A3, A4, A5] = make(5);
+const [U1, U2, U3, U4, U5] = make(5); const [D1, D2, D3] = make(3); const [P1] = make(1); const [S1, S2, S3] = make(3);
+const [C1, C2, C3, C4, C5] = make(5); const [R1, R2, R3, R4] = make(4); const [SC1, SC2, SC3] = make(3); const [A1, A2, A3, A4, A5] = make(5);
 const [I1, I2, I3, I4] = make(4); const [T1, T2, T3, T4] = make(4); const [L1, L2, L3, L4, L5, L6] = make(6);
 const ghost = () => new ObjectId(); // an id that belongs to no record
 const when = new Date('2026-03-01T10:00:00.000Z');
@@ -69,12 +69,14 @@ const data = {
   settings: [
     { _id: S1, key: 'retention', value: 5, updatedAt: when },
     { _id: S2, key: 'owner', value: { ownerId: U1.toHexString() }, updatedAt: when }, // a record id inside JSON: cannot be translated, must be reported
+    { _id: S3, key: 'nul', value: { key: 'x\u0000y', list: ['p\u0000q'] }, updatedAt: when }, // NUL characters inside JSON text (MongoDB itself refuses a NUL in a key): PostgreSQL cannot store them
   ],
   candidates: [
     { _id: C1, name: 'Ann', email: 'ann@x.com', ...stamps },
     { _id: C2, name: 'NoMail', ...stamps }, // email missing -> skipped
     { _id: C3, name: 'Bob', email: 'bob@x.com', resumeFileSize: '123', ...stamps }, // number stored as text -> converted
     { _id: C4, name: 'Cy', email: 'cy@x.com', resumeFileSize: 'abc', ...stamps }, // not a number -> skipped
+    { _id: C5, name: 'Nul', email: 'nul@x.com', notes: 'a\u0000b\u0000', ...stamps }, // NUL characters in text: PostgreSQL cannot store them
   ],
   requisitions: [
     { _id: R1, title: 'Senior Engineer', jobDescription: 'd', departmentId: D1, pipelineTemplateId: P1, scorecardId: SC1, createdBy: U1, ...stamps },
@@ -154,7 +156,11 @@ try {
   const dep = await q('SELECT id, "createdBy" c FROM departments ORDER BY id');
   check('department: creator that exists becomes its number (1); a missing or skipped creator is emptied', dep[0].c === 1 && dep[1].c === null && dep[2].c === null, JSON.stringify(dep));
   check('a record id inside JSON is left as the old text, and reported', (await one(`SELECT value->>'ownerId' v FROM settings WHERE key='owner'`)).v === U1.toHexString() && Object.keys(report.models.setting.notes).some((n) => /not translated/.test(n)));
-  check('candidates: Ann and Bob copied; Bob\'s size "123" became the number 123', JSON.stringify(await idsOf('candidates')) === '[1,3]' && Number((await one(`SELECT "resumeFileSize" s FROM candidates WHERE id=3`)).s) === 123);
+  check('candidates: Ann, Bob and Nul copied; Bob\'s size "123" became the number 123', JSON.stringify(await idsOf('candidates')) === '[1,3,5]' && Number((await one(`SELECT "resumeFileSize" s FROM candidates WHERE id=3`)).s) === 123);
+  const nulNotes = (await one('SELECT notes FROM candidates WHERE id = 5')).notes;
+  check('NUL characters in text are taken out (the note "a<NUL>b<NUL>" becomes "ab") and reported', nulNotes === 'ab' && Object.keys(report.models.candidate.notes).some((n) => /NUL character/.test(n)), JSON.stringify(nulNotes));
+  const nulValue = (await one(`SELECT "value" v FROM settings WHERE key = 'nul'`)).v;
+  check('NUL characters inside JSON text are taken out as well and reported', JSON.stringify(nulValue) === '{"key":"xy","list":["pq"]}' && Object.keys(report.models.setting.notes).some((n) => /NUL character/.test(n)), JSON.stringify(nulValue));
   const req = await q('SELECT id, "legacyId" l, "departmentId" d, "pipelineTemplateId" p, "scorecardId" s, "createdBy" c FROM requisitions ORDER BY id');
   check('job opening 1: department, template, scorecard and creator become their numbers', req[0].id === 1 && req[0].d === 1 && req[0].p === 1 && req[0].s === 1 && req[0].c === 1, JSON.stringify(req[0]));
   check('job opening 2: missing department, missing scorecard and skipped creator are all emptied', req[1].id === 2 && req[1].d === null && req[1].s === null && req[1].c === null, JSON.stringify(req[1]));
