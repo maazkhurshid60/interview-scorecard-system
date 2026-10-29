@@ -1,6 +1,6 @@
 import { prisma } from './client.js';
-import { castId } from './helpers.js';
-import { buildDoc, findDoc, insertDoc, pick, selectDocs } from './records.js';
+import { castId, idOut } from './helpers.js';
+import { buildDoc, findDoc, findDocByPublicRef, insertDoc, pick, selectDocs } from './records.js';
 import { saveEntity, track } from './entity.js';
 import { Interview } from './schemas.js';
 
@@ -19,25 +19,33 @@ export async function findById(id) {
   return full(await findDoc(Interview, castId(id, '_id')));
 }
 
+/**
+ * The interview a public availability link points at (a random token, or the old id of a link shared before the move), or
+ * null. It comes back as a tracked record, like `findById`.
+ */
+export async function findByPublicRef(ref) {
+  return full(await findDocByPublicRef(Interview, ref));
+}
+
 /** The interview of this application for this stage, or null. */
 export async function findByApplicationAndStage(applicationId, stageKey) {
-  const [doc] = await selectDocs(Interview, 'WHERE "applicationId" = $1 AND "stageKey" = $2 ORDER BY id ASC LIMIT 1', [castId(applicationId, 'applicationId'), String(stageKey)]);
+  const [doc] = await selectDocs(Interview, 'WHERE "applicationId" = $1::int AND "stageKey" = $2 ORDER BY id ASC LIMIT 1', [castId(applicationId, 'applicationId'), String(stageKey)]);
   return full(doc || null);
 }
 
 /** Every interview of one application. */
 export async function listByApplication(applicationId) {
-  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1 ORDER BY id ASC', [castId(applicationId, 'applicationId')]));
+  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1::int ORDER BY id ASC', [castId(applicationId, 'applicationId')]));
 }
 
 /** The interviews of one application for these stages. */
 export async function listByApplicationAndStages(applicationId, stageKeys) {
-  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1 AND "stageKey" = ANY($2::text[]) ORDER BY id ASC', [castId(applicationId, 'applicationId'), stageKeys.map(String)]));
+  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1::int AND "stageKey" = ANY($2::text[]) ORDER BY id ASC', [castId(applicationId, 'applicationId'), stageKeys.map(String)]));
 }
 
 /** Every interview of one job opening. */
 export async function listByRequisition(requisitionId) {
-  return full(await selectDocs(Interview, 'WHERE "requisitionId" = $1 ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]));
+  return full(await selectDocs(Interview, 'WHERE "requisitionId" = $1::int ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]));
 }
 
 /**
@@ -46,22 +54,22 @@ export async function listByRequisition(requisitionId) {
  */
 export async function listSummaries({ applicationId, applicationIds, requisitionId } = {}) {
   const conditions = []; const params = [];
-  if (applicationId && !applicationIds) { params.push(castId(applicationId, 'applicationId')); conditions.push(`"applicationId" = $${params.length}`); }
-  if (requisitionId) { params.push(castId(requisitionId, 'requisitionId')); conditions.push(`"requisitionId" = $${params.length}`); }
-  if (applicationIds) { params.push(ids(applicationIds, 'applicationId')); conditions.push(`"applicationId" = ANY($${params.length}::text[])`); }
+  if (applicationId && !applicationIds) { params.push(castId(applicationId, 'applicationId')); conditions.push(`"applicationId" = $${params.length}::int`); }
+  if (requisitionId) { params.push(castId(requisitionId, 'requisitionId')); conditions.push(`"requisitionId" = $${params.length}::int`); }
+  if (applicationIds) { params.push(ids(applicationIds, 'applicationId')); conditions.push(`"applicationId" = ANY($${params.length}::int[])`); }
   const docs = await selectDocs(Interview, `${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY id ASC`, params);
   return docs.map((doc) => pick(doc, ['applicationId', 'stageKey', 'status', 'stageAverage']));
 }
 
 /** Just the stored artifact file id, meeting event id and provider of each interview of one application. */
 export async function listFileAndMeetingInfo(applicationId) {
-  const docs = await selectDocs(Interview, 'WHERE "applicationId" = $1 ORDER BY id ASC', [castId(applicationId, 'applicationId')]);
+  const docs = await selectDocs(Interview, 'WHERE "applicationId" = $1::int ORDER BY id ASC', [castId(applicationId, 'applicationId')]);
   return docs.map((doc) => pick(doc, ['artifactFilePublicId', 'calendarEventId', 'provider']));
 }
 
 /** Just the stored artifact file id of each interview of these applications. */
 export async function listArtifactFileIds(applicationIds) {
-  const docs = await selectDocs(Interview, 'WHERE "applicationId" = ANY($1::text[]) ORDER BY id ASC', [ids(applicationIds, 'applicationId')]);
+  const docs = await selectDocs(Interview, 'WHERE "applicationId" = ANY($1::int[]) ORDER BY id ASC', [ids(applicationIds, 'applicationId')]);
   return docs.map((doc) => pick(doc, ['artifactFilePublicId']));
 }
 
@@ -108,7 +116,7 @@ export async function summarizeAiCost() {
   const groups = new Map();
   for (const row of rows) {
     const key = `${row.requisitionId}|${row.stageKey}|${row.month}`;
-    if (!groups.has(key)) groups.set(key, { _id: { requisitionId: row.requisitionId, stageKey: row.stageKey, month: row.month }, costs: [], inputs: [], outputs: [], count: 0 });
+    if (!groups.has(key)) groups.set(key, { _id: { requisitionId: idOut(row.requisitionId), stageKey: row.stageKey, month: row.month }, costs: [], inputs: [], outputs: [], count: 0 });
     const group = groups.get(key);
     group.costs.push(Number(row.cost));
     if (row.input !== null) group.inputs.push(Number(row.input));

@@ -1,6 +1,6 @@
 import { prisma } from './client.js';
-import { castDate, castId, castIdField, compareBytes, escapeLike } from './helpers.js';
-import { buildDoc, findDoc, insertDoc, nullsExpr, pick, selectDocs, selectNames } from './records.js';
+import { castDate, castId, castIdField, compareBytes, escapeLike, idOut } from './helpers.js';
+import { buildDoc, findDoc, findDocByPublicRef, insertDoc, nullsExpr, pick, selectDocs, selectNames } from './records.js';
 import { saveEntity, track } from './entity.js';
 import { Requisition } from './schemas.js';
 
@@ -18,8 +18,8 @@ const queryIds = (ids, path = '_id') => ids.map((id) => castId(id, path));
 async function fillInDepartments(requisitions, select) {
   const names = selectNames(select);
   const wanted = [...new Set(requisitions.map((r) => r.departmentId).filter((id) => typeof id === 'string'))];
-  const rows = wanted.length ? await prisma.department.findMany({ where: { id: { in: wanted } } }) : [];
-  const byId = new Map(rows.map((row) => [row.id, pick({ _id: row.id, name: row.name, description: row.description }, names)]));
+  const rows = wanted.length ? await prisma.department.findMany({ where: { id: { in: wanted.map(Number) } } }) : [];
+  const byId = new Map(rows.map((row) => [idOut(row.id), pick({ _id: idOut(row.id), name: row.name, description: row.description }, names)]));
   for (const requisition of requisitions) {
     if (typeof requisition.departmentId === 'string') {
       const department = byId.get(requisition.departmentId);
@@ -50,27 +50,35 @@ export async function findFields(id, fields) {
 
 const PUBLIC_FIELDS = 'title employmentType fullTimeDetails partTimeDetails contractDetails internshipDetails temporaryDetails location workplaceType officeLocation remoteRegion jobDescription initialScreeningCriteria questionnaire applicationDeadline aiScreeningEnabled status createdAt interviewAvailability';
 
-/** The public view of one job opening, the fields a candidate may see on the application page, or null. */
-export async function findPublicView(id) {
-  const requisition = await findDoc(Requisition, castId(id, '_id'));
+/**
+ * The public view of the job opening a public link points at (a random token, or the old id of a link shared before the
+ * move): the fields a candidate may see on the application page, or null.
+ */
+export async function findPublicView(ref) {
+  const requisition = await findDocByPublicRef(Requisition, ref);
   return requisition ? pick(requisition, selectNames(PUBLIC_FIELDS)) : null;
+}
+
+/** The job opening a public link points at (see `findPublicView`), as a tracked record like `findById`, or null. */
+export async function findByPublicRef(ref) {
+  return full(await findDocByPublicRef(Requisition, ref));
 }
 
 /** The title and status of each of these job openings (those that exist). */
 export async function listTitlesAndStatuses(ids) {
-  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::text[]) ORDER BY id ASC', [queryIds(ids)]);
+  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::int[]) ORDER BY id ASC', [queryIds(ids)]);
   return docs.map((doc) => pick(doc, ['title', 'status']));
 }
 
 /** The title of each of these job openings (those that exist), sorted by title. */
 export async function listTitles(ids) {
-  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::text[])', [queryIds(ids)]);
-  return docs.sort((a, b) => compareBytes(a.title, b.title) || compareBytes(a._id, b._id)).map((doc) => pick(doc, ['title']));
+  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::int[])', [queryIds(ids)]);
+  return docs.sort((a, b) => compareBytes(a.title, b.title) || Number(a._id) - Number(b._id)).map((doc) => pick(doc, ['title']));
 }
 
 /** The title and hiring stages of each of these job openings (those that exist). */
 export async function findTitlesAndStages(ids) {
-  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::text[]) ORDER BY id ASC', [queryIds(ids)]);
+  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::int[]) ORDER BY id ASC', [queryIds(ids)]);
   return docs.map((doc) => pick(doc, ['title', 'stages']));
 }
 
@@ -81,7 +89,7 @@ export async function findTitlesAndStages(ids) {
 export async function findOpenByTitle(title, { exceptId } = {}) {
   const params = [escapeLike(title)];
   if (exceptId) params.push(castId(exceptId, '_id'));
-  const [doc] = await selectDocs(Requisition, `WHERE title ILIKE $1 ESCAPE '\\' AND status = 'open'${exceptId ? ' AND id <> $2' : ''} ORDER BY id ASC LIMIT 1`, params);
+  const [doc] = await selectDocs(Requisition, `WHERE title ILIKE $1 ESCAPE '\\' AND status = 'open'${exceptId ? ' AND id <> $2::int' : ''} ORDER BY id ASC LIMIT 1`, params);
   return doc ? pick(doc, ['title']) : null;
 }
 
@@ -92,7 +100,7 @@ export async function findOpenByTitle(title, { exceptId } = {}) {
 export async function list({ status, departmentId } = {}) {
   const conditions = []; const params = [];
   if (status) { params.push(status === 'paused' ? ['paused', 'on_hold'] : [status]); conditions.push(`status::text = ANY($${params.length}::text[])`); }
-  if (departmentId) { params.push(castId(departmentId, 'departmentId')); conditions.push(`"departmentId" = $${params.length}`); }
+  if (departmentId) { params.push(castId(departmentId, 'departmentId')); conditions.push(`"departmentId" = $${params.length}::int`); }
   const requisitions = await selectDocs(Requisition, `${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY "createdAt" DESC, id DESC`, params);
   return fillInDepartments(requisitions, 'name');
 }
@@ -119,9 +127,9 @@ export async function save(requisition) {
 export async function setScorecard(id, scorecardId) {
   const requisitionId = castId(id, '_id');
   const target = castIdField(scorecardId, 'scorecardId');
-  if (target.problem) throw Object.assign(new Error(target.problem.replace(' because of "BSONError"', '')), { name: 'CastError', kind: 'ObjectId', path: 'scorecardId', value: scorecardId });
+  if (target.problem) throw Object.assign(new Error(target.problem), { name: 'CastError', kind: 'Number', path: 'scorecardId', value: scorecardId });
   const empty = target.value === null || target.value === undefined;
-  await prisma.$executeRawUnsafe(`UPDATE requisitions SET "scorecardId" = $2, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(empty ? { add: ['scorecardId'] } : { remove: ['scorecardId'] })} WHERE id = $1`, requisitionId, empty ? null : target.value, new Date().toISOString());
+  await prisma.$executeRawUnsafe(`UPDATE requisitions SET "scorecardId" = $2::int, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(empty ? { add: ['scorecardId'] } : { remove: ['scorecardId'] })} WHERE id = $1::int`, requisitionId, empty ? null : target.value, new Date().toISOString());
 }
 
 /** Deletes one job opening (and, with it, its applications, interviews and scorecards, which PostgreSQL removes by itself). */

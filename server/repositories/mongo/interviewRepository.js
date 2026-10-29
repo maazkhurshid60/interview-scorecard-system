@@ -16,6 +16,11 @@ export async function findById(id) {
   return full(await Interview.findById(id));
 }
 
+/** The interview a public availability link points at (here its id, as it always was), or null. */
+export async function findByPublicRef(ref) {
+  return full(await Interview.findById(ref));
+}
+
 /** The interview of this application for this stage, or null. */
 export async function findByApplicationAndStage(applicationId, stageKey) {
   return full(await Interview.findOne({ applicationId, stageKey }));

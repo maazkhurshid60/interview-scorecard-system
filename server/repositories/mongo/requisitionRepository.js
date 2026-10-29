@@ -34,6 +34,11 @@ export async function findPublicView(id) {
     .lean());
 }
 
+/** The job opening a public link points at (here its id, as it always was), as a record to change and save, or null. */
+export async function findByPublicRef(ref) {
+  return full(await Requisition.findById(ref));
+}
+
 /** The title and status of each of these job openings (those that exist). */
 export async function listTitlesAndStatuses(ids) {
   return plain(await Requisition.find({ _id: { $in: ids } }).select('title status').lean());

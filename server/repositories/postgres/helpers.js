@@ -12,14 +12,8 @@ const { Prisma } = prismaPkg;
 
 // ------------------------------------------------------------------------------------------------------------- ids
 
-/**
- * A table row gets its id from the database: an auto-increment number (1, 2, 3, ...). So a repository inserts without an id
- * and reads the new one back. (This used to make MongoDB-style ids; it now refuses, so a repository that was not converted
- * fails loudly instead of writing a text id into a number column.)
- */
-export function newId() {
-  throw new Error('A table row gets its number from the database, so no id is made here. Insert without an id and read it back (RETURNING id). For an id inside a JSON list use newSubdocId().');
-}
+// A table row gets its id from the database: an auto-increment number (1, 2, 3, ...). A repository inserts without an id and
+// reads the new one back (RETURNING id). Only the items inside a JSON list (below) get an id made here.
 
 let counter = crypto.randomBytes(3).readUIntBE(0, 3);
 const processBytes = crypto.randomBytes(5);
@@ -41,6 +35,18 @@ export function newSubdocId(seconds = Math.floor(Date.now() / 1000)) {
 export function castSubdocId(value) {
   const text = typeof value === 'string' ? value : '';
   return /^[0-9a-fA-F]{24}$/.test(text) ? text.toLowerCase() : undefined;
+}
+
+/**
+ * What the last part of a public link is. A new link holds a random token (a UUID); a link shared before the move holds the
+ * old 24-character MongoDB id, which is kept in `legacyId`. The plain number is NOT accepted in a public link (it could be guessed).
+ * @returns {{kind: 'token'|'legacy', value: string} | null} null when it is neither
+ */
+export function parsePublicRef(value) {
+  if (typeof value !== 'string') return null;
+  if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value)) return { kind: 'token', value: value.toLowerCase() };
+  if (/^[0-9a-fA-F]{24}$/.test(value)) return { kind: 'legacy', value: value.toLowerCase() };
+  return null;
 }
 
 /**

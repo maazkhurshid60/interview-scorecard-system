@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { prisma } from './client.js';
-import { castBoolean, castDate, castFailureMessage, castId, castIdField, castNumber, castString, castSubdocId, idOut, jsonParam, newSubdocId, parseId, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castDate, castFailureMessage, castId, castIdField, castNumber, castString, castSubdocId, idOut, jsonParam, newSubdocId, parseId, parsePublicRef, sameJson, translateError, validationError } from './helpers.js';
 
 /**
  * The shared engine of the PostgreSQL repositories that handle whole records (candidates, applications, interviews, job
@@ -45,7 +45,7 @@ const FORCE = Symbol('force');
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 
 /** Prepares a model description: finds every stored column and the path of the field in it. */
-export function defineModel({ name, table, fields, timestamps = 'both' }) {
+export function defineModel({ name, table, fields, timestamps = 'both', readOnly = [] }) {
   const columns = [];
   const walk = (specs, prefix) => {
     for (const [key, spec] of Object.entries(specs)) {
@@ -55,7 +55,7 @@ export function defineModel({ name, table, fields, timestamps = 'both' }) {
     }
   };
   walk(fields, []);
-  return { name, table, fields, timestamps, columns };
+  return { name, table, fields, timestamps, columns, readOnly }; // `readOnly`: columns the database fills in (a public token): read, never written
 }
 
 // -------------------------------------------------------------------------------------------------- small path helpers
@@ -122,6 +122,7 @@ export function rowToDoc(model, row) {
     else value = spec.kind === 'nested' ? { ...groupDefaults(spec), ...revive(spec, stored) } : revive(spec, stored);
     if (value !== undefined) setPath(doc, path, value);
   }
+  for (const column of model.readOnly) if (row[column] !== null && row[column] !== undefined) doc[column] = row[column];
   for (const [key, spec] of Object.entries(model.fields)) { // lists always exist, as Mongoose gives an empty list
     if (spec.kind === 'array' && doc[key] === undefined) doc[key] = [];
   }
@@ -353,13 +354,13 @@ export async function insertDoc(model, doc, { now = new Date(), client = prisma 
   let inserted;
   try {
     inserted = await client.$queryRawUnsafe(
-      `INSERT INTO "${model.table}" (${columns.join(', ')}) SELECT ${columns.map((column) => `r.${column}`).join(', ')} FROM jsonb_populate_record(null::"${model.table}", $1::jsonb) r RETURNING id`,
+      `INSERT INTO "${model.table}" (${columns.join(', ')}) SELECT ${columns.map((column) => `r.${column}`).join(', ')} FROM jsonb_populate_record(null::"${model.table}", $1::jsonb) r RETURNING id${model.readOnly.map((column) => `, "${column}"`).join('')}`,
       JSON.stringify(row),
     );
   } catch (error) {
     throw translateError(error, {}, uniqueFields(model));
   }
-  return { ...doc, _id: idOut(inserted[0].id), ...(row.createdAt ? { createdAt: now } : {}), ...(row.updatedAt ? { updatedAt: now } : {}) };
+  return { ...doc, _id: idOut(inserted[0].id), ...Object.fromEntries(model.readOnly.map((column) => [column, inserted[0][column]])), ...(row.createdAt ? { createdAt: now } : {}), ...(row.updatedAt ? { updatedAt: now } : {}) };
 }
 
 /** The unique fields of a table, for naming them in a duplicate error (set `unique` on a model's description to use). */
@@ -397,6 +398,17 @@ export function nullsExpr({ add = [], remove = [] } = {}) {
 /** The record with this id (a number or its text), or null. */
 export async function findDoc(model, id) {
   const [doc] = await selectDocs(model, 'WHERE t.id = $1::int', [castId(id, '_id')]);
+  return doc || null;
+}
+
+/**
+ * The record a public link points at (see `parsePublicRef`): by its random token, or by the old MongoDB id kept in `legacyId`.
+ * Null when the link is neither, or no record has it.
+ */
+export async function findDocByPublicRef(model, ref) {
+  const parsed = parsePublicRef(ref);
+  if (!parsed) return null;
+  const [doc] = await selectDocs(model, `WHERE t."${parsed.kind === 'token' ? 'publicToken' : 'legacyId'}" = $1`, [parsed.value]);
   return doc || null;
 }
 

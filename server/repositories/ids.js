@@ -5,4 +5,5 @@ const impl = await load('ids');
 
 export const isValidId = impl.isValidId;
 export const isValidIdString = impl.isValidIdString;
+export const isValidPublicRef = impl.isValidPublicRef;
 export const normalizeId = impl.normalizeId;

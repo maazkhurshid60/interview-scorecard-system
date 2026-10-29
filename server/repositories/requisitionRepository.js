@@ -7,6 +7,7 @@ export const findById = impl.findById;
 export const findByIdWithDepartment = impl.findByIdWithDepartment;
 export const findFields = impl.findFields;
 export const findPublicView = impl.findPublicView;
+export const findByPublicRef = impl.findByPublicRef;
 export const listTitlesAndStatuses = impl.listTitlesAndStatuses;
 export const listTitles = impl.listTitles;
 export const findTitlesAndStages = impl.findTitlesAndStages;

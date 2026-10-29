@@ -15,6 +15,11 @@ export function isValidIdString(value) {
   return mongoose.Types.ObjectId.isValid(value);
 }
 
+/** True when the value can be the last part of a public link (here that is an ObjectId, as it always was). */
+export function isValidPublicRef(value) {
+  return mongoose.Types.ObjectId.isValid(value);
+}
+
 /** The id as its canonical text (lower-case hex), whatever form it was given in. */
 export function normalizeId(value) {
   return String(new mongoose.Types.ObjectId(value));

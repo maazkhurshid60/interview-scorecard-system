@@ -95,6 +95,7 @@ export const Scorecard = defineModel({
 export const Interview = defineModel({
   name: 'Interview',
   table: 'interviews',
+  readOnly: ['publicToken'],
   fields: {
     applicationId: F.id({ required: true }),
     requisitionId: F.id({ required: true }),
@@ -138,6 +139,7 @@ const INPUT_TYPES = ['transcript', 'artifact', 'pass_fail', 'status_only', 'manu
 export const Requisition = defineModel({
   name: 'Requisition',
   table: 'requisitions',
+  readOnly: ['publicToken'],
   fields: {
     title: F.string({ required: true, trim: true, minlength: 5 }),
     employmentType: F.string({ enum: ['full_time', 'part_time', 'contract', 'internship', 'temporary'], default: 'full_time' }),

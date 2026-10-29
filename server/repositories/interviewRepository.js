@@ -4,6 +4,7 @@ import { load } from './provider.js';
 const impl = await load('interviewRepository');
 
 export const findById = impl.findById;
+export const findByPublicRef = impl.findByPublicRef;
 export const findByApplicationAndStage = impl.findByApplicationAndStage;
 export const listByApplication = impl.listByApplication;
 export const listByApplicationAndStages = impl.listByApplicationAndStages;

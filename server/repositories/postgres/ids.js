@@ -1,4 +1,4 @@
-import { parseId } from './helpers.js';
+import { parseId, parsePublicRef } from './helpers.js';
 
 /**
  * What an id looks like is a database detail, so the checks live here rather than in controllers. This is the
@@ -15,6 +15,14 @@ export function isValidId(value) {
 /** The stricter check some public endpoints use on URL parameters (a number is all they accept here). */
 export function isValidIdString(value) {
   return parseId(value) !== undefined;
+}
+
+/**
+ * True when the value can be the last part of a public link (a job application link, an availability link): a random token,
+ * or the old 24-character id of a link shared before the move. A plain number is not accepted (it could be guessed).
+ */
+export function isValidPublicRef(value) {
+  return parsePublicRef(value) !== null;
 }
 
 /** The id as its canonical text (digits without a leading zero), whatever form it was given in. Throws for anything that is not an id. */
