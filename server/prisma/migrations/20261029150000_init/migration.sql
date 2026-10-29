@@ -42,7 +42,7 @@ CREATE TYPE "InterviewStatus" AS ENUM ('pending', 'scheduled', 'transcript_pendi
 
 -- CreateTable
 CREATE TABLE "users" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "passwordHash" TEXT NOT NULL,
@@ -53,14 +53,15 @@ CREATE TABLE "users" (
     "active" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "refresh_tokens" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
     "tokenHash" TEXT NOT NULL,
     "familyId" TEXT NOT NULL,
     "familyStartedAt" TIMESTAMP(3) NOT NULL,
@@ -70,53 +71,57 @@ CREATE TABLE "refresh_tokens" (
     "userAgent" TEXT,
     "ip" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "nullFields" JSONB,
 
     CONSTRAINT "refresh_tokens_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "settings" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "key" TEXT NOT NULL,
     "value" JSONB,
     "description" TEXT,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "nullFields" JSONB,
 
     CONSTRAINT "settings_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "audit_logs" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "action" "AuditAction" NOT NULL,
-    "userId" TEXT,
-    "requisitionId" TEXT,
-    "applicationId" TEXT,
+    "userId" INTEGER,
+    "requisitionId" INTEGER,
+    "applicationId" INTEGER,
     "targetType" TEXT,
     "targetId" TEXT,
     "oldValue" JSONB,
     "newValue" JSONB,
     "reason" TEXT,
     "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "nullFields" JSONB,
 
     CONSTRAINT "audit_logs_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "departments" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
-    "createdBy" TEXT,
+    "createdBy" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "departments_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "pipeline_templates" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
@@ -124,13 +129,14 @@ CREATE TABLE "pipeline_templates" (
     "stages" JSONB NOT NULL DEFAULT '[]',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "pipeline_templates_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "candidates" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "phone" TEXT,
@@ -142,13 +148,16 @@ CREATE TABLE "candidates" (
     "notes" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "candidates_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "requisitions" (
-    "id" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "legacyId" TEXT,
+    "publicToken" TEXT NOT NULL DEFAULT (gen_random_uuid())::text,
     "title" TEXT NOT NULL,
     "employmentType" "EmploymentType" NOT NULL DEFAULT 'full_time',
     "fullTimeDetails" JSONB,
@@ -162,11 +171,11 @@ CREATE TABLE "requisitions" (
     "remoteRegion" TEXT NOT NULL DEFAULT '',
     "jobDescription" TEXT NOT NULL,
     "status" "RequisitionStatus" NOT NULL DEFAULT 'open',
-    "departmentId" TEXT,
-    "pipelineTemplateId" TEXT,
+    "departmentId" INTEGER,
+    "pipelineTemplateId" INTEGER,
     "pipelineTemplateName" TEXT,
     "stages" JSONB NOT NULL DEFAULT '[]',
-    "scorecardId" TEXT,
+    "scorecardId" INTEGER,
     "hireThreshold" DOUBLE PRECISION NOT NULL DEFAULT 3.5,
     "maybeThreshold" DOUBLE PRECISION NOT NULL DEFAULT 3,
     "initialScreeningCriteria" JSONB NOT NULL DEFAULT '[]',
@@ -175,30 +184,32 @@ CREATE TABLE "requisitions" (
     "applicationDeadline" TIMESTAMP(3),
     "aiScreeningEnabled" BOOLEAN NOT NULL DEFAULT true,
     "closedAt" TIMESTAMP(3),
-    "createdBy" TEXT,
+    "createdBy" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "requisitions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "scorecards" (
-    "id" TEXT NOT NULL,
-    "requisitionId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "requisitionId" INTEGER NOT NULL,
     "generatedByAI" BOOLEAN NOT NULL DEFAULT true,
     "stages" JSONB NOT NULL DEFAULT '[]',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "scorecards_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "applications" (
-    "id" TEXT NOT NULL,
-    "candidateId" TEXT NOT NULL,
-    "requisitionId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "candidateId" INTEGER NOT NULL,
+    "requisitionId" INTEGER NOT NULL,
     "currentStageKey" TEXT,
     "source" "ApplicationSource" NOT NULL DEFAULT 'manual',
     "opportunityDuration" TEXT,
@@ -217,7 +228,7 @@ CREATE TABLE "applications" (
     "disposition" "Disposition",
     "rank" DOUBLE PRECISION,
     "finalDecision" "FinalDecision",
-    "finalDecisionBy" TEXT,
+    "finalDecisionBy" INTEGER,
     "rejectionReason" TEXT,
     "offerLetterUrl" TEXT,
     "offerLetterPublicId" TEXT,
@@ -233,15 +244,18 @@ CREATE TABLE "applications" (
     "onboardingFormSentAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "applications_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "interviews" (
-    "id" TEXT NOT NULL,
-    "applicationId" TEXT NOT NULL,
-    "requisitionId" TEXT NOT NULL,
+    "id" SERIAL NOT NULL,
+    "legacyId" TEXT,
+    "publicToken" TEXT NOT NULL DEFAULT (gen_random_uuid())::text,
+    "applicationId" INTEGER NOT NULL,
+    "requisitionId" INTEGER NOT NULL,
     "stageKey" TEXT NOT NULL,
     "meetingMode" "MeetingMode" NOT NULL DEFAULT 'online',
     "provider" "TranscriptProvider" NOT NULL DEFAULT 'google_meet',
@@ -250,7 +264,7 @@ CREATE TABLE "interviews" (
     "meetingStart" TIMESTAMP(3),
     "meetingEnd" TIMESTAMP(3),
     "conferenceId" TEXT,
-    "designatedScorerId" TEXT,
+    "designatedScorerId" INTEGER,
     "candidateAvailability" JSONB,
     "consentObtained" BOOLEAN NOT NULL DEFAULT false,
     "transcriptText" TEXT,
@@ -268,6 +282,7 @@ CREATE TABLE "interviews" (
     "aiCostUsd" DOUBLE PRECISION,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "nullFields" JSONB,
 
     CONSTRAINT "interviews_pkey" PRIMARY KEY ("id")
 );
@@ -321,6 +336,12 @@ CREATE INDEX "candidates_name_idx" ON "candidates"("name");
 CREATE INDEX "candidates_email_idx" ON "candidates"("email");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "requisitions_legacyId_key" ON "requisitions"("legacyId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "requisitions_publicToken_key" ON "requisitions"("publicToken");
+
+-- CreateIndex
 CREATE INDEX "requisitions_title_idx" ON "requisitions"("title");
 
 -- CreateIndex
@@ -343,6 +364,12 @@ CREATE INDEX "applications_requisitionId_idx" ON "applications"("requisitionId")
 
 -- CreateIndex
 CREATE INDEX "applications_requisitionId_weightedTotal_idx" ON "applications"("requisitionId", "weightedTotal" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "interviews_legacyId_key" ON "interviews"("legacyId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "interviews_publicToken_key" ON "interviews"("publicToken");
 
 -- CreateIndex
 CREATE INDEX "interviews_applicationId_idx" ON "interviews"("applicationId");
@@ -371,6 +398,7 @@ ALTER TABLE "interviews" ADD CONSTRAINT "interviews_applicationId_fkey" FOREIGN 
 -- AddForeignKey
 ALTER TABLE "interviews" ADD CONSTRAINT "interviews_requisitionId_fkey" FOREIGN KEY ("requisitionId") REFERENCES "requisitions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+
 -- ---------------------------------------------------------------------------------------------------------------
 -- Rules from the Mongoose models that a plain column cannot carry (see prisma/extra-constraints.sql for the reasons).
 -- ---------------------------------------------------------------------------------------------------------------
@@ -388,4 +416,3 @@ ALTER TABLE candidates ADD CONSTRAINT candidates_phone_format CHECK (phone IS NU
 -- Department.name: MongoDB also kept a case-insensitive index on the name (collation en, strength 2)
 CREATE INDEX departments_name_lower_idx ON departments (lower(name));
 
--- After the data migration:

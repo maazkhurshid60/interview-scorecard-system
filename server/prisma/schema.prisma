@@ -277,7 +277,7 @@ model Candidate {
 model Requisition {
   id                       Int            @id @default(autoincrement())
   legacyId                 String?        @unique // the old MongoDB id, so job links already shared (/apply/<old id>) keep working
-  publicToken              String         @unique @default(dbgenerated("gen_random_uuid()::text")) // random, unguessable: used in public job links instead of the number
+  publicToken              String         @unique @default(dbgenerated("(gen_random_uuid())::text")) // random, unguessable: used in public job links instead of the number
   title                    String
   employmentType           EmploymentType    @default(full_time)
   fullTimeDetails          Json?
@@ -405,7 +405,7 @@ model Application {
 model Interview {
   id            Int @id @default(autoincrement())
   legacyId      String? @unique // the old MongoDB id, so availability links already emailed (/interview/<old id>/availability) keep working
-  publicToken   String @unique @default(dbgenerated("gen_random_uuid()::text")) // random, unguessable: used in availability links instead of the number
+  publicToken   String @unique @default(dbgenerated("(gen_random_uuid())::text")) // random, unguessable: used in availability links instead of the number
   applicationId Int
   requisitionId Int
   stageKey      String
