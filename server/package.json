@@ -19,7 +19,8 @@
     "verify:postgres": "node prisma/migrate/verify.js",
     "parity": "node prisma/parity/run.js",
     "parity:real": "node prisma/parity/real-data.js",
-    "smoke:postgres": "node prisma/parity/smoke-server.js"
+    "smoke:postgres": "node prisma/parity/smoke-server.js",
+    "test:migrate": "node prisma/migrate/awkward-test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",

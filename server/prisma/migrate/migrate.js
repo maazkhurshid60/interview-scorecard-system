@@ -129,8 +129,8 @@ for (const spec of MODELS) {
 }
 
 report.finishedAt = new Date().toISOString();
-fs.mkdirSync(path.join(here, '..', '..', 'logs'), { recursive: true });
-const reportPath = path.join(here, '..', '..', 'logs', 'migration-report.json');
+const reportPath = process.env.MIGRATE_REPORT_PATH || path.join(here, '..', '..', 'logs', 'migration-report.json'); // the test run keeps its own report
+fs.mkdirSync(path.dirname(reportPath), { recursive: true });
 fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 
 const totals = Object.values(report.models).reduce((a, m) => ({ read: a.read + m.read, written: a.written + m.written, skipped: a.skipped + m.skipped.length, repaired: a.repaired + m.repaired.length }), { read: 0, written: 0, skipped: 0, repaired: 0 });

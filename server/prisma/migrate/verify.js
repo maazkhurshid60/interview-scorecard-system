@@ -60,7 +60,7 @@ const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 const prisma = new PrismaClient();
 await mongoose.connect(mongoUri);
 const mongo = mongoose.connection.db;
-const reportPath = path.join(serverDir, 'logs', 'migration-report.json');
+const reportPath = process.env.MIGRATE_REPORT_PATH || path.join(serverDir, 'logs', 'migration-report.json');
 const report = fs.existsSync(reportPath) ? JSON.parse(fs.readFileSync(reportPath, 'utf8')) : { models: {} };
 
 const problems = []; let fieldChecks = 0; let recordChecks = 0;
