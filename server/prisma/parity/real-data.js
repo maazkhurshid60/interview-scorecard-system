@@ -6,11 +6,18 @@
  * It only reads: it never creates, changes or deletes anything, in either database. MongoDB is the one in MONGODB_URI and
  * PostgreSQL the one in DATABASE_URL (your normal ones, after `npm run migrate:postgres`). Every read function is tried
  * with every real id and name it can use, so the odd records the test data did not have are covered.
+ *
+ * MongoDB names a record by a 24-character id and PostgreSQL by a number, so the PostgreSQL side is translated: the number a record
+ * must have is its place in the sorted ids of its collection (the rule the data copy uses), every id handed to a PostgreSQL
+ * repository becomes that number, and every id in an answer is turned back into the 24-character id before the two are compared.
+ * Two things differ by design and are taken out of the comparison: the random `publicToken` (only PostgreSQL has it), and the user
+ * of an audit entry whose user was deleted (the data copy empties a link to a record that does not exist).
  */
 import '../../config/env.js';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import mongoose from 'mongoose';
+import { numberIds } from '../migrate/shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositories = path.join(here, '..', '..', 'repositories');
@@ -30,6 +37,42 @@ const tokens = await docs('refreshtokens'); const audits = await docs('auditlogs
 const userIds = new Set(users.map((u) => hex(u._id)));
 const liveTokens = tokens.filter((t) => userIds.has(hex(t.userId)));
 const skippedTokens = tokens.length - liveTokens.length;
+
+// ---- ids: the number every record has in PostgreSQL, and the way back
+const collections = { user: users, department: departments, pipelineTemplate: templates, setting: settings, candidate: candidates, requisition: requisitions, scorecard: scorecards, application: applications, interview: interviews, refreshToken: tokens, auditLog: audits };
+const numbers = {}; const hexByNumber = {}; const numberOfHex = new Map();
+for (const [delegate, list] of Object.entries(collections)) {
+  numbers[delegate] = numberIds(list.map((d) => hex(d._id)));
+  hexByNumber[delegate] = new Map([...numbers[delegate]].map(([h, n]) => [n, h]));
+  for (const [h, n] of numbers[delegate]) numberOfHex.set(h, n);
+}
+const OWN = { userRepository: 'user', refreshTokenRepository: 'refreshToken', settingRepository: 'setting', auditLogRepository: 'auditLog', departmentRepository: 'department', pipelineTemplateRepository: 'pipelineTemplate', candidateRepository: 'candidate', requisitionRepository: 'requisition', scorecardRepository: 'scorecard', applicationRepository: 'application', interviewRepository: 'interview' };
+const LINK = { userId: 'user', candidateId: 'candidate', requisitionId: 'requisition', applicationId: 'application', departmentId: 'department', pipelineTemplateId: 'pipelineTemplate', scorecardId: 'scorecard', createdBy: 'user', finalDecisionBy: 'user', designatedScorerId: 'user', overriddenBy: 'user' };
+const ID_LISTS = { listCandidateIdsForRequisition: 'candidate', listRequisitionIdsWithApplications: 'requisition', listAttachedCandidateIds: 'candidate', findIdsBySearch: 'candidate', listPendingScreeningIds: 'application' };
+const PUBLIC_LINK = new Set(['findPublicView', 'findByPublicRef']); // a public link is handed over as it is: a seeded record's old id is its `legacyId`
+const HEX24 = /^[0-9a-fA-F]{24}$/; const DIGITS = /^[1-9][0-9]{0,9}$/;
+
+/** What is handed to a PostgreSQL repository: every 24-character id becomes its number. */
+const toArg = (value) => {
+  if (typeof value === 'string') return HEX24.test(value) && numberOfHex.has(value.toLowerCase()) ? String(numberOfHex.get(value.toLowerCase())) : value;
+  if (Array.isArray(value)) return value.map(toArg);
+  if (value && typeof value === 'object' && !(value instanceof Date)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toArg(v)]));
+  return value;
+};
+
+/** A PostgreSQL answer with its numbers turned back into the 24-character ids (`collection` is what `_id` and a plain list of ids belong to). */
+const toHex = (value, key, collection) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    const target = key === '_id' ? collection : (key === '#list' ? collection : LINK[key]);
+    return target && DIGITS.test(value) ? (hexByNumber[target].get(Number(value)) ?? value) : value;
+  }
+  if (typeof value !== 'object' || value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map((item) => toHex(item, key, collection));
+  return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'publicToken' && k !== 'legacyId').map(([k, v]) => [k, toHex(v, k, LINK[k] && v && typeof v === 'object' && !Array.isArray(v) ? LINK[k] : collection)]));
+};
+// the user of an audit entry whose user was deleted: MongoDB still names the missing user, PostgreSQL has emptied the link
+const withoutDeletedUser = (value) => (Array.isArray(value) ? value.map(withoutDeletedUser) : (value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([k, v]) => !(k === 'userId' && v === null)).map(([k, v]) => [k, withoutDeletedUser(v)])) : value));
 
 const ids = (list) => list.map((d) => hex(d._id));
 const uniq = (list) => [...new Set(list.filter((v) => v !== undefined && v !== null && v !== ''))];
@@ -57,7 +100,7 @@ const plan = {
     each('search', [
       [{ page: 1, limit: 500 }],
       ...uniq(audits.map((a) => a.action)).map((action) => [{ action, page: 1, limit: 500 }]),
-      ...uniq(audits.map((a) => a.userId && hex(a.userId))).map((userId) => [{ userId, page: 1, limit: 500 }]),
+      ...uniq(audits.map((a) => a.userId && hex(a.userId))).filter((id) => userIds.has(id)).map((userId) => [{ userId, page: 1, limit: 500 }]), // a user that no longer exists cannot be asked for: the copy emptied that link
       ...uniq(audits.map((a) => a.requisitionId && hex(a.requisitionId))).map((requisitionId) => [{ requisitionId, page: 1, limit: 500 }]),
       ...uniq(audits.map((a) => a.applicationId && hex(a.applicationId))).map((applicationId) => [{ applicationId, page: 1, limit: 500 }]),
       [{ dateFrom: '2000-01-01', dateTo: now.toISOString(), page: 1, limit: 500 }],
@@ -147,8 +190,9 @@ for (const [name, calls] of Object.entries(plan)) {
   const mongo = await load('mongo', name); const postgres = await load('postgres', name);
   for (const { fn, argLists, unordered, ties } of calls) {
     for (const args of argLists) {
-      const [a, b] = [await settle(() => mongo[fn](...args)), await settle(() => postgres[fn](...args))];
-      const norm = (r) => (ties && r.ok ? { ...r, value: sortDeep(r.value) } : (unordered && r.ok ? { ...r, value: sortList(r.value) } : r));
+      const translate = PUBLIC_LINK.has(fn) ? (a) => a : toArg;
+      const [a, b] = [await settle(() => mongo[fn](...args)), await settle(() => postgres[fn](...args.map(translate)).then((answer) => toHex(answer, ID_LISTS[fn] ? '#list' : undefined, ID_LISTS[fn] || OWN[name])))];
+      const norm = (r) => { const cleaned = r.ok && name === 'auditLogRepository' ? { ...r, value: withoutDeletedUser(r.value) } : r; return ties && cleaned.ok ? { ...cleaned, value: sortDeep(cleaned.value) } : (unordered && cleaned.ok ? { ...cleaned, value: sortList(cleaned.value) } : cleaned); };
       checked += 1;
       if (JSON.stringify(norm(a)) !== JSON.stringify(norm(b))) {
         const key = `${name}.${fn}`;
