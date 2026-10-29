@@ -1,44 +1,25 @@
-import { newId } from './helpers.js';
+import { parseId } from './helpers.js';
 
 /**
  * What an id looks like is a database detail, so the checks live here rather than in controllers. This is the
- * PostgreSQL side of ../mongo/ids.js: ids are still 24 hexadecimal characters (`newId` in helpers.js makes them), so
- * the same things count as valid, and the same things go wrong, as with MongoDB.
+ * PostgreSQL side of ../mongo/ids.js: an id is an auto-increment number (1, 2, 3, ...), given as a number or as digits
+ * (from a URL). An old 24-character MongoDB id is not an id here; only the public job and availability links still accept
+ * one (they look the record up by its `legacyId`).
  */
 
-const HEX_ID = /^[0-9a-fA-F]{24}$/;
-const bsonError = (message) => Object.assign(new Error(message), { name: 'BSONError' });
-
-/** The 24 hex characters of an id given as an id object or as 12 raw bytes, or undefined. */
-function hexOfObject(value) {
-  if (value && typeof value === 'object') {
-    if ((value._bsontype === 'ObjectId' || value._bsontype === 'ObjectID') && typeof value.toHexString === 'function') return value.toHexString();
-    if (value instanceof Uint8Array && value.length === 12) return Buffer.from(value).toString('hex');
-  }
-  return undefined;
-}
-
-/** True when the value can be used as an id (an id object, a 24-character hex string, 12 raw bytes, or a number of seconds). */
+/** True when the value can be used as an id (a whole number from 1 up, as a number or as digits). */
 export function isValidId(value) {
-  if (typeof value === 'string') return HEX_ID.test(value);
-  if (typeof value === 'number') return true;
-  return hexOfObject(value) !== undefined;
+  return parseId(value) !== undefined;
 }
 
-/** The stricter check some public endpoints use on URL parameters. */
+/** The stricter check some public endpoints use on URL parameters (a number is all they accept here). */
 export function isValidIdString(value) {
-  return isValidId(value);
+  return parseId(value) !== undefined;
 }
 
-/** The id as its canonical text (lower-case hex), whatever form it was given in. */
+/** The id as its canonical text (digits without a leading zero), whatever form it was given in. Throws for anything that is not an id. */
 export function normalizeId(value) {
-  if (value === undefined || value === null) return newId();
-  if (typeof value === 'string') {
-    if (HEX_ID.test(value)) return value.toLowerCase();
-    throw bsonError('input must be a 24 character hex string, 12 byte Uint8Array, or an integer');
-  }
-  if (typeof value === 'number') return newId(Math.trunc(value));
-  const hex = hexOfObject(value);
-  if (hex !== undefined) return hex;
-  throw bsonError('Argument passed in does not match the accepted types');
+  const number = parseId(value);
+  if (number === undefined) throw Object.assign(new Error('An id must be a whole number from 1 up, as a number or as digits'), { name: 'BSONError' });
+  return String(number);
 }

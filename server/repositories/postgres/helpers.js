@@ -5,21 +5,30 @@ import prismaPkg from '@prisma/client';
 const { Prisma } = prismaPkg;
 
 /**
- * Small pieces every PostgreSQL repository needs, so that it behaves exactly like its MongoDB twin: ids that look like
- * MongoDB ObjectIds, and errors with the same shape, because middleware/errorHandler.js (and so every API answer) is
- * written around those shapes.
+ * Small pieces every PostgreSQL repository needs, so that it behaves like its MongoDB twin: ids that are checked the same way
+ * (a bad id is a CastError), and errors with the same shape, because middleware/errorHandler.js (and so every API answer)
+ * is written around those shapes.
  */
 
 // ------------------------------------------------------------------------------------------------------------- ids
+
+/**
+ * A table row gets its id from the database: an auto-increment number (1, 2, 3, ...). So a repository inserts without an id
+ * and reads the new one back. (This used to make MongoDB-style ids; it now refuses, so a repository that was not converted
+ * fails loudly instead of writing a text id into a number column.)
+ */
+export function newId() {
+  throw new Error('A table row gets its number from the database, so no id is made here. Insert without an id and read it back (RETURNING id). For an id inside a JSON list use newSubdocId().');
+}
 
 let counter = crypto.randomBytes(3).readUIntBE(0, 3);
 const processBytes = crypto.randomBytes(5);
 
 /**
- * A new id of the same shape as a MongoDB ObjectId (24 hex characters: 4 bytes of time, 5 bytes unique to this process,
- * 3 bytes of counter), so new rows sort by creation time just as ObjectIds do.
+ * An id for an item inside a JSON list (for example a stage's progress entry), which is not a table row: the same shape as a
+ * MongoDB ObjectId (24 hex characters: 4 bytes of time, 5 bytes unique to this process, 3 bytes of counter).
  */
-export function newId(seconds = Math.floor(Date.now() / 1000)) {
+export function newSubdocId(seconds = Math.floor(Date.now() / 1000)) {
   counter = (counter + 1) % 0x1000000;
   const buffer = Buffer.alloc(12);
   buffer.writeUInt32BE(seconds >>> 0, 0);
@@ -28,25 +37,46 @@ export function newId(seconds = Math.floor(Date.now() / 1000)) {
   return buffer.toString('hex');
 }
 
+/** The id of an item inside a JSON list as text (24 hex characters, lower case), or undefined when it is not one. */
+export function castSubdocId(value) {
+  const text = typeof value === 'string' ? value : '';
+  return /^[0-9a-fA-F]{24}$/.test(text) ? text.toLowerCase() : undefined;
+}
+
+/** The largest number a table's id can hold (the database column is a 4-byte integer). */
+export const MAX_ID = 2147483647;
+
 /**
- * Turns an id from a URL or form into the id text stored in the database, or throws the error MongoDB would have:
- * 24 hex characters (any letter case) are an id; anything else is "invalid" (a CastError, which the API answers with a 400).
+ * The id as a number, or undefined when it is not one: a whole number from 1 up to MAX_ID, given as a number or as digits
+ * without a leading zero ("7"). An old 24-character MongoDB id, "7.5", "-1", "1e3", " 7", "007" and anything else is not an id.
+ */
+export function parseId(value) {
+  let number;
+  if (typeof value === 'number') number = value;
+  else if (typeof value === 'string' && /^[1-9][0-9]{0,9}$/.test(value)) number = Number(value);
+  else return undefined;
+  return Number.isInteger(number) && number >= 1 && number <= MAX_ID ? number : undefined;
+}
+
+/**
+ * Turns an id from a URL or form into the number stored in the database, or throws the error MongoDB would have for a bad id:
+ * a CastError, which the API answers with a 400.
  * @param {*} value
  * @param {string} path the field name, for the error ("_id" for a record's own id)
  */
 export function castId(value, path = '_id') {
-  const text = typeof value === 'string' ? value : (value && typeof value.toString === 'function' ? String(value) : '');
-  if (/^[0-9a-fA-F]{24}$/.test(text)) return text.toLowerCase();
-  throw castError(path, value);
+  const number = parseId(value);
+  if (number === undefined) throw castError(path, value);
+  return number;
 }
 
 // ----------------------------------------------------------------------------------------------------------- errors
 
-/** The error MongoDB (Mongoose) throws for an id it cannot read. */
+/** The error (a Mongoose-style CastError) for an id that cannot be read. */
 export function castError(path, value) {
-  const error = new Error(`Cast to ObjectId failed for value "${value}" (type ${typeof value}) at path "${path}"`);
+  const error = new Error(`Cast to Number failed for value "${value}" (type ${typeof value}) at path "${path}"`);
   error.name = 'CastError';
-  error.kind = 'ObjectId';
+  error.kind = 'Number';
   error.path = path;
   error.value = value;
   return error;
@@ -167,12 +197,12 @@ export function castBoolean(value, path) {
   return { problem: `${castFailureMessage('Boolean', path, value)} because of "CastError"` };
 }
 
-/** An id for a document field (an ObjectId reference): the id text, or { problem } as Mongoose words it. */
+/** An id held in a field of a record (a link to another record): the number, or { problem } worded as Mongoose words a failed cast. */
 export function castIdField(value, path) {
   if (value === undefined || value === null) return { value };
-  const text = typeof value === 'string' ? value : (typeof value.toString === 'function' ? String(value) : '');
-  if (/^[0-9a-fA-F]{24}$/.test(text)) return { value: text.toLowerCase() };
-  return { problem: `${castFailureMessage('ObjectId', path, value)} because of "BSONError"` }; // the wording Mongoose uses when it saves a record
+  const number = parseId(value);
+  if (number === undefined) return { problem: castFailureMessage('Number', path, value) };
+  return { value: number };
 }
 
 /** Whether two plain JSON values are equal, whatever the order of the keys inside objects. */

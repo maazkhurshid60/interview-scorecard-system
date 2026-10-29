@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { prisma } from './client.js';
-import { castBoolean, castDate, castFailureMessage, castIdField, castNumber, castString, jsonParam, newId, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castDate, castFailureMessage, castIdField, castNumber, castString, castSubdocId, jsonParam, newId, newSubdocId, sameJson, translateError, validationError } from './helpers.js';
 
 /**
  * The shared engine of the PostgreSQL repositories that handle whole records (candidates, applications, interviews, job
@@ -178,7 +178,7 @@ function castValue(spec, value, path, problems) {
       return list.map((item, i) => {
         if (!isPlainObject(item)) { problems.cast.push({ path: `${here}.${i}`, message: `Cast to Embedded failed for value ${JSON.stringify(item)} (type ${typeof item}) at path "${leaf}"` }); return undefined; }
         const out = castObject({ fields: spec.fields }, item, [...path, i], problems);
-        if (spec.ids) out._id = hasValue(item._id) ? (castIdField(item._id, '_id').value || newId()) : newId();
+        if (spec.ids) out._id = hasValue(item._id) ? (castSubdocId(item._id) || newSubdocId()) : newSubdocId();
         return out;
       });
     }
