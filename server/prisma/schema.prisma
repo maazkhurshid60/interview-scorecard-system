@@ -1,8 +1,8 @@
 // The PostgreSQL schema for OWNERS TALENT, mirroring the 11 Mongoose models in server/models/.
 // The app uses it when DB_PROVIDER=postgres (MongoDB remains the default). See ./README.md for the decisions behind it.
 //
-// It is checked against the Mongoose models by an automatic comparison (field by field: type, required, default, enum,
-// index), so a change to either side that makes them disagree is caught.
+// Apart from the ids (numbers here), `legacyId`, `publicToken` and `nullFields`, every field matches its Mongoose model; the data
+// verifier (`npm run verify:postgres`) and the repository comparisons (`npm run parity`) keep the two in step.
 
 generator client {
   provider = "prisma-client-js"
