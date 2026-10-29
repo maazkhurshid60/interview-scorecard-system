@@ -102,6 +102,7 @@ npm run parity                 every scenario, MongoDB against PostgreSQL (scrat
 npm run parity -- candidate    one scenario
 npm run parity:real            reads your real data through both versions and compares every answer (read only)
 npm run smoke:postgres         the real server on Postgres with a copy of your data and real requests (no mail, queue or AI)
+npm run journey:postgres       a whole working day on the real server on top of the copied data (new jobs, candidates, scoring, restart)
 npm run test:ids               what counts as an id and as a public link on Postgres (needs no database)
 ```
 

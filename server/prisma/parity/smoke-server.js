@@ -30,6 +30,8 @@ const SMOKE_DB = 'ownerstalent_smoke';
 const PORT = 5055;
 const PASSWORD = 'Smoke-Test-123!';
 
+const sourceUri = process.env.MIGRATE_MONGO_URI || process.env.MONGODB_URI;
+if (!['localhost', '127.0.0.1', '::1'].includes(new URL(sourceUri).hostname)) throw new Error('The smoke test only copies from a local MongoDB (check MONGODB_URI in .env); a live database is never used for tests.');
 const devUrl = new URL(process.env.DATABASE_URL);
 if (!['localhost', '127.0.0.1', '::1'].includes(devUrl.hostname)) throw new Error('The smoke test only runs against a local Postgres.');
 const smokeUrl = new URL(devUrl.toString()); smokeUrl.pathname = `/${SMOKE_DB}`;

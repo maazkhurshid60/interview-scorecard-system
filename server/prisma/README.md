@@ -175,9 +175,16 @@ npm run check:repositories    both versions of every repository offer the same f
 npm run parity                every repository's scenarios on both databases, compared (scratch databases)
 npm run parity:real           reads your real data through both versions of every repository and compares (read only)
 npm run smoke:postgres        starts the real server on Postgres with a copy of your data and makes real requests
+npm run journey:postgres      a whole working day on the real server, on top of the copied data: checks what was copied, then new
+                              jobs, candidates, applications, interviews, scores, decisions, links, settings and users, a restart,
+                              deleting, and the database's own integrity (no record pointing at nothing, tokens, counters)
 npm run test:ids              what counts as an id, and which values are public links
 npm run test:migrate          the data copy and the verifier on awkward data
 ```
 
-Every one of them works on scratch databases or only reads; the server started by `smoke:postgres` has no Redis, mail, Slack,
-AI or captcha access, and the credentials stored in the copied settings are deleted from the scratch database first.
+Every one of them works on scratch databases or only reads; the servers started by `smoke:postgres` and `journey:postgres` have
+no Redis, mail, Slack, AI, file storage or captcha access, and the credentials stored in the copied settings are deleted from the
+scratch database first. The tests that use MongoDB as a source or create a scratch database there (`parity`, `parity:real`,
+`smoke:postgres`, `journey:postgres`, `test:migrate`) refuse to run unless `MONGODB_URI` is a local MongoDB, so a live database
+can never be used by a test. Only `migrate:postgres` and `verify:postgres` may read a live MongoDB (read only: the verifier switches
+off Mongoose's automatic index creation first).

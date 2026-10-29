@@ -23,6 +23,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repositories = path.join(here, '..', '..', 'repositories');
 const load = async (folder, name) => import(pathToFileURL(path.join(repositories, folder, `${name}.js`)).href);
 
+// reads only, and only ever from a local MongoDB (it loads the Mongoose models, which would otherwise create indexes on the database)
+if (!['localhost', '127.0.0.1', '::1'].includes(new URL(process.env.MONGODB_URI).hostname)) throw new Error('parity:real only runs against a local MongoDB (check MONGODB_URI in .env).');
+mongoose.set('autoIndex', false);
+mongoose.set('autoCreate', false);
 await mongoose.connect(process.env.MONGODB_URI);
 const db = mongoose.connection.db;
 const docs = async (collection) => db.collection(collection).find().toArray();

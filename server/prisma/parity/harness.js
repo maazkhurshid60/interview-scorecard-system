@@ -111,6 +111,8 @@ export async function setup() {
   if (!process.env.DATABASE_URL || !process.env.MONGODB_URI) throw new Error('DATABASE_URL and MONGODB_URI must both be set.');
   const devUrl = new URL(process.env.DATABASE_URL);
   if (!['localhost', '127.0.0.1', '::1'].includes(devUrl.hostname)) throw new Error('The parity tests only run against a local Postgres.');
+  // they create (and drop) a scratch database on the MongoDB server, so they must never be pointed at a live one
+  if (!['localhost', '127.0.0.1', '::1'].includes(new URL(process.env.MONGODB_URI).hostname)) throw new Error('The parity tests create a scratch database on the MongoDB server: they only run against a local MongoDB (check MONGODB_URI in .env).');
   const parityUrl = new URL(devUrl.toString()); parityUrl.pathname = `/${PARITY_DB}`;
 
   adminPrisma = new PrismaClient({ datasourceUrl: devUrl.toString() });
