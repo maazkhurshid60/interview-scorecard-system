@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import logger from '../../utils/logger.js';
 import { prisma } from './client.js';
 import { castBoolean, castDate, castFailureMessage, castId, castIdField, castNumber, castString, castSubdocId, idOut, jsonParam, newSubdocId, parseId, parsePublicRef, sameJson, translateError, validationError } from './helpers.js';
 
@@ -409,6 +410,8 @@ export async function findDocByPublicRef(model, ref) {
   const parsed = parsePublicRef(ref);
   if (!parsed) return null;
   const [doc] = await selectDocs(model, `WHERE t."${parsed.kind === 'token' ? 'publicToken' : 'legacyId'}" = $1`, [parsed.value]);
+  // counting these tells when no old shared link is used any more, which is when `legacyId` can be removed
+  if (doc && parsed.kind === 'legacy') logger.info(`[PublicLink] ${model.name} ${doc._id} was opened through an old shared link (old id ${parsed.value}).`);
   return doc || null;
 }
 

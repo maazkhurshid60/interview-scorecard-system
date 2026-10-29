@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { isValidId, isValidIdString, normalizeId } from '../repositories/ids.js';
+import { isValidId, isValidPublicRef, normalizeId } from '../repositories/ids.js';
 import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as pipelines from '../repositories/pipelineTemplateRepository.js';
 import * as scorecardRepo from '../repositories/scorecardRepository.js';
@@ -1114,8 +1114,8 @@ Respond ONLY in JSON format matching this exact shape:
 const getPublic = asyncHandler(async (req, res) => {
   logger.info(`[Requisition] Public GET request for ID: "${req.params.id}"`);
 
-  if (!isValidIdString(req.params.id)) {
-    logger.warn(`[Requisition] Public GET failed: "${req.params.id}" is not a valid ObjectId`);
+  if (!isValidPublicRef(req.params.id)) {
+    logger.warn(`[Requisition] Public GET failed: "${req.params.id}" is not a valid public link`);
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Requisition is closed or does not exist.' });
   }
 
@@ -1152,11 +1152,11 @@ const getPublic = asyncHandler(async (req, res) => {
  * Public endpoint for candidate self-application submission with resume upload.
  */
 const applyPublic = asyncHandler(async (req, res) => {
-  if (!isValidIdString(req.params.id)) {
+  if (!isValidPublicRef(req.params.id)) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'This position is closed or no longer accepting applications.' });
   }
 
-  const requisition = await requisitionRepo.findById(req.params.id);
+  const requisition = await requisitionRepo.findByPublicRef(req.params.id);
   if (!requisition || requisition.status !== 'open') {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'This position is closed or no longer accepting applications.' });
   }
