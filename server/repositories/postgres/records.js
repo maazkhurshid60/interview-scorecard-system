@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { prisma } from './client.js';
-import { castBoolean, castDate, castFailureMessage, castIdField, castNumber, castString, castSubdocId, jsonParam, newId, newSubdocId, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castDate, castFailureMessage, castId, castIdField, castNumber, castString, castSubdocId, idOut, jsonParam, newSubdocId, parseId, sameJson, translateError, validationError } from './helpers.js';
 
 /**
  * The shared engine of the PostgreSQL repositories that handle whole records (candidates, applications, interviews, job
@@ -84,6 +84,7 @@ const toDate = (text) => new Date(`${text}Z`);
 /** A JSON value stored for `spec`, with the dates inside it turned back into dates. */
 function revive(spec, value) {
   if (value === null || value === undefined) return value;
+  if (spec.kind === 'id') return idOut(value); // an id is a number in the database and text for the app
   if (spec.kind === 'date') return typeof value === 'string' ? new Date(value) : value;
   if (spec.kind === 'array') return Array.isArray(value) ? value.map((item) => revive({ kind: 'subdoc', fields: spec.fields }, item)) : value;
   if (spec.kind === 'subdoc' || spec.kind === 'nested') {
@@ -112,7 +113,7 @@ function groupDefaults(spec) {
 
 /** The record the app sees for one stored row (parsed from `to_jsonb(row)`), with the defaults Mongoose fills in on loading. */
 export function rowToDoc(model, row) {
-  const doc = { _id: row.id };
+  const doc = { _id: idOut(row.id) };
   for (const { path, col, spec } of model.columns) {
     const stored = row[col];
     let value;
@@ -164,7 +165,7 @@ function castValue(spec, value, path, problems) {
     case 'number': { const done = castNumber(value, leaf); if (done.problem) { note(done.problem); return undefined; } return done.value; }
     case 'boolean': { const done = castBoolean(value, leaf); if (done.problem) { note(done.problem); return undefined; } return done.value; }
     case 'date': { const done = castDate(value, leaf); if (done.problem) { note(done.problem); return undefined; } return done.value; }
-    case 'id': { const done = castIdField(value, leaf); if (done.problem) { note(done.problem); return undefined; } return done.value; }
+    case 'id': { const done = castIdField(value, leaf); if (done.problem) { note(done.problem); return undefined; } return idOut(done.value); }
     case 'mixed': return value;
     case 'subdoc': case 'nested': {
       if (value === undefined || value === null) return value;
@@ -305,11 +306,24 @@ function removeGroup(model, object, path, spec) {
 
 // ------------------------------------------------------------------------------------------------ writing a stored row
 
-/** The stored form of a field's value: dates as text, JSON as it is. */
+/** The stored form of a JSON value: the ids inside it are numbers in the database (the app handles them as text). */
+function storedJson(spec, value) {
+  if (value === null || value === undefined) return value;
+  if (spec.kind === 'id') return parseId(value) ?? value;
+  if (spec.kind === 'array') return Array.isArray(value) ? value.map((item) => storedJson({ kind: 'subdoc', fields: spec.fields }, item)) : value;
+  if (spec.kind === 'subdoc' || spec.kind === 'nested') {
+    if (!isPlainObject(value)) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, spec.fields[key] ? storedJson(spec.fields[key], inner) : inner]));
+  }
+  return value;
+}
+
+/** The stored form of a field's value: dates as text, ids as numbers, JSON as it is. */
 const columnValue = (spec, value) => {
   if (!hasValue(value)) return null;
   if (spec.kind === 'date') return value instanceof Date ? value.toISOString() : value;
-  return JSON.parse(JSON.stringify(value));
+  if (spec.kind === 'id') return parseId(value) ?? null;
+  return JSON.parse(JSON.stringify(storedJson(spec, value)));
 };
 
 /** Every column of a record, as it would be stored. */
@@ -327,17 +341,25 @@ export function docToColumns(model, doc) {
 
 const sameColumn = (a, b) => sameJson(a, b);
 
-/** Adds a new record to its table and returns it as the app sees it. */
-export async function insertDoc(model, doc, { id = newId(), now = new Date(), client = prisma } = {}) {
-  const row = { id, ...docToColumns(model, doc) };
+/**
+ * Adds a new record to its table and returns it as the app sees it. The database gives it its number (the row is written
+ * without an id, and without the columns that have a default of their own, such as a public token).
+ */
+export async function insertDoc(model, doc, { now = new Date(), client = prisma } = {}) {
+  const row = docToColumns(model, doc);
   if (['both', 'createdOnly'].includes(model.timestamps)) row.createdAt = now.toISOString();
   if (model.timestamps === 'both') row.updatedAt = now.toISOString();
+  const columns = Object.keys(row).map((column) => `"${column}"`);
+  let inserted;
   try {
-    await client.$executeRawUnsafe(`INSERT INTO "${model.table}" SELECT * FROM jsonb_populate_record(null::"${model.table}", $1::jsonb)`, JSON.stringify(row));
+    inserted = await client.$queryRawUnsafe(
+      `INSERT INTO "${model.table}" (${columns.join(', ')}) SELECT ${columns.map((column) => `r.${column}`).join(', ')} FROM jsonb_populate_record(null::"${model.table}", $1::jsonb) r RETURNING id`,
+      JSON.stringify(row),
+    );
   } catch (error) {
     throw translateError(error, {}, uniqueFields(model));
   }
-  return { ...doc, _id: id, ...(row.createdAt ? { createdAt: now } : {}), ...(row.updatedAt ? { updatedAt: now } : {}) };
+  return { ...doc, _id: idOut(inserted[0].id), ...(row.createdAt ? { createdAt: now } : {}), ...(row.updatedAt ? { updatedAt: now } : {}) };
 }
 
 /** The unique fields of a table, for naming them in a duplicate error (set `unique` on a model's description to use). */
@@ -356,7 +378,7 @@ export async function writeChanges(model, before, after, { now = new Date() } = 
   if (!sets.length && model.timestamps !== 'both') return after;
   if (model.timestamps === 'both') { row.updatedAt = now.toISOString(); sets.push(`"updatedAt" = r."updatedAt"`); }
   try {
-    await prisma.$executeRawUnsafe(`UPDATE "${model.table}" t SET ${sets.join(', ')} FROM jsonb_populate_record(null::"${model.table}", $2::jsonb) r WHERE t.id = $1`, before._id, JSON.stringify(row));
+    await prisma.$executeRawUnsafe(`UPDATE "${model.table}" t SET ${sets.join(', ')} FROM jsonb_populate_record(null::"${model.table}", $2::jsonb) r WHERE t.id = $1::int`, castId(before._id, '_id'), JSON.stringify(row));
   } catch (error) {
     throw translateError(error, {}, uniqueFields(model));
   }
@@ -372,9 +394,9 @@ export function nullsExpr({ add = [], remove = [] } = {}) {
   return `(SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM (SELECT DISTINCT v FROM (SELECT jsonb_array_elements_text(COALESCE("nullFields", '[]'::jsonb)) AS v UNION ALL SELECT unnest(${list(add)})) u WHERE v <> ALL(${list([...remove, ...[]].filter((path) => !add.includes(path)))})) d)`;
 }
 
-/** The record with this id, or null. */
+/** The record with this id (a number or its text), or null. */
 export async function findDoc(model, id) {
-  const [doc] = await selectDocs(model, 'WHERE t.id = $1', [id]);
+  const [doc] = await selectDocs(model, 'WHERE t.id = $1::int', [castId(id, '_id')]);
   return doc || null;
 }
 

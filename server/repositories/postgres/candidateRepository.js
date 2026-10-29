@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castError, castId, compareBytes, escapeLike } from './helpers.js';
+import { castError, castId, compareBytes, escapeLike, idOut } from './helpers.js';
 import { assign, buildDoc, findDoc, insertDoc, pick, rowToDoc, selectDocs, writeChanges } from './records.js';
 import { Candidate } from './schemas.js';
 
@@ -30,7 +30,7 @@ export async function listPage({ search, ids, limit, page: requestedPage, oldest
   const conditions = []; const params = [];
   const text = String(search || '').trim();
   if (text) { params.push(escapeLike(text)); conditions.push(containing(['name', 'email', 'phone'], `$${params.length}`)); }
-  if (ids) { params.push(queryIds(ids)); conditions.push(`id = ANY($${params.length}::text[])`); }
+  if (ids) { params.push(queryIds(ids)); conditions.push(`id = ANY($${params.length}::int[])`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const [{ total }] = await prisma.$queryRawUnsafe(`SELECT count(*)::int AS total FROM candidates ${where}`, ...params);
@@ -49,20 +49,20 @@ export async function findById(id) {
 export async function findByEmail(email, { exceptId } = {}) {
   const params = [String(email)];
   if (exceptId) params.push(castId(exceptId, '_id'));
-  const [doc] = await selectDocs(Candidate, `WHERE email = $1${exceptId ? ' AND id <> $2' : ''} ORDER BY id ASC LIMIT 1`, params);
+  const [doc] = await selectDocs(Candidate, `WHERE email = $1${exceptId ? ' AND id <> $2::int' : ''} ORDER BY id ASC LIMIT 1`, params);
   return doc || null;
 }
 
 /** Just the `_id` and `name` of each of these candidates that exists. */
 export async function findNamesByIds(ids) {
-  const docs = await selectDocs(Candidate, 'WHERE id = ANY($1::text[]) ORDER BY id ASC', [queryIds(ids)]);
+  const docs = await selectDocs(Candidate, 'WHERE id = ANY($1::int[]) ORDER BY id ASC', [queryIds(ids)]);
   return docs.map((doc) => pick(doc, ['name']));
 }
 
 /** The ids of every candidate whose name or email contains this text (ignoring case). */
 export async function findIdsBySearch(search) {
   const rows = await prisma.$queryRawUnsafe(`SELECT id FROM candidates WHERE ${containing(['name', 'email'], '$1')} ORDER BY id ASC`, escapeLike(search));
-  return rows.map((row) => row.id);
+  return rows.map((row) => idOut(row.id));
 }
 
 /** The email of every candidate that has one, as an array of strings. */

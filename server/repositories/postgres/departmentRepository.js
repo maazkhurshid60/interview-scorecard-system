@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castId, compareBytes, escapeLike, newId, nextNulls, nullSet, requiredMessage, translateError, validationError } from './helpers.js';
+import { castId, compareBytes, escapeLike, idOut, nextNulls, nullSet, requiredMessage, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about departments, on PostgreSQL. It offers exactly the functions of
@@ -9,10 +9,10 @@ import { castId, compareBytes, escapeLike, newId, nextNulls, nullSet, requiredMe
 
 /** A department row as the app has always seen it. An empty optional value is left out, as MongoDB left it out. */
 const toDepartment = (row) => ({
-  _id: row.id,
+  _id: idOut(row.id),
   name: row.name,
   description: row.description,
-  ...(row.createdBy !== null && row.createdBy !== undefined ? { createdBy: row.createdBy } : (nullSet(row).has('createdBy') ? { createdBy: null } : {})),
+  ...(row.createdBy !== null && row.createdBy !== undefined ? { createdBy: idOut(row.createdBy) } : (nullSet(row).has('createdBy') ? { createdBy: null } : {})),
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });
@@ -58,7 +58,6 @@ export async function create({ name, description, createdBy }) {
   try {
     const row = await prisma.department.create({
       data: {
-        id: newId(),
         name: cleanName,
         ...(description !== undefined && description !== null ? { description: String(description).trim() } : {}),
         ...(createdBy !== undefined && createdBy !== null ? { createdBy: castId(createdBy, 'createdBy') } : {}),
