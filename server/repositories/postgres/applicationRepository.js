@@ -13,11 +13,11 @@ import { saveEntity, track } from './entity.js';
 
 const full = (doc) => (doc ? track(doc) : doc);
 
-/** An id as a number (the error it gives for a bad one is not a CastError, as before). */
+/** An id as lower-case text (the error it gives for a bad one is not a CastError, as before). */
 function objectId(value) {
-  const number = parseId(value);
-  if (number === undefined) throw Object.assign(new Error('An id must be a whole number from 1 up, as a number or as digits'), { name: 'BSONError' });
-  return number;
+  const id = parseId(value);
+  if (id === undefined) throw Object.assign(new Error('An id must be a UUID'), { name: 'BSONError' });
+  return id;
 }
 
 const ids = (list, path) => list.map((id) => castId(id, path));
@@ -26,7 +26,7 @@ const ids = (list, path) => list.map((id) => castId(id, path));
 async function fillInCandidates(applications, select) {
   const names = selectNames(select);
   const wanted = [...new Set(applications.map((a) => a.candidateId).filter((id) => typeof id === 'string'))];
-  const candidates = wanted.length ? await selectDocs(Candidate, 'WHERE id = ANY($1::int[])', [wanted.map(Number)]) : [];
+  const candidates = wanted.length ? await selectDocs(Candidate, 'WHERE id = ANY($1::uuid[])', [wanted]) : [];
   const byId = new Map(candidates.map((candidate) => [candidate._id, names.length ? pick(candidate, names) : candidate]));
   for (const application of applications) {
     if (typeof application.candidateId === 'string') application.candidateId = byId.get(application.candidateId) || null;
@@ -52,19 +52,19 @@ export async function findByIdWithCandidate(id, select) {
 
 /** The application of this candidate to this job opening, or null. */
 export async function findByCandidateAndRequisition(candidateId, requisitionId) {
-  const [doc] = await selectDocs(Application, 'WHERE "candidateId" = $1::int AND "requisitionId" = $2::int ORDER BY id ASC LIMIT 1', [castId(candidateId, 'candidateId'), castId(requisitionId, 'requisitionId')]);
+  const [doc] = await selectDocs(Application, 'WHERE "candidateId" = $1::uuid AND "requisitionId" = $2::uuid ORDER BY id ASC LIMIT 1', [castId(candidateId, 'candidateId'), castId(requisitionId, 'requisitionId')]);
   return full(doc || null);
 }
 
 /** For each of these candidates, every application with just the fields a list needs (job, stage, disposition). */
 export async function listSummariesForCandidates(candidateIds) {
-  const docs = await selectDocs(Application, 'WHERE "candidateId" = ANY($1::int[]) ORDER BY id ASC', [ids(candidateIds, 'candidateId')]);
+  const docs = await selectDocs(Application, 'WHERE "candidateId" = ANY($1::uuid[]) ORDER BY id ASC', [ids(candidateIds, 'candidateId')]);
   return docs.map((doc) => pick(doc, ['candidateId', 'requisitionId', 'currentStageKey', 'disposition']));
 }
 
 /** The ids of every candidate who has applied to this job opening. */
 export async function listCandidateIdsForRequisition(requisitionId) {
-  const rows = await prisma.$queryRawUnsafe('SELECT DISTINCT "candidateId" FROM applications WHERE "requisitionId" = $1::int ORDER BY "candidateId" ASC', castId(requisitionId, 'requisitionId'));
+  const rows = await prisma.$queryRawUnsafe('SELECT DISTINCT "candidateId" FROM applications WHERE "requisitionId" = $1::uuid ORDER BY "candidateId" ASC', castId(requisitionId, 'requisitionId'));
   return rows.map((row) => idOut(row.candidateId));
 }
 
@@ -76,19 +76,19 @@ export async function listRequisitionIdsWithApplications() {
 
 /** Of these candidates, the ids of those already attached to this job opening. */
 export async function listAttachedCandidateIds(candidateIds, requisitionId) {
-  const rows = await prisma.$queryRawUnsafe('SELECT "candidateId" FROM applications WHERE "candidateId" = ANY($1::int[]) AND "requisitionId" = $2::int ORDER BY id ASC', ids(candidateIds, 'candidateId'), castId(requisitionId, 'requisitionId'));
+  const rows = await prisma.$queryRawUnsafe('SELECT "candidateId" FROM applications WHERE "candidateId" = ANY($1::uuid[]) AND "requisitionId" = $2::uuid ORDER BY id ASC', ids(candidateIds, 'candidateId'), castId(requisitionId, 'requisitionId'));
   return rows.map((row) => idOut(row.candidateId));
 }
 
 /** The id and offer-letter file (if any) of every application of one candidate. */
 export async function listOfferLettersForCandidate(candidateId) {
-  const docs = await selectDocs(Application, 'WHERE "candidateId" = $1::int ORDER BY id ASC', [castId(candidateId, 'candidateId')]);
+  const docs = await selectDocs(Application, 'WHERE "candidateId" = $1::uuid ORDER BY id ASC', [castId(candidateId, 'candidateId')]);
   return docs.map((doc) => pick(doc, ['offerLetterPublicId']));
 }
 
 /** The id and offer-letter file (if any) of every application to one job opening. */
 export async function listOfferLettersForRequisition(requisitionId) {
-  const docs = await selectDocs(Application, 'WHERE "requisitionId" = $1::int ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]);
+  const docs = await selectDocs(Application, 'WHERE "requisitionId" = $1::uuid ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]);
   return docs.map((doc) => pick(doc, ['offerLetterPublicId']));
 }
 
@@ -96,14 +96,14 @@ export async function listOfferLettersForRequisition(requisitionId) {
 export async function countByRequisitionAndDisposition(requisitionIds) {
   const wanted = requisitionIds.map(objectId);
   const rows = await prisma.$queryRawUnsafe(
-    `SELECT "requisitionId", disposition::text AS disposition, count(*)::int AS count FROM applications WHERE "requisitionId" = ANY($1::int[]) GROUP BY "requisitionId", disposition ORDER BY "requisitionId", disposition NULLS FIRST`, wanted);
+    `SELECT "requisitionId", disposition::text AS disposition, count(*)::int AS count FROM applications WHERE "requisitionId" = ANY($1::uuid[]) GROUP BY "requisitionId", disposition ORDER BY "requisitionId", disposition NULLS FIRST`, wanted);
   return rows.map((row) => ({ requisitionId: idOut(row.requisitionId), disposition: row.disposition, count: row.count }));
 }
 
 /** How many applications one job opening has for each disposition: `[{ disposition, count }]`. */
 export async function countByDisposition(requisitionId) {
   const rows = await prisma.$queryRawUnsafe(
-    'SELECT disposition::text AS disposition, count(*)::int AS count FROM applications WHERE "requisitionId" = $1::int GROUP BY disposition ORDER BY disposition NULLS FIRST', objectId(requisitionId));
+    'SELECT disposition::text AS disposition, count(*)::int AS count FROM applications WHERE "requisitionId" = $1::uuid GROUP BY disposition ORDER BY disposition NULLS FIRST', objectId(requisitionId));
   return rows.map((row) => ({ disposition: row.disposition, count: row.count }));
 }
 
@@ -123,7 +123,7 @@ export async function countByDisposition(requisitionId) {
  */
 export async function pageForRequisition({ requisitionId, candidateIds, stageKey, disposition, finalDecision, matchNothing, page: requestedPage, limit }) {
   const params = [objectId(requisitionId)];
-  const conditions = ['"requisitionId" = $1::int'];
+  const conditions = ['"requisitionId" = $1::uuid'];
   const add = (value) => { params.push(value); return `$${params.length}`; };
   if (matchNothing) conditions.push('false');
   for (const [column, filter] of [['disposition', disposition], ['finalDecision', finalDecision]]) {
@@ -134,7 +134,7 @@ export async function pageForRequisition({ requisitionId, candidateIds, stageKey
     else if (filter.includeUnset) conditions.push(unset);
     else conditions.push(listed());
   }
-  if (candidateIds) conditions.push(`"candidateId" = ANY(${add(candidateIds.map(objectId))}::int[])`);
+  if (candidateIds) conditions.push(`"candidateId" = ANY(${add(candidateIds.map(objectId))}::uuid[])`);
   if (stageKey) conditions.push(`"currentStageKey" = ${add(stageKey)}`);
   const where = `WHERE ${conditions.join(' AND ')}`;
 
@@ -149,7 +149,7 @@ export async function pageForRequisition({ requisitionId, candidateIds, stageKey
 
 /** Every application of one job opening, each with the candidate's name and email filled in on `candidateId`. */
 export async function listWithCandidates(requisitionId) {
-  const applications = await selectDocs(Application, 'WHERE "requisitionId" = $1::int ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]);
+  const applications = await selectDocs(Application, 'WHERE "requisitionId" = $1::uuid ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]);
   return fillInCandidates(applications, 'name email');
 }
 
@@ -211,7 +211,7 @@ function dateFor(value, path) {
 
 /** Runs one direct update (`sets` is SQL, `params` start at $2) on one application, also stamping its update time. */
 async function updateOne(id, sets, params) {
-  await prisma.$executeRawUnsafe(`UPDATE applications SET ${sets}, "updatedAt" = $${params.length + 2}::text::timestamp WHERE id = $1::int`, castId(id, '_id'), ...params, new Date().toISOString());
+  await prisma.$executeRawUnsafe(`UPDATE applications SET ${sets}, "updatedAt" = $${params.length + 2}::text::timestamp WHERE id = $1::uuid`, castId(id, '_id'), ...params, new Date().toISOString());
 }
 
 /** Records that the offer letter email was really delivered. */
@@ -239,7 +239,7 @@ export async function save(application) {
 
 /** The id, weighted total and rank of every application to one job opening: what re-ranking needs. */
 export async function listForRanking(requisitionId) {
-  const docs = await selectDocs(Application, 'WHERE "requisitionId" = $1::int ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]);
+  const docs = await selectDocs(Application, 'WHERE "requisitionId" = $1::uuid ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]);
   return docs.map((doc) => pick(doc, ['weightedTotal', 'rank']));
 }
 
@@ -262,7 +262,7 @@ export async function claimForScreening(id) {
   const claimed = await prisma.$queryRawUnsafe(
     `UPDATE applications SET "screeningStatus" = 'processing', "screeningLockedAt" = $2::text::timestamp, "screeningAttempts" = "screeningAttempts" + 1, "updatedAt" = $2::text::timestamp,
        "nullFields" = ${nullsExpr({ remove: ['screeningJob.status', 'screeningJob.lockedAt'] })}
-     WHERE id = $1::int AND "screeningStatus" IN ('pending', 'processing') RETURNING id`, castId(id, '_id'), now);
+     WHERE id = $1::uuid AND "screeningStatus" IN ('pending', 'processing') RETURNING id`, castId(id, '_id'), now);
   return claimed.length ? full(await findDoc(Application, claimed[0].id)) : null;
 }
 
@@ -273,7 +273,7 @@ export async function finishScreening(id, { status, lastError }) {
     `UPDATE applications SET "screeningStatus" = $2::"ScreeningStatus", "screeningLastError" = $3,
        "screeningCompletedAt" = CASE WHEN $2::"ScreeningStatus" = 'pending' THEN "screeningCompletedAt" ELSE $4::text::timestamp END,
        "screeningLockedAt" = NULL, "updatedAt" = $4::text::timestamp,
-       "nullFields" = ${nullsExpr({ add: lastError ? [] : ['screeningJob.lastError'], remove: ['screeningJob.status', 'screeningJob.lockedAt', ...(lastError ? ['screeningJob.lastError'] : []), ...(status === 'pending' ? [] : ['screeningJob.completedAt'])] })} WHERE id = $1::int`, castId(id, '_id'), status, lastError || null, now);
+       "nullFields" = ${nullsExpr({ add: lastError ? [] : ['screeningJob.lastError'], remove: ['screeningJob.status', 'screeningJob.lockedAt', ...(lastError ? ['screeningJob.lastError'] : []), ...(status === 'pending' ? [] : ['screeningJob.completedAt'])] })} WHERE id = $1::uuid`, castId(id, '_id'), status, lastError || null, now);
 }
 
 /**

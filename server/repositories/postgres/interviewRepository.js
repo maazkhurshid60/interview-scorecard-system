@@ -29,23 +29,23 @@ export async function findByPublicRef(ref) {
 
 /** The interview of this application for this stage, or null. */
 export async function findByApplicationAndStage(applicationId, stageKey) {
-  const [doc] = await selectDocs(Interview, 'WHERE "applicationId" = $1::int AND "stageKey" = $2 ORDER BY id ASC LIMIT 1', [castId(applicationId, 'applicationId'), String(stageKey)]);
+  const [doc] = await selectDocs(Interview, 'WHERE "applicationId" = $1::uuid AND "stageKey" = $2 ORDER BY id ASC LIMIT 1', [castId(applicationId, 'applicationId'), String(stageKey)]);
   return full(doc || null);
 }
 
 /** Every interview of one application. */
 export async function listByApplication(applicationId) {
-  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1::int ORDER BY id ASC', [castId(applicationId, 'applicationId')]));
+  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1::uuid ORDER BY id ASC', [castId(applicationId, 'applicationId')]));
 }
 
 /** The interviews of one application for these stages. */
 export async function listByApplicationAndStages(applicationId, stageKeys) {
-  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1::int AND "stageKey" = ANY($2::text[]) ORDER BY id ASC', [castId(applicationId, 'applicationId'), stageKeys.map(String)]));
+  return full(await selectDocs(Interview, 'WHERE "applicationId" = $1::uuid AND "stageKey" = ANY($2::text[]) ORDER BY id ASC', [castId(applicationId, 'applicationId'), stageKeys.map(String)]));
 }
 
 /** Every interview of one job opening. */
 export async function listByRequisition(requisitionId) {
-  return full(await selectDocs(Interview, 'WHERE "requisitionId" = $1::int ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]));
+  return full(await selectDocs(Interview, 'WHERE "requisitionId" = $1::uuid ORDER BY id ASC', [castId(requisitionId, 'requisitionId')]));
 }
 
 /**
@@ -54,22 +54,22 @@ export async function listByRequisition(requisitionId) {
  */
 export async function listSummaries({ applicationId, applicationIds, requisitionId } = {}) {
   const conditions = []; const params = [];
-  if (applicationId && !applicationIds) { params.push(castId(applicationId, 'applicationId')); conditions.push(`"applicationId" = $${params.length}::int`); }
-  if (requisitionId) { params.push(castId(requisitionId, 'requisitionId')); conditions.push(`"requisitionId" = $${params.length}::int`); }
-  if (applicationIds) { params.push(ids(applicationIds, 'applicationId')); conditions.push(`"applicationId" = ANY($${params.length}::int[])`); }
+  if (applicationId && !applicationIds) { params.push(castId(applicationId, 'applicationId')); conditions.push(`"applicationId" = $${params.length}::uuid`); }
+  if (requisitionId) { params.push(castId(requisitionId, 'requisitionId')); conditions.push(`"requisitionId" = $${params.length}::uuid`); }
+  if (applicationIds) { params.push(ids(applicationIds, 'applicationId')); conditions.push(`"applicationId" = ANY($${params.length}::uuid[])`); }
   const docs = await selectDocs(Interview, `${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY id ASC`, params);
   return docs.map((doc) => pick(doc, ['applicationId', 'stageKey', 'status', 'stageAverage']));
 }
 
 /** Just the stored artifact file id, meeting event id and provider of each interview of one application. */
 export async function listFileAndMeetingInfo(applicationId) {
-  const docs = await selectDocs(Interview, 'WHERE "applicationId" = $1::int ORDER BY id ASC', [castId(applicationId, 'applicationId')]);
+  const docs = await selectDocs(Interview, 'WHERE "applicationId" = $1::uuid ORDER BY id ASC', [castId(applicationId, 'applicationId')]);
   return docs.map((doc) => pick(doc, ['artifactFilePublicId', 'calendarEventId', 'provider']));
 }
 
 /** Just the stored artifact file id of each interview of these applications. */
 export async function listArtifactFileIds(applicationIds) {
-  const docs = await selectDocs(Interview, 'WHERE "applicationId" = ANY($1::int[]) ORDER BY id ASC', [ids(applicationIds, 'applicationId')]);
+  const docs = await selectDocs(Interview, 'WHERE "applicationId" = ANY($1::uuid[]) ORDER BY id ASC', [ids(applicationIds, 'applicationId')]);
   return docs.map((doc) => pick(doc, ['artifactFilePublicId']));
 }
 

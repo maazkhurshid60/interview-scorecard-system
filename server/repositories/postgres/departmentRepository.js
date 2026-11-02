@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castId, compareBytes, escapeLike, idOut, nextNulls, nullSet, requiredMessage, translateError, validationError } from './helpers.js';
+import { castId, compareBytes, escapeLike, idOut, newId, nextNulls, nullSet, requiredMessage, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about departments, on PostgreSQL. It offers exactly the functions of
@@ -58,6 +58,7 @@ export async function create({ name, description, createdBy }) {
   try {
     const row = await prisma.department.create({
       data: {
+        id: newId(),
         name: cleanName,
         ...(description !== undefined && description !== null ? { description: String(description).trim() } : {}),
         ...(createdBy !== undefined && createdBy !== null ? { createdBy: castId(createdBy, 'createdBy') } : {}),

@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castDate, castError, castId, castIdField, castString, idOut, nextNulls, nullSet, translateError, validationError } from './helpers.js';
+import { castDate, castError, castId, castIdField, castString, idOut, newId, nextNulls, nullSet, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about login refresh tokens, on PostgreSQL. It offers exactly the functions
@@ -52,7 +52,7 @@ export async function create({ userId, tokenHash, familyId, familyStartedAt, exp
 
   try {
     const row = await prisma.refreshToken.create({
-      data: { ...values, userAgent: values.userAgent ?? null, ip: values.ip ?? null, createdAt: new Date(), nullFields: nextNulls(null, { add: ['userAgent', 'ip'].filter((field) => values[field] === null) }) },
+      data: { id: newId(), ...values, userAgent: values.userAgent ?? null, ip: values.ip ?? null, createdAt: new Date(), nullFields: nextNulls(null, { add: ['userAgent', 'ip'].filter((field) => values[field] === null) }) },
     });
     return toToken(row);
   } catch (error) {

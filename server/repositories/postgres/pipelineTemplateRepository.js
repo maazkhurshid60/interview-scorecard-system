@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castBoolean, castId, castNumber, castString, compareBytes, dateParam, idOut, jsonParam, nullSet, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castId, castNumber, castString, compareBytes, dateParam, idOut, jsonParam, newId, nullSet, sameJson, translateError, validationError } from './helpers.js';
 import { nullsExpr } from './records.js';
 
 /**
@@ -127,9 +127,9 @@ export async function create({ name, description, stages, autoWeights, isDefault
   let id;
   try {
     [{ id }] = await prisma.$queryRawUnsafe(
-      `INSERT INTO pipeline_templates (name, description, "isDefault", "autoWeights", stages, "createdAt", "updatedAt", "nullFields")
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::text::timestamp, $6::text::timestamp, $7::jsonb) RETURNING id`,
-      values.name, values.description ?? null, values.isDefault ?? false, values.autoWeights ?? true, jsonParam(values.stages), now, values.description === null ? JSON.stringify(['description']) : null,
+      `INSERT INTO pipeline_templates (id, name, description, "isDefault", "autoWeights", stages, "createdAt", "updatedAt", "nullFields")
+       VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7::text::timestamp, $7::text::timestamp, $8::jsonb) RETURNING id`,
+      newId(), values.name, values.description ?? null, values.isDefault ?? false, values.autoWeights ?? true, jsonParam(values.stages), now, values.description === null ? JSON.stringify(['description']) : null,
     );
   } catch (error) {
     throw translateError(error, { name: values.name }, ['name']);
@@ -159,7 +159,7 @@ export async function update(id, changes = {}) {
   if (!sets.length) return current;
   params.push(dateParam(new Date()));
   try {
-    await prisma.$executeRawUnsafe(`UPDATE pipeline_templates SET ${sets.join(', ')}, "updatedAt" = $${params.length}::text::timestamp WHERE id = $1`, ...params);
+    await prisma.$executeRawUnsafe(`UPDATE pipeline_templates SET ${sets.join(', ')}, "updatedAt" = $${params.length}::text::timestamp WHERE id = $1::uuid`, ...params);
   } catch (error) {
     throw translateError(error, { name: values.name }, ['name']);
   }
@@ -174,8 +174,8 @@ export async function makeDefault(id) {
     if (!row) return false;
     const now = dateParam(new Date());
     // as MongoDB did: every other template is updated (and so gets a new update time), then this one if it was not the default yet
-    await tx.$executeRawUnsafe(`UPDATE pipeline_templates SET "isDefault" = false, "updatedAt" = $2::text::timestamp WHERE id <> $1`, templateId, now);
-    if (!row.isDefault) await tx.$executeRawUnsafe(`UPDATE pipeline_templates SET "isDefault" = true, "updatedAt" = $2::text::timestamp WHERE id = $1`, templateId, now);
+    await tx.$executeRawUnsafe(`UPDATE pipeline_templates SET "isDefault" = false, "updatedAt" = $2::text::timestamp WHERE id <> $1::uuid`, templateId, now);
+    if (!row.isDefault) await tx.$executeRawUnsafe(`UPDATE pipeline_templates SET "isDefault" = true, "updatedAt" = $2::text::timestamp WHERE id = $1::uuid`, templateId, now);
     return true;
   });
   return found ? findById(templateId) : null;

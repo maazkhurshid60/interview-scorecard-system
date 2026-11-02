@@ -7,9 +7,9 @@
  * PostgreSQL the one in DATABASE_URL (your normal ones, after `npm run migrate:postgres`). Every read function is tried
  * with every real id and name it can use, so the odd records the test data did not have are covered.
  *
- * MongoDB names a record by a 24-character id and PostgreSQL by a number, so the PostgreSQL side is translated: the number a record
- * must have is its place in the sorted ids of its collection (the rule the data copy uses), every id handed to a PostgreSQL
- * repository becomes that number, and every id in an answer is turned back into the 24-character id before the two are compared.
+ * MongoDB names a record by a 24-character id and PostgreSQL by a UUID, so the PostgreSQL side is translated: the UUID a record must
+ * have is the one its old id maps to (prisma/migrate/uuid.js, the rule the data copy uses), every id handed to a PostgreSQL
+ * repository becomes that UUID, and every id in an answer is turned back into the 24-character id before the two are compared.
  * Two things differ by design and are taken out of the comparison: the random `publicToken` (only PostgreSQL has it), and the user
  * of an audit entry whose user was deleted (the data copy empties a link to a record that does not exist).
  */
@@ -17,7 +17,7 @@ import '../../config/env.js';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import mongoose from 'mongoose';
-import { numberIds } from '../migrate/shared.js';
+import { uuidFromObjectId } from '../migrate/uuid.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositories = path.join(here, '..', '..', 'repositories');
@@ -42,38 +42,30 @@ const userIds = new Set(users.map((u) => hex(u._id)));
 const liveTokens = tokens.filter((t) => userIds.has(hex(t.userId)));
 const skippedTokens = tokens.length - liveTokens.length;
 
-// ---- ids: the number every record has in PostgreSQL, and the way back
+// ---- ids: the UUID every record has in PostgreSQL, and the way back
 const collections = { user: users, department: departments, pipelineTemplate: templates, setting: settings, candidate: candidates, requisition: requisitions, scorecard: scorecards, application: applications, interview: interviews, refreshToken: tokens, auditLog: audits };
-const numbers = {}; const hexByNumber = {}; const numberOfHex = new Map();
-for (const [delegate, list] of Object.entries(collections)) {
-  numbers[delegate] = numberIds(list.map((d) => hex(d._id)));
-  hexByNumber[delegate] = new Map([...numbers[delegate]].map(([h, n]) => [n, h]));
-  for (const [h, n] of numbers[delegate]) numberOfHex.set(h, n);
-}
-const OWN = { userRepository: 'user', refreshTokenRepository: 'refreshToken', settingRepository: 'setting', auditLogRepository: 'auditLog', departmentRepository: 'department', pipelineTemplateRepository: 'pipelineTemplate', candidateRepository: 'candidate', requisitionRepository: 'requisition', scorecardRepository: 'scorecard', applicationRepository: 'application', interviewRepository: 'interview' };
-const LINK = { userId: 'user', candidateId: 'candidate', requisitionId: 'requisition', applicationId: 'application', departmentId: 'department', pipelineTemplateId: 'pipelineTemplate', scorecardId: 'scorecard', createdBy: 'user', finalDecisionBy: 'user', designatedScorerId: 'user', overriddenBy: 'user' };
-const ID_LISTS = { listCandidateIdsForRequisition: 'candidate', listRequisitionIdsWithApplications: 'requisition', listAttachedCandidateIds: 'candidate', findIdsBySearch: 'candidate', listPendingScreeningIds: 'application' };
-const PUBLIC_LINK = new Set(['findPublicView', 'findByPublicRef']); // a public link is handed over as it is: a seeded record's old id is its `legacyId`
-const HEX24 = /^[0-9a-fA-F]{24}$/; const DIGITS = /^[1-9][0-9]{0,9}$/;
+const hexByUuid = new Map(); // UUID -> 24-character id, for every record in MongoDB
+for (const list of Object.values(collections)) for (const doc of list) hexByUuid.set(uuidFromObjectId(hex(doc._id)), hex(doc._id));
+const LINK = { userId: 1, candidateId: 1, requisitionId: 1, applicationId: 1, departmentId: 1, pipelineTemplateId: 1, scorecardId: 1, createdBy: 1, finalDecisionBy: 1, designatedScorerId: 1, overriddenBy: 1 };
+const ID_LISTS = { listCandidateIdsForRequisition: 1, listRequisitionIdsWithApplications: 1, listAttachedCandidateIds: 1, findIdsBySearch: 1, listPendingScreeningIds: 1 };
+const PUBLIC_LINK = new Set(['findPublicView', 'findByPublicRef']); // a public link is handed over as it is: a record's old id is its `legacyId`
+const HEX24 = /^[0-9a-fA-F]{24}$/; const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** What is handed to a PostgreSQL repository: every 24-character id becomes its number. */
+/** What is handed to a PostgreSQL repository: every 24-character id becomes its UUID. */
 const toArg = (value) => {
-  if (typeof value === 'string') return HEX24.test(value) && numberOfHex.has(value.toLowerCase()) ? String(numberOfHex.get(value.toLowerCase())) : value;
+  if (typeof value === 'string') return HEX24.test(value) ? uuidFromObjectId(value) : value;
   if (Array.isArray(value)) return value.map(toArg);
   if (value && typeof value === 'object' && !(value instanceof Date)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toArg(v)]));
   return value;
 };
 
-/** A PostgreSQL answer with its numbers turned back into the 24-character ids (`collection` is what `_id` and a plain list of ids belong to). */
-const toHex = (value, key, collection) => {
+/** A PostgreSQL answer with its UUIDs turned back into the 24-character ids (`key` is the field name; '#list' is a plain list of ids). */
+const toHex = (value, key) => {
   if (value === null || value === undefined) return value;
-  if (typeof value === 'string') {
-    const target = key === '_id' ? collection : (key === '#list' ? collection : LINK[key]);
-    return target && DIGITS.test(value) ? (hexByNumber[target].get(Number(value)) ?? value) : value;
-  }
+  if (typeof value === 'string') return (key === '_id' || key === '#list' || LINK[key]) && UUID.test(value) ? (hexByUuid.get(value) ?? value) : value;
   if (typeof value !== 'object' || value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map((item) => toHex(item, key, collection));
-  return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'publicToken' && k !== 'legacyId').map(([k, v]) => [k, toHex(v, k, LINK[k] && v && typeof v === 'object' && !Array.isArray(v) ? LINK[k] : collection)]));
+  if (Array.isArray(value)) return value.map((item) => toHex(item, key));
+  return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'publicToken' && k !== 'legacyId').map(([k, v]) => [k, toHex(v, k)]));
 };
 // the user of an audit entry whose user was deleted: MongoDB still names the missing user, PostgreSQL has emptied the link
 const withoutDeletedUser = (value) => (Array.isArray(value) ? value.map(withoutDeletedUser) : (value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([k, v]) => !(k === 'userId' && v === null)).map(([k, v]) => [k, withoutDeletedUser(v)])) : value));
@@ -195,7 +187,7 @@ for (const [name, calls] of Object.entries(plan)) {
   for (const { fn, argLists, unordered, ties } of calls) {
     for (const args of argLists) {
       const translate = PUBLIC_LINK.has(fn) ? (a) => a : toArg;
-      const [a, b] = [await settle(() => mongo[fn](...args)), await settle(() => postgres[fn](...args.map(translate)).then((answer) => toHex(answer, ID_LISTS[fn] ? '#list' : undefined, ID_LISTS[fn] || OWN[name])))];
+      const [a, b] = [await settle(() => mongo[fn](...args)), await settle(() => postgres[fn](...args.map(translate)).then((answer) => toHex(answer, ID_LISTS[fn] ? '#list' : undefined)))];
       const norm = (r) => { const cleaned = r.ok && name === 'auditLogRepository' ? { ...r, value: withoutDeletedUser(r.value) } : r; return ties && cleaned.ok ? { ...cleaned, value: sortDeep(cleaned.value) } : (unordered && cleaned.ok ? { ...cleaned, value: sortList(cleaned.value) } : cleaned); };
       checked += 1;
       if (JSON.stringify(norm(a)) !== JSON.stringify(norm(b))) {

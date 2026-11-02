@@ -15,7 +15,7 @@ names**, so controllers and services change very little. `npm run check:architec
 
 When the schema was first written it was compared with the Mongoose models by an automatic script (every field's type,
 required flag, default, enum list and index): 347 checks, no mismatch, and 14 deliberate mistakes in copies of the schema were
-all caught. That script is not kept in the repository, and it predates the number ids, so ids, `legacyId`, `publicToken` and
+all caught. That script is not kept in the repository, and it predates the UUID ids, so ids, `legacyId`, `publicToken` and
 `nullFields` differ from the models by design. What keeps the two sides in step now is run on every change:
 
 - `npm run verify:postgres` compares every field of every record between MongoDB and Postgres after a copy;
@@ -23,25 +23,31 @@ all caught. That script is not kept in the repository, and it predates the numbe
 
 ## Decisions
 
-- **Ids are auto-increment numbers** (`Int @id @default(autoincrement())`, 1, 2, 3, ...), made by the database, on all 11 tables.
-  Every column that holds the id of another record is a number too. Ids are numbers only in the database: the repositories hand
-  them to the rest of the app as text (`"7"`, `idOut` in `repositories/postgres/helpers.js`), so controllers, services and the
-  client keep comparing ids as text, as they always did, and an id read from a URL is accepted as digits. The largest id is
-  2,147,483,647 (a 4-byte integer). A number is never reused, and a refused insert uses one up, so ids have gaps.
+- **Ids are UUIDs** (`String @id @default(uuid(7)) @db.Uuid`), on all 11 tables. Every column that holds the id of another record is
+  a UUID too. They are version 7 UUIDs: the first 48 bits are the creation time in milliseconds, then a 12-bit counter, then
+  random bits, so ids sort in creation order (`ORDER BY id` means "oldest first", as it did with MongoDB's ObjectIds, and the
+  repositories rely on that for ties). The app makes them (`newId` in `repositories/postgres/helpers.js`: strictly increasing
+  inside one server process, even within one millisecond or when the clock steps back) and passes the id in with every insert,
+  because most inserts are raw SQL, which bypasses a Prisma client-side default. `uuid(7)` in the schema is the same kind of id
+  and only matters for an insert through Prisma's own `create` that gives none; the database has no default, so an insert that
+  forgets the id fails loudly instead of writing a different kind of id. The repositories hand ids to the rest of the app as lower-case
+  text, as ids have always been text to the controllers, the services and the client; an id read from a URL is accepted in any
+  letter case. A UUID is 16 bytes (the column type is `uuid`).
 - **Old links keep working.** Job openings and interviews have two extra columns, because they are the only records with public
   links (`/apply/<job opening>` and `/interview/<interview>/availability`):
   - `legacyId` holds the old MongoDB id (24 characters), filled in by the data copy, so links shared before the move still find
     their record;
   - `publicToken` is a random UUID made by the database (`(gen_random_uuid())::text`, Postgres 13 or newer), used in every new
-    public link, because a plain number in a public link could be guessed (`/apply/1`, `/apply/2`, ...).
-  A public link is accepted as a token or as an old id, never as a plain number (`parsePublicRef`, `isValidPublicRef`,
+    public link. A record's own id is not used there: a version 7 UUID shows when the record was made, and the token is made to
+    be shared.
+  A public link is accepted as a token or as an old id, never as a record's own id (`parsePublicRef`, `isValidPublicRef`,
   `findByPublicRef`). Each use of an old id is logged (`[PublicLink] ... old shared link`), so the log shows when none are used
   any more and `legacyId` can be removed (one migration, and the fallback in `findDocByPublicRef`).
 - **Ids inside JSON lists are not table ids.** An item of a list kept as JSON (a stage progress entry) has its own 24-character
-  `_id` (`newSubdocId`); a user id kept inside JSON (`overriddenBy` in a score) is a number like any other link.
-- **Why not UUIDs or text ids?** Text ids would have kept every old link without extra columns, but ids would stay MongoDB-shaped;
-  auto-increment was chosen. Its cost: the data copy must number every record and rewrite every link (see below), and switching
-  back to MongoDB after new records exist would not be clean.
+  `_id` (`newSubdocId`); a user id kept inside JSON (`overriddenBy` in a score) is a UUID like any other link.
+- **Why UUIDs, and why version 7?** Ids that cannot be guessed and do not depend on a counter. Version 4 (random) ids would not
+  sort in creation order, and 30 queries order by id to mean "oldest first"; version 7 keeps that. The data copy must give every
+  record a new id and rewrite every link (see below), and switching back to MongoDB after new records exist would not be clean.
 - **One migration.** `migrations/` holds a single first migration (`..._init`) with the final tables, the CHECK constraints and
   the case-insensitive department-name index, because nothing was deployed before the ids were changed.
 - **Field names stay as they are** (camelCase). The API keeps returning `_id`.
@@ -86,15 +92,18 @@ all caught. That script is not kept in the repository, and it predates the numbe
 
 `migrate.js` copies MongoDB into Postgres and never writes to MongoDB.
 
-1. **Numbering.** Every record of every collection gets a number first: its place (counting from 1) in the sorted old ids of
-   its collection, which is creation order, because an ObjectId starts with the time it was made. A skipped record keeps its
-   number, so there are gaps. After each table is copied, the table's counter is set to its highest number.
-2. **Links.** Every link between records is rewritten through that numbering, including ids kept inside JSON (a score's
-   `overriddenBy`, a screening override). Parents are copied before children.
+1. **New ids.** Every record gets the UUID its old MongoDB id maps to (`migrate/uuid.js`). The mapping is worked out from the old id
+   alone, so copying the same data again gives the very same ids, and the verifier can check each one on its own. An ObjectId is
+   12 bytes: 4 of time (seconds), then 8. The UUID is a version 7 one: the time (as milliseconds), the version, the first 12 bits
+   of the 8 bytes, the variant, the next 52 bits, and 8 zero bits. Old ids sort among themselves as before, and every old id sorts
+   before any id the app makes after the copy. An old id that is not a 24-character ObjectId cannot be mapped, and that record is
+   skipped and reported.
+2. **Links.** Every link between records is rewritten to the UUID of the record it pointed at, including ids kept inside JSON (a
+   score's `overriddenBy`, a screening override). Parents are copied before children.
 3. **Orphans.** A record whose required parent (an application's candidate) was skipped or does not exist is skipped and listed
    in `logs/migration-report.json`. A job opening's department that does not exist is emptied and reported.
-4. **Dangling links with no foreign key** (an audit entry about a deleted user, a "created by" that was deleted) cannot be a
-   number, so the link is emptied and counted in the report ("pointed at a user that does not exist; set to empty").
+4. **Dangling links with no foreign key** (an audit entry about a deleted user, a "created by" that was deleted) have no record to
+   point at, so the link is emptied and counted in the report ("pointed at a user that does not exist; set to empty").
 5. **Free-form JSON** (settings values, audit old/new values) cannot be rewritten safely; any record id found there is left
    as text and counted in the report ("not translated").
 6. **`legacyId` and `publicToken`.** Job openings and interviews get their old id in `legacyId` and a random `publicToken`.
@@ -113,15 +122,16 @@ npm run test:migrate                  # runs both on deliberately awkward data i
 
 - `migrate.js` fills in the defaults Mongoose filled in when loading, and **does not copy anything silently that cannot be
   copied**: such a row is skipped and listed with its reason in the report.
-- `verify.js` does not reuse the migration's rules. It works out what every value should be from the Mongoose models and the
-  numbering rule, and reads Postgres back as exact text. Skipped rows must be absent; every other record must be present and
-  identical; every link must point at the record it pointed at (or be empty when that record was not copied); `legacyId` must
-  be the old id; every `publicToken` must be different; every table's counter must be past its highest number.
+- `verify.js` does not reuse the migration's rules. It works out what every value should be from the Mongoose models, and every id
+  from the 24 characters of the old id with its own code (the 128 bits built as one big number; `npm run test:ids` checks that
+  the two agree), and reads Postgres back as exact text. Skipped rows must be absent; every other record must be present under
+  its UUID and identical; every link must point at the record it pointed at (or be empty when that record was not copied);
+  `legacyId` must be the old id; every `publicToken` must be different; every id must be a version 7 UUID.
 - `test:migrate` (`migrate/awkward-test.js`) builds a scratch MongoDB and PostgreSQL with bad enum values, missing required
-  values, numbers stored as text, links to records that do not exist or were skipped, and ids inside JSON, copies them, runs
-  the verifier, and checks what happened to each record (32 checks).
+  values, numbers stored as text, text with NUL characters, links to records that do not exist or were skipped, and ids inside JSON,
+  copies them (twice, to check the ids are the same both times), runs the verifier, and checks what happened to each record.
 - The verifier was tested by breaking a copy 15 ways (a candidate swapped, a legacy id lost, an audit link emptied, a wrong user
-  inside a score, a deleted and an extra record, a counter behind its highest number, ...); every break was caught, except one
+  inside a score, a deleted and an extra record, a record under a different id, an id that is not a version 7 UUID, ...); every break was caught, except one
   (two interviews sharing a token) which the database itself refuses.
 - To test against another MongoDB (for example a copy of production), set `MIGRATE_MONGO_URI`; `MIGRATE_REPORT_PATH` moves
   the report file.
@@ -177,7 +187,7 @@ npm run parity:real           reads your real data through both versions of ever
 npm run smoke:postgres        starts the real server on Postgres with a copy of your data and makes real requests
 npm run journey:postgres      a whole working day on the real server, on top of the copied data: checks what was copied, then new
                               jobs, candidates, applications, interviews, scores, decisions, links, settings and users, a restart,
-                              deleting, and the database's own integrity (no record pointing at nothing, tokens, counters)
+                              deleting, and the database's own integrity (no record pointing at nothing, tokens, ids)
 npm run test:ids              what counts as an id, and which values are public links
 npm run test:migrate          the data copy and the verifier on awkward data
 ```

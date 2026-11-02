@@ -99,7 +99,7 @@ try {
     candidates: await fromMongo('candidates'), requisitions: await fromMongo('requisitions'), applications: await fromMongo('applications'), interviews: await fromMongo('interviews'), audits: await fromMongo('auditlogs') };
   await mongoose.disconnect();
   const maxIds = {};
-  for (const table of ['users', 'candidates', 'requisitions', 'applications', 'interviews', 'departments', 'audit_logs']) maxIds[table] = Number((await sql(`SELECT COALESCE(max(id), 0)::int AS m FROM "${table}"`))[0].m);
+  for (const table of ['users', 'candidates', 'requisitions', 'applications', 'interviews', 'departments', 'audit_logs']) maxIds[table] = (await sql(`SELECT COALESCE(max(id::text COLLATE "C"), '') AS m FROM "${table}"`))[0].m; // the largest copied id (a UUID, compared as text: ids sort in creation order)
 
   process.env.DATABASE_URL = dbUrl.toString();
   const users = await import(pathToFileURL(path.join(serverDir, 'repositories', 'postgres', 'userRepository.js')).href);
@@ -127,7 +127,7 @@ try {
   const step = async (name, method, url, body, test = () => true, status = 200) => {
     try { const { status: got, data } = await call(method, url, body); check(name, got === status && Boolean(test(data)), `HTTP ${got} ${JSON.stringify(data)?.slice(0, 260)}`); return data; } catch (error) { check(name, false, error.message); return null; }
   };
-  const isText = (value) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
+  const isText = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value); // an id: a UUID version 7, as text
   const idOf = (data, key) => (data && (data[key] || data))._id;
 
   console.log('\n=== 1. What was copied is all there, through the API');
@@ -182,7 +182,7 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
   };
   const created = await step('create a job opening', 'POST', '/api/requisitions', newJobBody, (d) => isText(d.requisition._id) && /^[0-9a-f-]{36}$/.test(d.requisition.publicToken) && d.requisition.departmentId === departmentId && d.requisition.createdBy, 201);
   const newJob = created && created.requisition; const newJobId = newJob && newJob._id;
-  check('its id is after every copied one', Number(newJobId) > maxIds.requisitions, `${newJobId} <= ${maxIds.requisitions}`);
+  check('its id is after every copied one', newJobId > maxIds.requisitions, `${newJobId} <= ${maxIds.requisitions}`);
   await step('the new apply link (its token) opens it', 'GET', `/api/requisitions/${newJob && newJob.publicToken}/public`, undefined, (d) => d.requisition.title === 'Journey Test Engineer');
   check('and the plain number does not', (await anon('GET', `/api/requisitions/${newJobId}/public`)).status === 404);
   const opened = await step('read it back, with its department filled in', 'GET', `/api/requisitions/${newJobId}`, undefined, (d) => d.requisition.title === 'Journey Test Engineer' && d.requisition.departmentId && d.requisition.departmentId._id === departmentId);
@@ -199,7 +199,7 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
   // candidates, applications
   const candidate = await step('create a candidate', 'POST', '/api/candidates', { name: 'Journey Candidate', email: 'journey.candidate@example.com', phone: '03001234567' }, (d) => isText(idOf(d, 'candidate')), 201);
   const candidateId = idOf(candidate, 'candidate');
-  check('its id is after every copied one', Number(candidateId) > maxIds.candidates, `${candidateId} <= ${maxIds.candidates}`);
+  check('its id is after every copied one', candidateId > maxIds.candidates, `${candidateId} <= ${maxIds.candidates}`);
   await step('the same email again is refused', 'POST', '/api/candidates', { name: 'Again', email: 'journey.candidate@example.com', phone: '03001234567' }, () => true, 400);
   const application = await step('attach the candidate to the new job opening', 'POST', `/api/candidates/${candidateId}/apply`, { requisitionId: newJobId }, (d) => isText(d.application._id) && d.application.candidateId === candidateId && d.application.requisitionId === newJobId && d.application.stageProgress.length === stages.length, 201);
   const applicationId = application && application.application._id;
@@ -207,7 +207,8 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
   const oldCandidate = apiCandidates.candidates[0];
   const second = await step('attach a copied candidate to the new job opening too', 'POST', `/api/candidates/${oldCandidate._id}/apply`, { requisitionId: newJobId }, (d) => isText(d.application._id), 201);
   await step('the job opening lists both applications, with the candidates filled in', 'GET', `/api/requisitions/${newJobId}?limit=100`, undefined, (d) => d.applications.length === 2 && d.applications.every((a) => a.candidateId && a.candidateId.name) && d.applications.some((a) => a.candidateId._id === candidateId));
-  await step('the candidate\'s own page shows the application', 'GET', `/api/candidates/${candidateId}`, undefined, (d) => JSON.stringify(d).includes(applicationId));
+  await step('the candidate\'s own page opens', 'GET', `/api/candidates/${candidateId}`, undefined, (d) => d.candidate._id === candidateId && d.candidate.email === 'journey.candidate@example.com');
+  await step('the candidate list shows the new application under the candidate (with the job it is for)', 'GET', '/api/candidates?search=journey.candidate&limit=10', undefined, (d) => d.candidates.length === 1 && d.candidates[0]._id === candidateId && JSON.stringify(d.candidates[0].applications).includes(newJobId));
   await step('edit the candidate', 'PATCH', `/api/candidates/${candidateId}`, { notes: 'journey note' }, (d) => (d.candidate || d).notes === 'journey note');
   await step('edit a copied candidate (and put it back)', 'PATCH', `/api/candidates/${oldCandidate._id}`, { notes: 'journey note' }, (d) => (d.candidate || d).notes === 'journey note');
   await step('put the copied candidate\'s note back', 'PATCH', `/api/candidates/${oldCandidate._id}`, { notes: oldCandidate.notes || '' }, (d) => Boolean(d));
@@ -216,13 +217,13 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
   const first = stages[0];
   const interview = await step(`start the first stage (${first && first.key}) for the candidate`, 'POST', '/api/interviews', { applicationId, stageKey: first && first.key }, (d) => isText(d.interview._id) && d.interview.applicationId === applicationId && /^[0-9a-f-]{36}$/.test(d.interview.publicToken), 201);
   const interviewId = interview && interview.interview._id;
-  check('its id is after every copied one', Number(interviewId) > maxIds.interviews, `${interviewId} <= ${maxIds.interviews}`);
+  check('its id is after every copied one', interviewId > maxIds.interviews, `${interviewId} <= ${maxIds.interviews}`);
   await step('the same stage again is refused (409)', 'POST', '/api/interviews', { applicationId, stageKey: first.key }, (d) => d.interviewId === interviewId, 409);
   await step('the application now says that stage is scheduled', 'GET', `/api/requisitions/${newJobId}?limit=100`, undefined, (d) => d.applications.find((a) => a._id === applicationId).stageProgress.find((p) => p.stageKey === first.key).status === 'scheduled');
   const requested = await step('request availability: the link carries the token, nothing is queued', 'POST', `/api/interviews/${interviewId}/request-availability`, {}, (d) => d.availabilityUrl.includes(interview.interview.publicToken) && d.queued === false);
   const ref = requested && requested.availabilityUrl.split('/interview/')[1].split('/availability')[0];
   check('the candidate opens that link and sends their availability', (await anon('GET', `/api/interviews/${ref}/availability/public`)).status === 200 && (await anon('POST', `/api/interviews/${ref}/availability/public`, { preferredDate: '2027-01-05', startTime: '10:00', notes: 'journey' })).status === 200);
-  check('the availability was saved on the interview', (await sql('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::int', Number(interviewId)))[0].a.notes === 'journey');
+  check('the availability was saved on the interview', (await sql('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::uuid', interviewId))[0].a.notes === 'journey');
 
   // stand in for the AI: the stage has been "scored" (rows written straight into the scratch database), then the real approve / override / decision code runs
   const stageAttributes = ((scorecard && (scorecard.scorecard || scorecard).stages) || []).find((s) => s.stageKey === first.key);
@@ -231,19 +232,19 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
     check(`(the first stage "${first.key}" has no rubric here, so the interview is approved as a status)`, true);
   } else {
     const scores = attributeIds.map((attributeId) => ({ attributeId, aiScore: 4, aiJustification: 'journey' }));
-    await db.$executeRawUnsafe('UPDATE interviews SET scores = $2::jsonb, status = \'scored\', "stageAverage" = 4 WHERE id = $1::int', Number(interviewId), JSON.stringify(scores));
+    await db.$executeRawUnsafe('UPDATE interviews SET scores = $2::jsonb, status = \'scored\', "stageAverage" = 4 WHERE id = $1::uuid', interviewId, JSON.stringify(scores));
   }
   const user = (await call('GET', '/api/auth/me')).data.user;
   if (attributeIds.length) {
     await step('override one score (the user who did it is recorded as text)', 'PATCH', `/api/scoring/interview/${interviewId}/override`, { overrides: [{ attributeId: attributeIds[0], approvedScore: 5, reason: 'journey override reason' }] }, (d) => JSON.stringify(d).includes(user._id));
-    check('inside the stored score the user is a number, as the data copy writes it', Number((await sql('SELECT scores FROM interviews WHERE id = $1::int', Number(interviewId)))[0].scores.find((s) => s.attributeId === attributeIds[0]).overriddenBy) === Number(user._id));
+    check('inside the stored score the user is an id (a UUID), as the data copy writes it', (await sql('SELECT scores FROM interviews WHERE id = $1::uuid', interviewId))[0].scores.find((s) => s.attributeId === attributeIds[0]).overriddenBy === user._id);
   }
   const approved = await step('approve the stage', 'PATCH', `/api/scoring/interview/${interviewId}/approve`, {}, (d) => d.interview.status === 'approved' && d.application && isText(d.application._id));
   check('the next stage was started for the candidate', Boolean(approved && (approved.nextInterviewId || stages.length === 1)), JSON.stringify(approved && approved.nextInterviewId));
   await step('recompute the application score', 'POST', `/api/scoring/application/${applicationId}/recompute`, {}, (d) => Boolean(d));
   await step('the ranking lists both applications', 'GET', `/api/requisitions/${newJobId}/ranking`, undefined, (d) => (d.applications || d.ranking || []).length >= 1);
   await step('record the final decision', 'PATCH', `/api/scoring/application/${applicationId}/decision`, { decision: 'withdrawn', reason: 'journey' }, (d) => d.application.finalDecision === 'withdrawn' && d.application.finalDecisionBy === user._id);
-  check('the decider is a number in the table', Number((await sql('SELECT "finalDecisionBy" AS u FROM applications WHERE id = $1::int', Number(applicationId)))[0].u) === Number(user._id));
+  check('the decider is stored as a UUID in the table', (await sql('SELECT "finalDecisionBy"::text AS u FROM applications WHERE id = $1::uuid', applicationId))[0].u === user._id);
   const trail = await call('GET', '/api/audit?limit=50');
   const entries = trail.data.entries || [];
   check('the audit log recorded the new work, with the acting user filled in', entries.some((e) => e.action === 'final_decision' && e.userId && e.userId._id === user._id) && entries.some((e) => e.applicationId === applicationId), JSON.stringify(entries.slice(0, 2)).slice(0, 200));
@@ -257,7 +258,7 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
   await step('delete the template', 'DELETE', `/api/pipelines/${newTemplateId}`, undefined, () => true);
   const person = await step('create a user', 'POST', '/api/users', { name: 'Journey Person', email: 'journey.person@example.com', password: 'Another-Pass-123!', role: 'recruiter' }, (d) => isText(idOf(d, 'user')), 201);
   const personId = idOf(person, 'user');
-  check('its id is after every copied one', Number(personId) > maxIds.users, `${personId} <= ${maxIds.users}`);
+  check('its id is after every copied one', personId > maxIds.users, `${personId} <= ${maxIds.users}`);
   const personSession = await anon('POST', '/api/auth/login', { email: 'journey.person@example.com', password: 'Another-Pass-123!' });
   check('the new user can sign in', personSession.status === 200 && personSession.data.user.role === 'recruiter');
   await step('change the user\'s role', 'PATCH', `/api/users/${personId}`, { role: 'interviewer' }, (d) => (d.user || d).role === 'interviewer');
@@ -270,18 +271,18 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
   await step('sign in again after the restart', 'POST', '/api/auth/login', { email: 'journey@example.com', password: PASSWORD }, (d) => d.user);
   check('the job openings and candidates are all still there', (await call('GET', '/api/requisitions')).data.requisitions.length === before.jobs && (await call('GET', '/api/candidates?limit=1000')).data.total === before.candidates);
   await step('the new application and its decision survived', 'GET', `/api/requisitions/${newJobId}?limit=100`, undefined, (d) => d.applications.find((a) => a._id === applicationId).finalDecision === 'withdrawn');
-  const another = await step('new records carry on counting after the restart', 'POST', '/api/candidates', { name: 'After Restart', email: 'after.restart@example.com', phone: '03001234568' }, (d) => Number(idOf(d, 'candidate')) === Number(candidateId) + 1, 201);
+  const another = await step('a record made after the restart sorts after the one made before it', 'POST', '/api/candidates', { name: 'After Restart', email: 'after.restart@example.com', phone: '03001234568' }, (d) => idOf(d, 'candidate') > candidateId, 201);
   const anotherId = idOf(another, 'candidate');
 
   console.log('\n=== 5. Deleting, and what the database says at the end');
   await step('take the candidate off the job opening', 'DELETE', `/api/candidates/${candidateId}/requisitions/${newJobId}`, undefined, () => true);
-  check('their application and interviews went with it', (await sql('SELECT (SELECT count(*) FROM applications WHERE "candidateId" = $1::int)::int AS a, (SELECT count(*) FROM interviews WHERE "applicationId" = $2::int)::int AS i', Number(candidateId), Number(applicationId)))[0].a === 0);
+  check('their application and interviews went with it', (await sql('SELECT (SELECT count(*) FROM applications WHERE "candidateId" = $1::uuid)::int AS a, (SELECT count(*) FROM interviews WHERE "applicationId" = $2::uuid)::int AS i', candidateId, applicationId))[0].a === 0);
   await step('delete the candidates made here', 'DELETE', `/api/candidates/${candidateId}`, undefined, () => true);
   await step('and the other', 'DELETE', `/api/candidates/${anotherId}`, undefined, () => true);
   await step('delete the user made here', 'DELETE', `/api/users/${personId}`, undefined, () => true);
   await step('delete the new job opening', 'DELETE', `/api/requisitions/${newJobId}`, undefined, () => true);
   if (duplicate) await step('delete the duplicated job opening', 'DELETE', `/api/requisitions/${idOf(duplicate, 'requisition')}`, undefined, () => true);
-  check('the new job opening took its scorecard, applications and interviews with it', (await sql('SELECT (SELECT count(*) FROM scorecards WHERE "requisitionId" = $1::int)::int + (SELECT count(*) FROM applications WHERE "requisitionId" = $1::int)::int + (SELECT count(*) FROM interviews WHERE "requisitionId" = $1::int)::int AS n', Number(newJobId)))[0].n === 0);
+  check('the new job opening took its scorecard, applications and interviews with it', (await sql('SELECT (SELECT count(*) FROM scorecards WHERE "requisitionId" = $1::uuid)::int + (SELECT count(*) FROM applications WHERE "requisitionId" = $1::uuid)::int + (SELECT count(*) FROM interviews WHERE "requisitionId" = $1::uuid)::int AS n', newJobId))[0].n === 0);
   await step('delete the department made here', 'DELETE', `/api/departments/${departmentId}`, undefined, () => true);
   void second;
   check('the copied data is exactly as it was: same counts of every table', (await sql('SELECT (SELECT count(*) FROM requisitions)::int r, (SELECT count(*) FROM candidates)::int c, (SELECT count(*) FROM applications)::int a, (SELECT count(*) FROM interviews)::int i, (SELECT count(*) FROM users)::int u, (SELECT count(*) FROM departments)::int d')).every((row) => row.r === mongo.requisitions.length && row.c === mongo.candidates.length && row.a === mongo.applications.length && row.i === mongo.interviews.length && row.u === mongo.users.length + 1 && row.d === mongo.departments.length));
@@ -294,12 +295,12 @@ check(`${keptSettings.length} settings (the ${mongo.settings.length - keptSettin
     (SELECT count(DISTINCT "publicToken") FROM requisitions)::int - (SELECT count(*) FROM requisitions)::int AS repeated_job_tokens,
     (SELECT count(DISTINCT "publicToken") FROM interviews)::int - (SELECT count(*) FROM interviews)::int AS repeated_interview_tokens`);
   check('no record points at nothing, every public token is there and different', Object.values(integrity).every((v) => Number(v) === 0), JSON.stringify(integrity));
-  let countersOk = true; const counterNotes = [];
+  let idsOk = true; const idNotes = [];
   for (const table of ['users', 'departments', 'pipeline_templates', 'settings', 'candidates', 'requisitions', 'scorecards', 'applications', 'interviews', 'refresh_tokens', 'audit_logs']) {
-    const highest = Number((await sql(`SELECT COALESCE(max(id), 0)::int AS m FROM "${table}"`))[0].m); const counter = Number((await sql(`SELECT last_value::int AS v FROM "${table}_id_seq"`))[0].v);
-    if (counter < highest) { countersOk = false; counterNotes.push(`${table}: counter ${counter} < ${highest}`); }
+    const notV7 = Number((await sql(`SELECT count(*)::int AS n FROM "${table}" WHERE id::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`))[0].n);
+    if (notV7) { idsOk = false; idNotes.push(`${table}: ${notV7} ids are not UUID version 7`); }
   }
-  check('every table\'s counter is past its highest id (the next record cannot clash)', countersOk, counterNotes.join('; '));
+  check('every id in every table is a UUID version 7 (so new ones sort after the copied ones)', idsOk, idNotes.join('; '));
   const problems = serverLog.filter((line) => /\b(error|ERROR)\b|Unhandled|TypeError|Prisma/.test(line) && !/Redis|ECONNREFUSED|ValidationError|VALIDATION|Authentication failed/.test(line));
   console.log(`\nServer log (after the restart): ${problems.length ? `${problems.length} line(s) mention errors:` : 'no errors logged.'}`);
   for (const line of problems.slice(0, 12)) console.log(`   ${line.slice(0, 220)}`);

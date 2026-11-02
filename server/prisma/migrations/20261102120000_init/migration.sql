@@ -42,7 +42,7 @@ CREATE TYPE "InterviewStatus" AS ENUM ('pending', 'scheduled', 'transcript_pendi
 
 -- CreateTable
 CREATE TABLE "users" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "passwordHash" TEXT NOT NULL,
@@ -60,8 +60,8 @@ CREATE TABLE "users" (
 
 -- CreateTable
 CREATE TABLE "refresh_tokens" (
-    "id" SERIAL NOT NULL,
-    "userId" INTEGER NOT NULL,
+    "id" UUID NOT NULL,
+    "userId" UUID NOT NULL,
     "tokenHash" TEXT NOT NULL,
     "familyId" TEXT NOT NULL,
     "familyStartedAt" TIMESTAMP(3) NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE "refresh_tokens" (
 
 -- CreateTable
 CREATE TABLE "settings" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "key" TEXT NOT NULL,
     "value" JSONB,
     "description" TEXT,
@@ -90,11 +90,11 @@ CREATE TABLE "settings" (
 
 -- CreateTable
 CREATE TABLE "audit_logs" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "action" "AuditAction" NOT NULL,
-    "userId" INTEGER,
-    "requisitionId" INTEGER,
-    "applicationId" INTEGER,
+    "userId" UUID,
+    "requisitionId" UUID,
+    "applicationId" UUID,
     "targetType" TEXT,
     "targetId" TEXT,
     "oldValue" JSONB,
@@ -108,10 +108,10 @@ CREATE TABLE "audit_logs" (
 
 -- CreateTable
 CREATE TABLE "departments" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
-    "createdBy" INTEGER,
+    "createdBy" UUID,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "nullFields" JSONB,
@@ -121,7 +121,7 @@ CREATE TABLE "departments" (
 
 -- CreateTable
 CREATE TABLE "pipeline_templates" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
@@ -136,7 +136,7 @@ CREATE TABLE "pipeline_templates" (
 
 -- CreateTable
 CREATE TABLE "candidates" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "phone" TEXT,
@@ -155,7 +155,7 @@ CREATE TABLE "candidates" (
 
 -- CreateTable
 CREATE TABLE "requisitions" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "legacyId" TEXT,
     "publicToken" TEXT NOT NULL DEFAULT (gen_random_uuid())::text,
     "title" TEXT NOT NULL,
@@ -171,11 +171,11 @@ CREATE TABLE "requisitions" (
     "remoteRegion" TEXT NOT NULL DEFAULT '',
     "jobDescription" TEXT NOT NULL,
     "status" "RequisitionStatus" NOT NULL DEFAULT 'open',
-    "departmentId" INTEGER,
-    "pipelineTemplateId" INTEGER,
+    "departmentId" UUID,
+    "pipelineTemplateId" UUID,
     "pipelineTemplateName" TEXT,
     "stages" JSONB NOT NULL DEFAULT '[]',
-    "scorecardId" INTEGER,
+    "scorecardId" UUID,
     "hireThreshold" DOUBLE PRECISION NOT NULL DEFAULT 3.5,
     "maybeThreshold" DOUBLE PRECISION NOT NULL DEFAULT 3,
     "initialScreeningCriteria" JSONB NOT NULL DEFAULT '[]',
@@ -184,7 +184,7 @@ CREATE TABLE "requisitions" (
     "applicationDeadline" TIMESTAMP(3),
     "aiScreeningEnabled" BOOLEAN NOT NULL DEFAULT true,
     "closedAt" TIMESTAMP(3),
-    "createdBy" INTEGER,
+    "createdBy" UUID,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "nullFields" JSONB,
@@ -194,8 +194,8 @@ CREATE TABLE "requisitions" (
 
 -- CreateTable
 CREATE TABLE "scorecards" (
-    "id" SERIAL NOT NULL,
-    "requisitionId" INTEGER NOT NULL,
+    "id" UUID NOT NULL,
+    "requisitionId" UUID NOT NULL,
     "generatedByAI" BOOLEAN NOT NULL DEFAULT true,
     "stages" JSONB NOT NULL DEFAULT '[]',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -207,9 +207,9 @@ CREATE TABLE "scorecards" (
 
 -- CreateTable
 CREATE TABLE "applications" (
-    "id" SERIAL NOT NULL,
-    "candidateId" INTEGER NOT NULL,
-    "requisitionId" INTEGER NOT NULL,
+    "id" UUID NOT NULL,
+    "candidateId" UUID NOT NULL,
+    "requisitionId" UUID NOT NULL,
     "currentStageKey" TEXT,
     "source" "ApplicationSource" NOT NULL DEFAULT 'manual',
     "opportunityDuration" TEXT,
@@ -228,7 +228,7 @@ CREATE TABLE "applications" (
     "disposition" "Disposition",
     "rank" DOUBLE PRECISION,
     "finalDecision" "FinalDecision",
-    "finalDecisionBy" INTEGER,
+    "finalDecisionBy" UUID,
     "rejectionReason" TEXT,
     "offerLetterUrl" TEXT,
     "offerLetterPublicId" TEXT,
@@ -251,11 +251,11 @@ CREATE TABLE "applications" (
 
 -- CreateTable
 CREATE TABLE "interviews" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL,
     "legacyId" TEXT,
     "publicToken" TEXT NOT NULL DEFAULT (gen_random_uuid())::text,
-    "applicationId" INTEGER NOT NULL,
-    "requisitionId" INTEGER NOT NULL,
+    "applicationId" UUID NOT NULL,
+    "requisitionId" UUID NOT NULL,
     "stageKey" TEXT NOT NULL,
     "meetingMode" "MeetingMode" NOT NULL DEFAULT 'online',
     "provider" "TranscriptProvider" NOT NULL DEFAULT 'google_meet',
@@ -264,7 +264,7 @@ CREATE TABLE "interviews" (
     "meetingStart" TIMESTAMP(3),
     "meetingEnd" TIMESTAMP(3),
     "conferenceId" TEXT,
-    "designatedScorerId" INTEGER,
+    "designatedScorerId" UUID,
     "candidateAvailability" JSONB,
     "consentObtained" BOOLEAN NOT NULL DEFAULT false,
     "transcriptText" TEXT,

@@ -12,8 +12,28 @@ const { Prisma } = prismaPkg;
 
 // ------------------------------------------------------------------------------------------------------------- ids
 
-// A table row gets its id from the database: an auto-increment number (1, 2, 3, ...). A repository inserts without an id and
-// reads the new one back (RETURNING id). Only the items inside a JSON list (below) get an id made here.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+let lastMs = 0;
+let sequence = 0;
+
+/**
+ * The id of a new table row: a UUID version 7. Its first 48 bits are the time in milliseconds, then comes a 12-bit counter, then
+ * random bits, so ids sort in creation order (`ORDER BY id` means "oldest first", as it did with MongoDB's ObjectIds) and, inside
+ * one server process, every id is larger than the one before it, even within the same millisecond or when the clock steps back.
+ * Every insert passes the id it makes here; the database does not make one.
+ * @param {number} [now] the time in milliseconds (a test can give it)
+ * @returns {string} for example `019a4f3c-2b7e-7c01-8f2d-6a1b9c0d4e5f`
+ */
+export function newId(now = Date.now()) {
+  const ms = Math.floor(now);
+  if (ms > lastMs) { lastMs = ms; sequence = crypto.randomInt(0, 0x800); } // starts low, so there is room to count up inside the millisecond
+  else { sequence += 1; if (sequence > 0xfff) { lastMs += 1; sequence = crypto.randomInt(0, 0x800); } } // same millisecond (or the clock went back): count on
+  const random = crypto.randomBytes(8);
+  random[0] = (random[0] & 0x3f) | 0x80; // the variant bits of a UUID (10xx)
+  const hex = lastMs.toString(16).padStart(12, '0') + '7' + sequence.toString(16).padStart(3, '0') + random.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 let counter = crypto.randomBytes(3).readUIntBE(0, 3);
 const processBytes = crypto.randomBytes(5);
@@ -50,45 +70,41 @@ export function parsePublicRef(value) {
 }
 
 /**
- * An id as the app sees it: text ("7"), as ids have always been to the controllers, the services and the client, even though the
- * database holds a number. An empty value (no link) stays empty. Use it on every id a repository hands out.
+ * An id as the app sees it: lower-case text (a UUID), as ids have always been text to the controllers, the services and the
+ * client. An empty value (no link) stays empty. Use it on every id a repository hands out.
  */
-export const idOut = (value) => (value === null || value === undefined ? value : String(value));
-
-/** The largest number a table's id can hold (the database column is a 4-byte integer). */
-export const MAX_ID = 2147483647;
+export const idOut = (value) => (value === null || value === undefined ? value : String(value).toLowerCase());
 
 /**
- * The id as a number, or undefined when it is not one: a whole number from 1 up to MAX_ID, given as a number or as digits
- * without a leading zero ("7"). An old 24-character MongoDB id, "7.5", "-1", "1e3", " 7", "007" and anything else is not an id.
+ * The id as lower-case text, or undefined when it is not one: a UUID, in any letter case. An old 24-character MongoDB id, a number,
+ * " 019a...", a UUID with a character too many or too few, and anything else is not an id.
  */
 export function parseId(value) {
-  let number;
-  if (typeof value === 'number') number = value;
-  else if (typeof value === 'string' && /^[1-9][0-9]{0,9}$/.test(value)) number = Number(value);
-  else return undefined;
-  return Number.isInteger(number) && number >= 1 && number <= MAX_ID ? number : undefined;
+  return typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : undefined;
 }
 
+/** Two ids in creation order, for `Array.sort` (the same order `ORDER BY id` gives in the database). */
+export const compareIds = (a, b) => (a < b ? -1 : (a > b ? 1 : 0));
+
 /**
- * Turns an id from a URL or form into the number stored in the database, or throws the error MongoDB would have for a bad id:
+ * Turns an id from a URL or form into the id stored in the database, or throws the error MongoDB would have for a bad id:
  * a CastError, which the API answers with a 400.
  * @param {*} value
  * @param {string} path the field name, for the error ("_id" for a record's own id)
  */
 export function castId(value, path = '_id') {
-  const number = parseId(value);
-  if (number === undefined) throw castError(path, value);
-  return number;
+  const id = parseId(value);
+  if (id === undefined) throw castError(path, value);
+  return id;
 }
 
 // ----------------------------------------------------------------------------------------------------------- errors
 
 /** The error (a Mongoose-style CastError) for an id that cannot be read. */
 export function castError(path, value) {
-  const error = new Error(`Cast to Number failed for value "${value}" (type ${typeof value}) at path "${path}"`);
+  const error = new Error(`Cast to UUID failed for value "${value}" (type ${typeof value}) at path "${path}"`);
   error.name = 'CastError';
-  error.kind = 'Number';
+  error.kind = 'UUID';
   error.path = path;
   error.value = value;
   return error;
@@ -209,12 +225,12 @@ export function castBoolean(value, path) {
   return { problem: `${castFailureMessage('Boolean', path, value)} because of "CastError"` };
 }
 
-/** An id held in a field of a record (a link to another record): the number, or { problem } worded as Mongoose words a failed cast. */
+/** An id held in a field of a record (a link to another record): the id as lower-case text, or { problem } worded as Mongoose words a failed cast. */
 export function castIdField(value, path) {
   if (value === undefined || value === null) return { value };
-  const number = parseId(value);
-  if (number === undefined) return { problem: castFailureMessage('Number', path, value) };
-  return { value: number };
+  const id = parseId(value);
+  if (id === undefined) return { problem: castFailureMessage('UUID', path, value) };
+  return { value: id };
 }
 
 /** Whether two plain JSON values are equal, whatever the order of the keys inside objects. */

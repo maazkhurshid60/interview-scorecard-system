@@ -13,9 +13,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ids are auto-increment numbers made by the database (1, 2, 3, ...). Every column that holds the id of another record is a
-// number too. The old MongoDB ids are not kept here yet: the data copy gives every record a new number and rewrites the
-// links through a pairing of old and new ids.
+// ids are UUIDs (version 7: the first 48 bits are the creation time in milliseconds, so ids sort in creation order, as MongoDB's
+// ObjectIds did). The repositories make them (`newId` in repositories/postgres/helpers.js, strictly increasing inside one
+// process) and pass them in with every insert; `uuid(7)` below is the same kind of id, for an insert that goes through Prisma's
+// own create without one. Every column that holds the id of another record is a UUID too. The data copy gives every old record
+// the UUID that its old MongoDB id maps to (the same one every time), so a copy can be repeated and checked.
 //
 // Every MongoDB `Number` is a `Float` here (double precision). That can hold anything a Mongoose Number could, so the
 // migration cannot fail on a decimal; fields that are always whole numbers can be tightened later after checking the data.
@@ -132,7 +134,7 @@ enum InterviewStatus {
 // ---------------------------------------------------------------------------------------------- users and sessions
 
 model User {
-  id                     Int    @id @default(autoincrement())
+  id                     String    @id @default(uuid(7)) @db.Uuid
   name                   String
   email                  String    @unique
   passwordHash           String
@@ -155,8 +157,8 @@ model User {
 // One row per issued refresh token (only a SHA-256 hash of it is stored). MongoDB deleted expired rows by itself (a TTL
 // index); Postgres has no such thing, so a small scheduled cleanup must delete rows past `expiresAt`.
 model RefreshToken {
-  id              Int    @id @default(autoincrement())
-  userId          Int
+  id              String    @id @default(uuid(7)) @db.Uuid
+  userId          String @db.Uuid
   tokenHash       String    @unique
   familyId        String
   familyStartedAt DateTime
@@ -182,7 +184,7 @@ model RefreshToken {
 // Settings are key/value: thresholds, retention days, model tiers, credentials, spend counters. The value can be a
 // number, text, list or object, so it is JSON.
 model Setting {
-  id          Int   @id @default(autoincrement())
+  id          String   @id @default(uuid(7)) @db.Uuid
   key         String   @unique
   value       Json?
   description String?
@@ -196,11 +198,11 @@ model Setting {
 // No foreign keys on purpose: entries must outlive the user, job or application they mention (an entry about a
 // deleted user is still shown), and old data may point at things that no longer exist.
 model AuditLog {
-  id            Int      @id @default(autoincrement())
+  id            String      @id @default(uuid(7)) @db.Uuid
   action        AuditAction
-  userId        Int?
-  requisitionId Int?
-  applicationId Int?
+  userId        String? @db.Uuid
+  requisitionId String? @db.Uuid
+  applicationId String? @db.Uuid
   targetType    String?
   targetId      String?
   oldValue      Json?
@@ -218,10 +220,10 @@ model AuditLog {
 }
 
 model Department {
-  id          Int   @id @default(autoincrement())
+  id          String   @id @default(uuid(7)) @db.Uuid
   name        String   @unique
   description String   @default("")
-  createdBy   Int?
+  createdBy   String? @db.Uuid
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -234,7 +236,7 @@ model Department {
 
 // The stage lists a job opening is created from. Each stage is a small object, kept as JSON.
 model PipelineTemplate {
-  id          Int   @id @default(autoincrement())
+  id          String   @id @default(uuid(7)) @db.Uuid
   name        String   @unique
   description String?
   isDefault   Boolean  @default(false)
@@ -252,7 +254,7 @@ model PipelineTemplate {
 // ----------------------------------------------------------------------------------------------------- hiring data
 
 model Candidate {
-  id                 Int   @id @default(autoincrement())
+  id                 String   @id @default(uuid(7)) @db.Uuid
   name               String
   email              String
   phone              String?
@@ -275,9 +277,9 @@ model Candidate {
 }
 
 model Requisition {
-  id                       Int            @id @default(autoincrement())
+  id                       String            @id @default(uuid(7)) @db.Uuid
   legacyId                 String?        @unique // the old MongoDB id, so job links already shared (/apply/<old id>) keep working
-  publicToken              String         @unique @default(dbgenerated("(gen_random_uuid())::text")) // random, unguessable: used in public job links instead of the number
+  publicToken              String         @unique @default(dbgenerated("(gen_random_uuid())::text")) // random, made to be shared: used in public job links (a record's own id is not, it shows when the record was made)
   title                    String
   employmentType           EmploymentType    @default(full_time)
   fullTimeDetails          Json?
@@ -291,11 +293,11 @@ model Requisition {
   remoteRegion             String            @default("")
   jobDescription           String
   status                   RequisitionStatus @default(open)
-  departmentId             Int?
-  pipelineTemplateId       Int? // a snapshot of the template's stages is stored below, so no foreign key
+  departmentId             String? @db.Uuid
+  pipelineTemplateId       String? @db.Uuid // a snapshot of the template's stages is stored below, so no foreign key
   pipelineTemplateName     String?
   stages                   Json              @default("[]") // copy of the template's stages at creation
-  scorecardId              Int? // the scorecard points back at this job, so this side has no foreign key
+  scorecardId              String? @db.Uuid // the scorecard points back at this job, so this side has no foreign key
   hireThreshold            Float             @default(3.5)
   maybeThreshold           Float             @default(3)
   initialScreeningCriteria Json              @default("[]")
@@ -304,7 +306,7 @@ model Requisition {
   applicationDeadline      DateTime?
   aiScreeningEnabled       Boolean           @default(true)
   closedAt                 DateTime? // drives the transcript retention purge
-  createdBy                Int?
+  createdBy                String? @db.Uuid
   createdAt                DateTime          @default(now())
   updatedAt                DateTime          @updatedAt
 
@@ -324,8 +326,8 @@ model Requisition {
 
 // The rubric of one job opening: stages, each with the attributes scored in it, kept as JSON.
 model Scorecard {
-  id            Int   @id @default(autoincrement())
-  requisitionId Int
+  id            String   @id @default(uuid(7)) @db.Uuid
+  requisitionId String @db.Uuid
   generatedByAI Boolean  @default(true)
   stages        Json     @default("[]")
   createdAt     DateTime @default(now())
@@ -342,9 +344,9 @@ model Scorecard {
 // One candidate applying to one job opening.
 // In the repository, the screening* columns appear as the nested `screeningJob` object, exactly as the app has it today.
 model Application {
-  id                    Int            @id @default(autoincrement())
-  candidateId           Int
-  requisitionId         Int
+  id                    String            @id @default(uuid(7)) @db.Uuid
+  candidateId           String @db.Uuid
+  requisitionId         String @db.Uuid
   currentStageKey       String?
   source                ApplicationSource @default(manual)
   opportunityDuration   String?
@@ -368,7 +370,7 @@ model Application {
   disposition     Disposition?
   rank            Float?
   finalDecision   FinalDecision?
-  finalDecisionBy Int?
+  finalDecisionBy String? @db.Uuid
   rejectionReason String?
 
   // offer letter and onboarding form (application-level documents)
@@ -403,11 +405,11 @@ model Application {
 // One stage of one application, with its meeting, transcript or artifact file, scores and status.
 // In the repository, aiInputTokens / aiOutputTokens appear as the nested `aiTokensUsed` object.
 model Interview {
-  id            Int @id @default(autoincrement())
+  id            String @id @default(uuid(7)) @db.Uuid
   legacyId      String? @unique // the old MongoDB id, so availability links already emailed (/interview/<old id>/availability) keep working
-  publicToken   String @unique @default(dbgenerated("(gen_random_uuid())::text")) // random, unguessable: used in availability links instead of the number
-  applicationId Int
-  requisitionId Int
+  publicToken   String @unique @default(dbgenerated("(gen_random_uuid())::text")) // random, made to be shared: used in availability links (a record's own id is not, it shows when the record was made)
+  applicationId String @db.Uuid
+  requisitionId String @db.Uuid
   stageKey      String
 
   meetingMode        MeetingMode        @default(online)
@@ -417,7 +419,7 @@ model Interview {
   meetingStart       DateTime?
   meetingEnd         DateTime?
   conferenceId       String?
-  designatedScorerId Int?
+  designatedScorerId String? @db.Uuid
 
   candidateAvailability Json? // { preferredDate, startTime, endTime, notes, submittedAt }
 

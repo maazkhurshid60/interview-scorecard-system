@@ -17,7 +17,7 @@ export async function findById(id) {
 
 /** The scorecard of one job opening, or null. */
 export async function findByRequisition(requisitionId) {
-  const [doc] = await selectDocs(Scorecard, 'WHERE "requisitionId" = $1::int ORDER BY id ASC LIMIT 1', [castId(requisitionId, 'requisitionId')]);
+  const [doc] = await selectDocs(Scorecard, 'WHERE "requisitionId" = $1::uuid ORDER BY id ASC LIMIT 1', [castId(requisitionId, 'requisitionId')]);
   return track(doc || null);
 }
 

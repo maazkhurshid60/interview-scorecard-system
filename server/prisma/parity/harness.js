@@ -6,12 +6,13 @@
  * named "ownerstalent_parity", never your real ones): a MongoDB database on the same server as MONGODB_URI, and a
  * PostgreSQL database next to the one in DATABASE_URL (created and migrated automatically). A local Postgres is required.
  *
- * The two databases name records differently: MongoDB by a 24-character id, PostgreSQL by a number. The scenarios are written
+ * The two databases name records differently: MongoDB by a 24-character id, PostgreSQL by a UUID. The scenarios are written
  * with the 24-character ids (`hex(n)`); this file translates for the PostgreSQL side so that both can be compared:
- *   - seeding: record `hex(n)` is stored as number n (links too, as the data copy does it);
- *   - calls: every id handed to a PostgreSQL repository is turned into its number;
- *   - answers: every id coming back (a field named _id, ...Id, ...Ids, createdBy ...) is turned back into `hex(n)`;
- *   - the `publicToken` that only PostgreSQL records have is left out of the comparison (it is random).
+ *   - seeding: a record is stored under the UUID its 24-character id maps to (prisma/migrate/uuid.js), links too, as the data copy does it;
+ *   - calls: every 24-character id handed to a PostgreSQL repository is turned into its UUID;
+ *   - answers: every id coming back (a field named _id, ...Id, ...Ids, createdBy ...) that belongs to a seeded record is turned back
+ *     into its 24-character id; the id of a record made during the scenario stays a UUID and is labelled "new id" on both sides;
+ *   - the `publicToken` and `legacyId` that only PostgreSQL records have are left out of the comparison.
  */
 import '../../config/env.js';
 import { execFileSync } from 'node:child_process';
@@ -20,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import mongoose from 'mongoose';
 import { randomUUID } from 'node:crypto';
 import { MODELS, PrismaClient, transform, translateLinks } from '../migrate/shared.js';
+import { uuidFromObjectId } from '../migrate/uuid.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(here, '..', '..');
@@ -28,26 +30,22 @@ const ID_PATTERN = /^[0-9a-f]{24}$/;
 
 export const oid = (hex) => new mongoose.Types.ObjectId(hex);
 
-// ------------------------------------------------------------------------------------------- ids: hex on one side, numbers on the other
+// ------------------------------------------------------------------------------------------ ids: hex on one side, UUIDs on the other
 
 const HEX24 = /^[0-9a-fA-F]{24}$/;
-const DIGITS = /^[1-9][0-9]{0,9}$/;
-const MAX_ID = 2147483647;
-/** The number that stands for a 24-character id: `hex(n)` is n. An id that is not of that kind gets a number no record has. */
-export const numberOf = (hex) => {
-  const n = parseInt(hex, 16);
-  return Number.isSafeInteger(n) && n >= 1 && n <= MAX_ID ? n : 2000000000 + (parseInt(hex.slice(-6), 16) % 100000000);
-};
-/** The 24-character id a number stands for (the other way round). */
-export const hexOf = (number) => Number(number).toString(16).padStart(24, '0');
-/** Keys whose value is the id of a record (a number on the PostgreSQL side). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The UUID that stands for a 24-character id (the same one the data copy gives it). */
+export const uuidOf = (hex) => uuidFromObjectId(hex);
+const hexByUuid = new Map(); // UUID -> the 24-character id of every record seeded for the scenario now running
+/** The 24-character id of a seeded record, from its UUID; the UUID itself for a record made during the scenario. */
+export const hexOf = (uuid) => hexByUuid.get(uuid) ?? uuid;
+/** Keys whose value is the id of a record (a UUID on the PostgreSQL side). */
 const isIdKey = (key) => key === 'id' || key === '_id' || key === 'ids' || /(Id|Ids|By)$/.test(String(key)) && key !== 'attributeId' && key !== 'targetId' && key !== 'conferenceId' && key !== 'calendarEventId' && key !== 'familyId';
 
-/** PostgreSQL answer -> the form the scenarios compare: ids as 24-character text, the random public token left out. A copy. */
+/** PostgreSQL answer -> the form the scenarios compare: ids of seeded records as 24-character text, the public token left out. A copy. */
 export function toHexForm(value, key) {
   if (value === null || value === undefined) return value;
-  if (typeof value === 'string') return isIdKey(key) && DIGITS.test(value) ? hexOf(value) : value;
-  if (typeof value === 'number') return isIdKey(key) && Number.isInteger(value) && value >= 1 ? hexOf(value) : value; // rows read straight from the table hold numbers
+  if (typeof value === 'string') return isIdKey(key) && UUID.test(value) ? hexOf(value) : value;
   if (typeof value !== 'object' || value instanceof Date || Buffer.isBuffer(value)) return value;
   if (Array.isArray(value)) return value.map((item) => toHexForm(item, key));
   return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'publicToken' && k !== 'legacyId').map(([k, v]) => [k, toHexForm(v, k)]));
@@ -55,12 +53,12 @@ export function toHexForm(value, key) {
 
 const ORIGINAL = Symbol('original');
 /**
- * A live view of a PostgreSQL answer that shows ids as 24-character text and writes them back as numbers. It must be a view, not a
+ * A live view of a PostgreSQL answer that shows ids as 24-character text and writes them back as UUIDs. It must be a view, not a
  * copy: a record handed back by `findById` is changed by the scenario and given to `save`, which needs the very same object.
  */
 function viewOf(value, key) {
   if (value === null || value === undefined) return value;
-  if (typeof value === 'string') return isIdKey(key) && DIGITS.test(value) ? hexOf(value) : value;
+  if (typeof value === 'string') return isIdKey(key) && UUID.test(value) ? hexOf(value) : value;
   if (typeof value !== 'object' || value instanceof Date || Buffer.isBuffer(value)) return value;
   return new Proxy(value, {
     get(target, prop) {
@@ -75,14 +73,14 @@ function viewOf(value, key) {
   });
 }
 
-/** What a scenario hands to a PostgreSQL repository: 24-character ids become numbers (a view of an answer becomes the real answer). */
+/** What a scenario hands to a PostgreSQL repository: 24-character ids become UUIDs (a view of an answer becomes the real answer). */
 export function toArg(value, key, depth = 0) {
   if (value === null || value === undefined) return value;
-  if (typeof value === 'string') return HEX24.test(value) && (depth === 0 || (isIdKey(key) && !(key === '_id' && depth > 1))) ? String(numberOf(value)) : value;
+  if (typeof value === 'string') return HEX24.test(value) && (depth === 0 || (isIdKey(key) && !(key === '_id' && depth > 1))) ? uuidOf(value) : value;
   if (typeof value !== 'object') return value;
   if (value[ORIGINAL]) return value[ORIGINAL];
   if (value instanceof Date || Buffer.isBuffer(value)) return value;
-  if (value._bsontype === 'ObjectId') return String(numberOf(value.toHexString()));
+  if (value._bsontype === 'ObjectId') return uuidOf(value.toHexString());
   if (Array.isArray(value)) return value.map((item) => toArg(item, key, depth === 0 ? 0 : depth + 1));
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toArg(v, k, depth + 1)]));
 }
@@ -116,8 +114,9 @@ export async function setup() {
   const parityUrl = new URL(devUrl.toString()); parityUrl.pathname = `/${PARITY_DB}`;
 
   adminPrisma = new PrismaClient({ datasourceUrl: devUrl.toString() });
-  const exists = await adminPrisma.$queryRawUnsafe(`select 1 from pg_database where datname = '${PARITY_DB}'`);
-  if (!exists.length) await adminPrisma.$executeRawUnsafe(`CREATE DATABASE "${PARITY_DB}"`);
+  // a fresh scratch database every time, so the tables are always the ones the current migration builds
+  await adminPrisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${PARITY_DB}" WITH (FORCE)`);
+  await adminPrisma.$executeRawUnsafe(`CREATE DATABASE "${PARITY_DB}"`);
   execFileSync(process.execPath, [path.join(serverDir, 'node_modules', 'prisma', 'build', 'index.js'), 'migrate', 'deploy'], {
     cwd: serverDir, env: { ...process.env, DATABASE_URL: parityUrl.toString() }, stdio: 'pipe',
   });
@@ -145,6 +144,7 @@ export async function loadRepositories(name) {
 // ------------------------------------------------------------------------------------------------------- seeding
 
 async function resetBoth() {
+  hexByUuid.clear();
   if (mongoose.connection.name !== PARITY_DB) throw new Error('Refusing to reset a database that is not the scratch one.');
   await mongoose.connection.dropDatabase();
   for (const spec of MODELS) { // the unique indexes the models declare must exist again after the drop
@@ -180,15 +180,15 @@ async function seedBoth(documents) {
       // the data copy has to empty such a link, but here it keeps a number that belongs to no record, so the scenarios can still use it
       const loose = spec.fields.filter((f) => f.ref && !f.parent && !f.softParent && row[f.name] !== undefined && row[f.name] !== null).map((f) => [f.name, String(row[f.name])]);
       // (an id inside a JSON value, such as the user who overrode a score, may also name a user that no longer exists)
-      translateLinks(spec, row, (target, old, inJson) => (inJson || (seededByDelegate[target] && seededByDelegate[target].has(old)) ? numberOf(old) : undefined), notes);
-      for (const [name, old] of loose) if (row[name] === undefined) row[name] = numberOf(old);
+      translateLinks(spec, row, (target, old, inJson) => (inJson || (seededByDelegate[target] && seededByDelegate[target].has(old)) ? uuidOf(old) : undefined), notes);
+      for (const [name, old] of loose) if (row[name] === undefined) row[name] = uuidOf(old);
       if (spec.legacyId) row.legacyId = row.id;
       if (spec.publicToken) row.publicToken = randomUUID();
-      row.id = numberOf(row.id);
+      hexByUuid.set(uuidOf(row.id), row.id);
+      row.id = uuidOf(row.id);
       return row;
     });
     await prisma.$executeRawUnsafe(`INSERT INTO "${spec.table}" SELECT * FROM jsonb_populate_recordset(null::"${spec.table}", $1::jsonb)`, JSON.stringify(rows));
-    await prisma.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"${spec.table}"', 'id'), 1000000)`); // new records get numbers far away from the seeded ones, so their 24-character form cannot be mistaken for an id the scenarios seed inside a record
   }
   return seededIds;
 }
@@ -227,7 +227,7 @@ function makeCanon(seededIds) {
     if (value === null) return null;
     if (value instanceof Date) return isoRecent(value) ? '<now>' : value.toISOString();
     if (typeof value === 'string') {
-      return value.replace(/\b[0-9a-f]{24}\b/g, (m) => (seededIds.has(m) ? m : (labels.has(m) ? labels.get(m) : (labels.set(m, `<new id ${labels.size + 1}>`), labels.get(m)))));
+      return value.replace(/\b[0-9a-f]{24}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, (m) => (seededIds.has(m) ? m : (labels.has(m) ? labels.get(m) : (labels.set(m, `<new id ${labels.size + 1}>`), labels.get(m)))));
     }
     if (Array.isArray(value)) return value.map(canon);
     if (typeof value === 'object') {
@@ -242,11 +242,11 @@ function makeCanon(seededIds) {
 /** What matters about an error: the parts the app reads (middleware/errorHandler.js), not the wording of the driver. */
 /** The wording of an error with what differs by design taken out: how a bad id is described, and the number of a record in a message. */
 const plainMessage = (message) => String(message)
-  .replace(/Cast to (ObjectId|Number) failed for value (.*?) \(type (\w+)\) at path "(\w+)"( because of "BSONError")?/g, 'Cast to <id> failed for value $2 (type $3) at path "$4"')
-  .replace(/input must be a 24 character hex string, 12 byte Uint8Array, or an integer|An id must be a whole number from 1 up, as a number or as digits/g, '<not an id>')
-  .replace(/^(\w+) (\d{1,10}) no longer exists/, (m, name, n) => `${name} ${hexOf(n)} no longer exists`)
+  .replace(/Cast to (ObjectId|UUID) failed for value (.*?) \(type (\w+)\) at path "(\w+)"( because of "BSONError")?/g, 'Cast to <id> failed for value $2 (type $3) at path "$4"')
+  .replace(/input must be a 24 character hex string, 12 byte Uint8Array, or an integer|An id must be a UUID/g, '<not an id>')
+  .replace(/^(\w+) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) no longer exists/, (m, name, id) => `${name} ${hexOf(id)} no longer exists`)
   .replace(/\{_id: ObjectId\('([0-9a-f]{24})'\)\}/g, '{_id: $1}')
-  .replace(/\{_id: (\d{1,10})\}/g, (m, n) => `{_id: ${hexOf(n)}}`);
+  .replace(/\{_id: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}/g, (m, id) => `{_id: ${hexOf(id)}}`);
 function describeError(error) {
   const base = { name: error.name };
   if (error.name === 'CastError') return { ...base, path: error.path };

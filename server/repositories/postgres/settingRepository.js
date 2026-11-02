@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { compareBytes, dateParam, idOut, jsonOut, jsonParam, nullSet } from './helpers.js';
+import { compareBytes, dateParam, idOut, jsonOut, jsonParam, newId, nullSet } from './helpers.js';
 import { nullsExpr } from './records.js';
 
 /**
@@ -60,18 +60,18 @@ export async function updateValue(key, value) {
     const rows = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE "key" = $1 FOR UPDATE`, String(key));
     if (!rows.length) return null;
     const oldValue = toSetting(rows[0]).value;
-    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(value === null ? { add: ['value'] } : { remove: ['value'] })} WHERE id = $1`, rows[0].id, value === null ? null : jsonParam(value), dateParam(new Date()));
-    const [updated] = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE id = $1`, rows[0].id);
+    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(value === null ? { add: ['value'] } : { remove: ['value'] })} WHERE id = $1::uuid`, rows[0].id, value === null ? null : jsonParam(value), dateParam(new Date()));
+    const [updated] = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE id = $1::uuid`, rows[0].id);
     return { oldValue, setting: toSetting(updated) };
   });
 }
 
 /** Creates the setting if it does not exist yet; an existing one is left untouched. */
 export async function createIfMissing(key, value, description) {
-  // the WHERE NOT EXISTS keeps an existing setting from using up a number of the table's counter (the seed runs at every start)
+  // the WHERE NOT EXISTS leaves an existing setting alone (the seed runs at every start); ON CONFLICT covers two callers at once
   await prisma.$executeRawUnsafe(
-    `INSERT INTO settings ("key", "value", description, "updatedAt", "nullFields") SELECT $1::text, $2::jsonb, $3::text, $4::text::timestamp, $5::jsonb WHERE NOT EXISTS (SELECT 1 FROM settings WHERE "key" = $1::text) ON CONFLICT ("key") DO NOTHING`,
-    String(key), value === null ? null : jsonParam(value), description === undefined || description === null ? null : description, dateParam(new Date()),
+    `INSERT INTO settings (id, "key", "value", description, "updatedAt", "nullFields") SELECT $1::uuid, $2::text, $3::jsonb, $4::text, $5::text::timestamp, $6::jsonb WHERE NOT EXISTS (SELECT 1 FROM settings WHERE "key" = $2::text) ON CONFLICT ("key") DO NOTHING`,
+    newId(), String(key), value === null ? null : jsonParam(value), description === undefined || description === null ? null : description, dateParam(new Date()),
     (value === null || description === null) ? JSON.stringify([...(description === null ? ['description'] : []), ...(value === null ? ['value'] : [])].sort()) : null,
   );
   return findByKey(key);
@@ -83,10 +83,10 @@ export async function createIfMissing(key, value, description) {
  */
 async function changeLocked(key, change) {
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`INSERT INTO settings ("key", "updatedAt") SELECT $1::text, $2::text::timestamp WHERE NOT EXISTS (SELECT 1 FROM settings WHERE "key" = $1::text) ON CONFLICT ("key") DO NOTHING`, String(key), dateParam(new Date()));
+    await tx.$executeRawUnsafe(`INSERT INTO settings (id, "key", "updatedAt") SELECT $1::uuid, $2::text, $3::text::timestamp WHERE NOT EXISTS (SELECT 1 FROM settings WHERE "key" = $2::text) ON CONFLICT ("key") DO NOTHING`, newId(), String(key), dateParam(new Date()));
     const [row] = await tx.$queryRawUnsafe(`SELECT ${COLUMNS} FROM settings WHERE "key" = $1 FOR UPDATE`, String(key));
     const next = change(jsonOut(row.valueText), row.id);
-    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr({ remove: ['value'] })} WHERE id = $1`, row.id, jsonParam(next), dateParam(new Date()));
+    await tx.$executeRawUnsafe(`UPDATE settings SET "value" = $2::jsonb, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr({ remove: ['value'] })} WHERE id = $1::uuid`, row.id, jsonParam(next), dateParam(new Date()));
   });
 }
 

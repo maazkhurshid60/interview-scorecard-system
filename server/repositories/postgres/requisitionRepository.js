@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castDate, castId, castIdField, compareBytes, escapeLike, idOut } from './helpers.js';
+import { castDate, castId, castIdField, compareBytes, compareIds, escapeLike, idOut } from './helpers.js';
 import { buildDoc, findDoc, findDocByPublicRef, insertDoc, nullsExpr, pick, selectDocs, selectNames } from './records.js';
 import { saveEntity, track } from './entity.js';
 import { Requisition } from './schemas.js';
@@ -18,7 +18,7 @@ const queryIds = (ids, path = '_id') => ids.map((id) => castId(id, path));
 async function fillInDepartments(requisitions, select) {
   const names = selectNames(select);
   const wanted = [...new Set(requisitions.map((r) => r.departmentId).filter((id) => typeof id === 'string'))];
-  const rows = wanted.length ? await prisma.department.findMany({ where: { id: { in: wanted.map(Number) } } }) : [];
+  const rows = wanted.length ? await prisma.department.findMany({ where: { id: { in: wanted } } }) : [];
   const byId = new Map(rows.map((row) => [idOut(row.id), pick({ _id: idOut(row.id), name: row.name, description: row.description }, names)]));
   for (const requisition of requisitions) {
     if (typeof requisition.departmentId === 'string') {
@@ -66,19 +66,19 @@ export async function findByPublicRef(ref) {
 
 /** The title and status of each of these job openings (those that exist). */
 export async function listTitlesAndStatuses(ids) {
-  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::int[]) ORDER BY id ASC', [queryIds(ids)]);
+  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::uuid[]) ORDER BY id ASC', [queryIds(ids)]);
   return docs.map((doc) => pick(doc, ['title', 'status']));
 }
 
 /** The title of each of these job openings (those that exist), sorted by title. */
 export async function listTitles(ids) {
-  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::int[])', [queryIds(ids)]);
-  return docs.sort((a, b) => compareBytes(a.title, b.title) || Number(a._id) - Number(b._id)).map((doc) => pick(doc, ['title']));
+  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::uuid[])', [queryIds(ids)]);
+  return docs.sort((a, b) => compareBytes(a.title, b.title) || compareIds(a._id, b._id)).map((doc) => pick(doc, ['title']));
 }
 
 /** The title and hiring stages of each of these job openings (those that exist). */
 export async function findTitlesAndStages(ids) {
-  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::int[]) ORDER BY id ASC', [queryIds(ids)]);
+  const docs = await selectDocs(Requisition, 'WHERE id = ANY($1::uuid[]) ORDER BY id ASC', [queryIds(ids)]);
   return docs.map((doc) => pick(doc, ['title', 'stages']));
 }
 
@@ -89,7 +89,7 @@ export async function findTitlesAndStages(ids) {
 export async function findOpenByTitle(title, { exceptId } = {}) {
   const params = [escapeLike(title)];
   if (exceptId) params.push(castId(exceptId, '_id'));
-  const [doc] = await selectDocs(Requisition, `WHERE title ILIKE $1 ESCAPE '\\' AND status = 'open'${exceptId ? ' AND id <> $2::int' : ''} ORDER BY id ASC LIMIT 1`, params);
+  const [doc] = await selectDocs(Requisition, `WHERE title ILIKE $1 ESCAPE '\\' AND status = 'open'${exceptId ? ' AND id <> $2::uuid' : ''} ORDER BY id ASC LIMIT 1`, params);
   return doc ? pick(doc, ['title']) : null;
 }
 
@@ -100,7 +100,7 @@ export async function findOpenByTitle(title, { exceptId } = {}) {
 export async function list({ status, departmentId } = {}) {
   const conditions = []; const params = [];
   if (status) { params.push(status === 'paused' ? ['paused', 'on_hold'] : [status]); conditions.push(`status::text = ANY($${params.length}::text[])`); }
-  if (departmentId) { params.push(castId(departmentId, 'departmentId')); conditions.push(`"departmentId" = $${params.length}::int`); }
+  if (departmentId) { params.push(castId(departmentId, 'departmentId')); conditions.push(`"departmentId" = $${params.length}::uuid`); }
   const requisitions = await selectDocs(Requisition, `${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY "createdAt" DESC, id DESC`, params);
   return fillInDepartments(requisitions, 'name');
 }
@@ -129,7 +129,7 @@ export async function setScorecard(id, scorecardId) {
   const target = castIdField(scorecardId, 'scorecardId');
   if (target.problem) throw Object.assign(new Error(target.problem), { name: 'CastError', kind: 'Number', path: 'scorecardId', value: scorecardId });
   const empty = target.value === null || target.value === undefined;
-  await prisma.$executeRawUnsafe(`UPDATE requisitions SET "scorecardId" = $2::int, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(empty ? { add: ['scorecardId'] } : { remove: ['scorecardId'] })} WHERE id = $1::int`, requisitionId, empty ? null : target.value, new Date().toISOString());
+  await prisma.$executeRawUnsafe(`UPDATE requisitions SET "scorecardId" = $2::uuid, "updatedAt" = $3::text::timestamp, "nullFields" = ${nullsExpr(empty ? { add: ['scorecardId'] } : { remove: ['scorecardId'] })} WHERE id = $1::uuid`, requisitionId, empty ? null : target.value, new Date().toISOString());
 }
 
 /** Deletes one job opening (and, with it, its applications, interviews and scorecards, which PostgreSQL removes by itself). */

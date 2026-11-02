@@ -1,4 +1,5 @@
 import prismaPkg from '@prisma/client';
+import { uuidFromObjectId } from './uuid.js';
 
 /**
  * What the MongoDB -> PostgreSQL copy needs to know about each model: which Mongo collection, which Prisma table, and
@@ -26,7 +27,7 @@ const REQ = { req: true };
 
 // A column that holds the id of another record is written s('name', { ref: 'user' }) (or, when the database enforces the link,
 // { parent: ... } / { softParent: ... }, which also name the record pointed at). The copy reads the old MongoDB id as text and
-// translates it to the new number. 'jsonRefs' lists the places inside a JSON column that hold such an id.
+// translates it to the UUID of that record. 'jsonRefs' lists the places inside a JSON column that hold such an id.
 
 export const MODELS = [
   { delegate: 'user', collection: 'users', timestamps: 'both', fields: [
@@ -100,27 +101,28 @@ const isObjectId = (v) => v && typeof v === 'object' && (v._bsontype === 'Object
 export const idText = (v) => (isObjectId(v) ? v.toHexString() : String(v));
 
 /**
- * Gives every old id a new number: 1, 2, 3, ... in the order the records were created (an ObjectId starts with the time it
- * was made, so sorting the ids as text puts them in creation order).
+ * Gives every old id its UUID (see uuid.js): the same one every time, so a copy can be repeated and checked.
  * @param {string[]} oldIds the ids of one collection, as text
- * @returns {Map<string, number>} old id -> new number
+ * @returns {Map<string, string>} old id -> UUID. An id that is not a 24-character MongoDB id is left out: it cannot become a UUID.
  */
-export function numberIds(oldIds) {
-  const sorted = [...oldIds].sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
-  const numbers = new Map(sorted.map((id, i) => [id, i + 1]));
-  if (numbers.size !== oldIds.length) throw new Error('Two records have the same id; they cannot be numbered.');
-  return numbers;
+export function uuidsFor(oldIds) {
+  const uuids = new Map();
+  for (const id of oldIds) {
+    const key = String(id).toLowerCase();
+    if (/^[0-9a-f]{24}$/.test(key)) uuids.set(key, uuidFromObjectId(key));
+  }
+  return uuids;
 }
 
 /**
- * Replaces, in one row, every old id that points at another record with that record's new number.
- * - A link column ({ ref } / { parent } / { softParent }) holds the old id as text; it becomes the new number.
+ * Replaces, in one row, every old id that points at another record with that record's UUID.
+ * - A link column ({ ref } / { parent } / { softParent }) holds the old id as text; it becomes the UUID.
  * - 'jsonRefs' name the ids kept inside a JSON column (for example a score's `overriddenBy`); they become numbers too.
- * A link to a record that does not exist (or was not copied) cannot be a number: it is removed and a note is added, so it is
+ * A link to a record that does not exist (or was not copied) has nothing to point at: it is removed and a note is added, so it is
  * counted in the report and never silent.
  * @param {object} spec the model description
  * @param {object} row the row being built (changed in place)
- * @param {(target: string, oldId: string, inJson?: boolean) => (number|undefined)} numberOf the new number of a record, or undefined if there is none
+ * @param {(target: string, oldId: string, inJson?: boolean) => (string|undefined)} numberOf the UUID of a record, or undefined if there is none
  *   (`inJson` is true for an id kept inside a JSON column)
  * @param {string[]} notes receives one note per link that had to be removed
  */

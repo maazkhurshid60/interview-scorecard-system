@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { castBoolean, castDate, castId, castString, compareBytes, idOut, nextNulls, nullSet, translateError, validationError } from './helpers.js';
+import { castBoolean, castDate, castId, castString, compareBytes, compareIds, idOut, newId, nextNulls, nullSet, translateError, validationError } from './helpers.js';
 
 /**
  * Everything the app needs from the database about user accounts, on PostgreSQL. It offers exactly the functions of
@@ -58,13 +58,13 @@ export async function findActiveByEmail(email) {
 /** Every active user as `{ _id, name, email }`, sorted by name: what the pickers and dropdowns need. */
 export async function listActiveBrief() {
   const rows = await prisma.user.findMany({ where: { active: true }, select: { id: true, name: true, email: true } });
-  return rows.sort((a, b) => compareBytes(a.name, b.name) || a.id - b.id).map((row) => ({ _id: idOut(row.id), name: row.name, email: row.email }));
+  return rows.sort((a, b) => compareBytes(a.name, b.name) || compareIds(a.id, b.id)).map((row) => ({ _id: idOut(row.id), name: row.name, email: row.email }));
 }
 
 /** Every user, newest first, without password hashes or reset tokens. */
 export async function listAll() {
   const rows = await prisma.user.findMany();
-  return rows.sort((a, b) => b.createdAt - a.createdAt || a.id - b.id).map(withoutSecrets);
+  return rows.sort((a, b) => b.createdAt - a.createdAt || compareIds(a.id, b.id)).map(withoutSecrets);
 }
 
 /** True when at least one owner account exists. */
@@ -111,7 +111,7 @@ export async function create({ name, email, passwordHash, role, active } = {}) {
   const values = build({ name, email, passwordHash, role, active }, ['name', 'email', 'passwordHash', 'role', 'active'], { creating: true });
   const now = new Date();
   try {
-    const row = await prisma.user.create({ data: { ...values, createdAt: now, updatedAt: now } });
+    const row = await prisma.user.create({ data: { id: newId(), ...values, createdAt: now, updatedAt: now } });
     return toUser(row);
   } catch (error) {
     throw translateError(error, { email: values.email });

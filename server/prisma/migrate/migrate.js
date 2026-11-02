@@ -4,11 +4,10 @@
  *   npm run migrate:postgres                 copies into EMPTY tables (refuses if a table already has rows)
  *   npm run migrate:postgres -- --reset      first empties every table (only allowed on a local database)
  *
- * MongoDB is only READ, never changed. Every record gets a new number as its id (1, 2, 3, ... in the order the records were
- * created); the old MongoDB id of each record is paired with its new number while the copy runs, and every link between
- * records (a candidate id inside an application, a user id inside an audit entry or a score) is rewritten to the new
- * number. A link to a record that does not exist is emptied and counted in the report. A skipped record leaves a gap in
- * the numbers, which is harmless. Values a Mongoose model would have filled in when loading
+ * MongoDB is only READ, never changed. Every record gets a UUID as its id: the one its old MongoDB id maps to (see uuid.js: the
+ * same one every time, and in the same order as the old ids), and every link between records (a candidate id inside an
+ * application, a user id inside an audit entry or a score) is rewritten to the UUID of the record it pointed at. A link to a
+ * record that does not exist is emptied and counted in the report. Values a Mongoose model would have filled in when loading
  * (defaults) are filled in. Anything that cannot be copied is NOT copied silently: the row is skipped and listed in the
  * report (logs/migration-report.json) with the reason. A row whose parent was skipped or does not exist is skipped too
  * (it would otherwise be an orphan), except a job's department, which is set to empty and reported.
@@ -21,7 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { randomUUID } from 'node:crypto';
-import { MODELS, PrismaClient, countOldIds, idText, numberIds, transform, translateLinks } from './shared.js';
+import { MODELS, PrismaClient, countOldIds, idText, transform, translateLinks, uuidsFor } from './shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const reset = process.argv.includes('--reset');
@@ -55,18 +54,18 @@ if (reset) {
   console.log('Postgres tables emptied (--reset).');
 }
 
-// ---- number every record first, so a link to a record that is copied later can already be translated
-const newIds = {}; // delegate -> Map(old id -> new number)
+// ---- give every record its UUID first, so a link to a record that is copied later can already be translated
+const newIds = {}; // delegate -> Map(old id -> UUID)
 for (const spec of MODELS) {
   const found = await mongo.collection(spec.collection).find({}, { projection: { _id: 1 } }).toArray();
-  newIds[spec.delegate] = numberIds(found.map((doc) => idText(doc._id)));
+  newIds[spec.delegate] = uuidsFor(found.map((doc) => idText(doc._id)));
 }
 
-const allOldIds = new Set(Object.values(newIds).flatMap((numbers) => [...numbers.keys()]));
+const allOldIds = new Set(Object.values(newIds).flatMap((uuids) => [...uuids.keys()]));
 
 // ---- copy, parents before children
 const written = {}; // delegate -> Set of OLD ids written (links in a document still hold old ids when they are checked)
-/** The new number of a record: only if it was copied (a table not copied yet, for a link that points forward, is checked afterwards). */
+/** The UUID of a record: only if it was copied (a table not copied yet, for a link that points forward, is checked afterwards). */
 const numberOf = (target, oldId) => (written[target] && !written[target].has(oldId) ? undefined : newIds[target].get(oldId));
 const report = { startedAt: new Date(started).toISOString(), mongo: mongoose.connection.name, models: {} };
 let anySkipped = false;
@@ -82,6 +81,7 @@ for (const spec of MODELS) {
       if (field.parent && row[field.name] !== undefined && !parentSet.has(row[field.name])) blocking.push(`${field.name}: points at ${field.parent} ${row[field.name]}, which does not exist (or was skipped)`);
       if (field.softParent && row[field.name] && !parentSet.has(row[field.name])) { repaired.push({ id: row.id, field: field.name, was: row[field.name], change: `${field.name} pointed at a ${field.softParent} that does not exist (${row[field.name]}); set to empty` }); delete row[field.name]; }
     }
+    if (!newIds[spec.delegate].has(String(row.id).toLowerCase())) blocking.push('its id is not a 24-character MongoDB id, so it cannot become a UUID');
     if (blocking.length) { skipped.push({ id: row.id, reasons: blocking }); continue; }
     translateLinks(spec, row, numberOf, rowNotes);
     for (const field of spec.fields) { // record ids inside other JSON values are not translated: they are counted, never silent
@@ -92,20 +92,18 @@ for (const spec of MODELS) {
     rowNotes.forEach((n) => { notes[n] = (notes[n] || 0) + 1; });
     oldIds.push(row.id);
     if (spec.legacyId) row.legacyId = row.id; // keep the old id, so links already shared (/apply/<old id>) can still find this record
-    row.id = newIds[spec.delegate].get(row.id); // the transform gave the old id; from here on the row has its new number
+    row.id = newIds[spec.delegate].get(String(row.id).toLowerCase()); // the transform gave the old id; from here on the row has its UUID
     rows.push(row);
   }
-  rows.sort((a, b) => a.id - b.id);
+  rows.sort((a, b) => (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)));
   // Written as JSON text straight to Postgres, not through Prisma's createMany: Prisma rounds any number that needs 17 digits
   // (1/6 = 0.16666666666666666 would become 0.1666666666666667), and this copy must be exact.
   for (let i = 0; i < rows.length; i += BATCH) {
     await prisma.$executeRawUnsafe(`INSERT INTO "${spec.table}" SELECT * FROM jsonb_populate_recordset(null::"${spec.table}", $1::jsonb)`, JSON.stringify(rows.slice(i, i + BATCH)));
   }
-  // the numbers were given by this script, so the table's counter must continue after the highest one
-  await prisma.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"${spec.table}"', 'id'), COALESCE((SELECT max(id) FROM "${spec.table}"), 1), (SELECT max(id) FROM "${spec.table}") IS NOT NULL)`);
   written[spec.delegate] = new Set(oldIds);
   if (skipped.length) anySkipped = true;
-  report.models[spec.delegate] = { collection: spec.collection, read: docs.length, written: rows.length, skipped, repaired, notes, highestNumber: rows.length ? rows[rows.length - 1].id : 0 };
+  report.models[spec.delegate] = { collection: spec.collection, read: docs.length, written: rows.length, skipped, repaired, notes };
   const flag = skipped.length ? `  SKIPPED ${skipped.length}` : '';
   console.log(`  ${spec.collection.padEnd(20)} read ${String(docs.length).padStart(6)}   written ${String(rows.length).padStart(6)}${flag}${repaired.length ? `   repaired ${repaired.length}` : ''}`);
 }

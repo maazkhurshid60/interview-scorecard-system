@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import logger from '../../utils/logger.js';
 import { prisma } from './client.js';
-import { castBoolean, castDate, castFailureMessage, castId, castIdField, castNumber, castString, castSubdocId, idOut, jsonParam, newSubdocId, parseId, parsePublicRef, sameJson, translateError, validationError } from './helpers.js';
+import { castBoolean, castDate, castFailureMessage, castId, castIdField, castNumber, castString, castSubdocId, idOut, jsonParam, newId, newSubdocId, parseId, parsePublicRef, sameJson, translateError, validationError } from './helpers.js';
 
 /**
  * The shared engine of the PostgreSQL repositories that handle whole records (candidates, applications, interviews, job
@@ -85,7 +85,7 @@ const toDate = (text) => new Date(`${text}Z`);
 /** A JSON value stored for `spec`, with the dates inside it turned back into dates. */
 function revive(spec, value) {
   if (value === null || value === undefined) return value;
-  if (spec.kind === 'id') return idOut(value); // an id is a number in the database and text for the app
+  if (spec.kind === 'id') return idOut(value); // an id is a UUID: lower-case text for the app
   if (spec.kind === 'date') return typeof value === 'string' ? new Date(value) : value;
   if (spec.kind === 'array') return Array.isArray(value) ? value.map((item) => revive({ kind: 'subdoc', fields: spec.fields }, item)) : value;
   if (spec.kind === 'subdoc' || spec.kind === 'nested') {
@@ -344,11 +344,11 @@ export function docToColumns(model, doc) {
 const sameColumn = (a, b) => sameJson(a, b);
 
 /**
- * Adds a new record to its table and returns it as the app sees it. The database gives it its number (the row is written
- * without an id, and without the columns that have a default of their own, such as a public token).
+ * Adds a new record to its table and returns it as the app sees it. It gets the id the app makes (`newId`); the row is written
+ * without the columns that have a default of their own (the public token).
  */
 export async function insertDoc(model, doc, { now = new Date(), client = prisma } = {}) {
-  const row = docToColumns(model, doc);
+  const row = { id: newId(), ...docToColumns(model, doc) };
   if (['both', 'createdOnly'].includes(model.timestamps)) row.createdAt = now.toISOString();
   if (model.timestamps === 'both') row.updatedAt = now.toISOString();
   const columns = Object.keys(row).map((column) => `"${column}"`);
@@ -380,7 +380,7 @@ export async function writeChanges(model, before, after, { now = new Date() } = 
   if (!sets.length && model.timestamps !== 'both') return after;
   if (model.timestamps === 'both') { row.updatedAt = now.toISOString(); sets.push(`"updatedAt" = r."updatedAt"`); }
   try {
-    await prisma.$executeRawUnsafe(`UPDATE "${model.table}" t SET ${sets.join(', ')} FROM jsonb_populate_record(null::"${model.table}", $2::jsonb) r WHERE t.id = $1::int`, castId(before._id, '_id'), JSON.stringify(row));
+    await prisma.$executeRawUnsafe(`UPDATE "${model.table}" t SET ${sets.join(', ')} FROM jsonb_populate_record(null::"${model.table}", $2::jsonb) r WHERE t.id = $1::uuid`, castId(before._id, '_id'), JSON.stringify(row));
   } catch (error) {
     throw translateError(error, {}, uniqueFields(model));
   }
@@ -396,9 +396,9 @@ export function nullsExpr({ add = [], remove = [] } = {}) {
   return `(SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM (SELECT DISTINCT v FROM (SELECT jsonb_array_elements_text(COALESCE("nullFields", '[]'::jsonb)) AS v UNION ALL SELECT unnest(${list(add)})) u WHERE v <> ALL(${list([...remove, ...[]].filter((path) => !add.includes(path)))})) d)`;
 }
 
-/** The record with this id (a number or its text), or null. */
+/** The record with this id (a UUID, in any letter case), or null. */
 export async function findDoc(model, id) {
-  const [doc] = await selectDocs(model, 'WHERE t.id = $1::int', [castId(id, '_id')]);
+  const [doc] = await selectDocs(model, 'WHERE t.id = $1::uuid', [castId(id, '_id')]);
   return doc || null;
 }
 

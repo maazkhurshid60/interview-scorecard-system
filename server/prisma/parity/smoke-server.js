@@ -146,9 +146,9 @@ try {
   // ---- the public links (no sign-in): the random token, the old id of a link shared before the move, and the plain number (refused)
   let availabilityLinkChecked = false;
   if (requisition && interview) {
-    await smokeDb.$executeRawUnsafe('UPDATE requisitions SET status = \'open\', "applicationDeadline" = NULL WHERE id = $1::int', Number(requisition._id)); // so the public page can be seen
-    const [job] = await smokeDb.$queryRawUnsafe('SELECT "publicToken" AS token, "legacyId" AS legacy FROM requisitions WHERE id = $1::int', Number(requisition._id));
-    const [meeting] = await smokeDb.$queryRawUnsafe('SELECT "publicToken" AS token, "legacyId" AS legacy FROM interviews WHERE id = $1::int', Number(interview._id));
+    await smokeDb.$executeRawUnsafe('UPDATE requisitions SET status = \'open\', "applicationDeadline" = NULL WHERE id = $1::uuid', requisition._id); // so the public page can be seen
+    const [job] = await smokeDb.$queryRawUnsafe('SELECT "publicToken" AS token, "legacyId" AS legacy FROM requisitions WHERE id = $1::uuid', requisition._id);
+    const [meeting] = await smokeDb.$queryRawUnsafe('SELECT "publicToken" AS token, "legacyId" AS legacy FROM interviews WHERE id = $1::uuid', interview._id);
     check('the job list gives each job its public token', requisition.publicToken === job.token && /^[0-9a-f-]{36}$/.test(job.token), JSON.stringify(requisition.publicToken));
     const anon = async (method, url, body) => { const saved = cookies; cookies = {}; try { return await call(method, url, body); } finally { cookies = saved; } };
     const status = async (method, url, body) => (await anon(method, url, body)).status;
@@ -168,10 +168,10 @@ try {
     }
     const sent = await anon('POST', `/api/interviews/${meeting.token}/availability/public`, { preferredDate: '2026-12-01', notes: 'by token' });
     const sentOld = await anon('POST', `/api/interviews/${meeting.legacy}/availability/public`, { preferredDate: '2026-12-02', notes: 'by old id' });
-    const saved = (await smokeDb.$queryRawUnsafe('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::int', Number(interview._id)))[0].a;
+    const saved = (await smokeDb.$queryRawUnsafe('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::uuid', interview._id))[0].a;
     check('submitting availability by token and by old id works, and is saved', sent.status === 200 && sentOld.status === 200 && saved && saved.notes === 'by old id', `${sent.status} ${sentOld.status} ${JSON.stringify(saved)}`);
     const refused = await anon('POST', `/api/interviews/${interview._id}/availability/public`, { preferredDate: '2026-12-03', notes: 'by number' });
-    const after = (await smokeDb.$queryRawUnsafe('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::int', Number(interview._id)))[0].a;
+    const after = (await smokeDb.$queryRawUnsafe('SELECT "candidateAvailability" AS a FROM interviews WHERE id = $1::uuid', interview._id))[0].a;
     check('submitting availability by the plain number is refused (404) and saves nothing', refused.status === 404 && after.notes === 'by old id', `${refused.status} ${JSON.stringify(after)}`);
     const request = await call('POST', `/api/interviews/${interview._id}/request-availability`, {});
     check('"request availability" gives a link with the token, not the number', request.status === 200 && request.data.availabilityUrl.endsWith(`/interview/${meeting.token}/availability`), `${request.status} ${request.data && request.data.availabilityUrl}`);

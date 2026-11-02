@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { PrismaClient } from './shared.js';
+import { uuidFromObjectId } from './uuid.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(here, '..', '..');
@@ -38,6 +39,7 @@ const run = (script, args = []) => {
   catch (error) { return { code: error.status, out: `${error.stdout || ''}\n${error.stderr || ''}` }; }
 };
 const q = (sql) => prisma.$queryRawUnsafe(sql);
+const u = (objectId) => uuidFromObjectId(objectId.toHexString()); // the UUID an old id becomes
 
 let failed = 0;
 const check = (name, ok, detail = '') => { if (!ok) failed += 1; console.log(`  ${ok ? 'ok      ' : 'FAILED  '} ${name}${ok ? '' : `   -> ${detail}`}`); };
@@ -148,38 +150,44 @@ try {
   const expectSkipped = { user: [U3, U4], candidate: [C2, C4], requisition: [R3, R4], scorecard: [SC2, SC3], application: [A2, A3, A4], interview: [I2, I3, I4], refreshToken: [T2, T3], auditLog: [L5], department: [], pipelineTemplate: [], setting: [] };
   for (const [delegate, list] of Object.entries(expectSkipped)) check(`${delegate}: ${list.length} skipped`, JSON.stringify(skippedOf(delegate)) === JSON.stringify(ids(...list)), `got ${JSON.stringify(skippedOf(delegate))}`);
 
-  console.log('\nWhat the rows look like (the number is the place in the original list, counting skipped records):');
+  console.log('\nWhat the rows look like (each record has the UUID its old id maps to):');
   const one = async (sql) => (await q(sql))[0];
   const idsOf = async (table) => (await q(`SELECT id FROM "${table}" ORDER BY id`)).map((r) => r.id);
-  check('users keep their places: 1, 2 and 5 (3 and 4 were skipped)', JSON.stringify(await idsOf('users')) === '[1,2,5]');
-  check('a new user gets number 6, after the highest', (await one(`SELECT nextval('"users_id_seq"')::int n`)).n === 6);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  check('users are the three that could be copied, under their UUIDs (3 and 4 were skipped)', same(await idsOf('users'), [u(U1), u(U2), u(U5)]));
+  const { newId } = await import('../../repositories/postgres/helpers.js');
+  check('a user made now (with an id the app makes) sorts after every copied user', newId() > u(U5));
   const dep = await q('SELECT id, "createdBy" c FROM departments ORDER BY id');
-  check('department: creator that exists becomes its number (1); a missing or skipped creator is emptied', dep[0].c === 1 && dep[1].c === null && dep[2].c === null, JSON.stringify(dep));
+  check('department: a creator that exists becomes its UUID; a missing or skipped creator is emptied', dep[0].c === u(U1) && dep[1].c === null && dep[2].c === null, JSON.stringify(dep));
   check('a record id inside JSON is left as the old text, and reported', (await one(`SELECT value->>'ownerId' v FROM settings WHERE key='owner'`)).v === U1.toHexString() && Object.keys(report.models.setting.notes).some((n) => /not translated/.test(n)));
-  check('candidates: Ann, Bob and Nul copied; Bob\'s size "123" became the number 123', JSON.stringify(await idsOf('candidates')) === '[1,3,5]' && Number((await one(`SELECT "resumeFileSize" s FROM candidates WHERE id=3`)).s) === 123);
-  const nulNotes = (await one('SELECT notes FROM candidates WHERE id = 5')).notes;
+  check('candidates: Ann, Bob and Nul copied; Bob\'s size "123" became the number 123', same(await idsOf('candidates'), [u(C1), u(C3), u(C5)]) && Number((await one(`SELECT "resumeFileSize" s FROM candidates WHERE id='${u(C3)}'`)).s) === 123);
+  const nulNotes = (await one(`SELECT notes FROM candidates WHERE id = '${u(C5)}'`)).notes;
   check('NUL characters in text are taken out (the note "a<NUL>b<NUL>" becomes "ab") and reported', nulNotes === 'ab' && Object.keys(report.models.candidate.notes).some((n) => /NUL character/.test(n)), JSON.stringify(nulNotes));
   const nulValue = (await one(`SELECT "value" v FROM settings WHERE key = 'nul'`)).v;
   check('NUL characters inside JSON text are taken out as well and reported', JSON.stringify(nulValue) === '{"key":"xy","list":["pq"]}' && Object.keys(report.models.setting.notes).some((n) => /NUL character/.test(n)), JSON.stringify(nulValue));
   const req = await q('SELECT id, "legacyId" l, "departmentId" d, "pipelineTemplateId" p, "scorecardId" s, "createdBy" c FROM requisitions ORDER BY id');
-  check('job opening 1: department, template, scorecard and creator become their numbers', req[0].id === 1 && req[0].d === 1 && req[0].p === 1 && req[0].s === 1 && req[0].c === 1, JSON.stringify(req[0]));
-  check('job opening 2: missing department, missing scorecard and skipped creator are all emptied', req[1].id === 2 && req[1].d === null && req[1].s === null && req[1].c === null, JSON.stringify(req[1]));
+  check('job opening 1: department, template, scorecard and creator become their UUIDs', req[0].id === u(R1) && req[0].d === u(D1) && req[0].p === u(P1) && req[0].s === u(SC1) && req[0].c === u(U1), JSON.stringify(req[0]));
+  check('job opening 2: missing department, missing scorecard and skipped creator are all emptied', req[1].id === u(R2) && req[1].d === null && req[1].s === null && req[1].c === null, JSON.stringify(req[1]));
   check('job openings keep their old ids in legacyId', req[0].l === R1.toHexString() && req[1].l === R2.toHexString());
   check('the emptied department was announced as "repaired" in the report', report.models.requisition.repaired.some((r) => r.field === 'departmentId'));
-  check('scorecard: only the one with a copied job opening is there', JSON.stringify(await q('SELECT id, "requisitionId" r FROM scorecards')) === '[{"id":1,"r":1}]');
+  check('scorecard: only the one with a copied job opening is there', same(await q('SELECT id, "requisitionId" r FROM scorecards'), [{ id: u(SC1), r: u(R1) }]));
   const apps = await q(`SELECT id, "candidateId" c, "requisitionId" r, "finalDecisionBy" f, "initialScreening" i FROM applications ORDER BY id`);
-  check('applications: only 1 and 5 are copied', JSON.stringify(apps.map((a) => a.id)) === '[1,5]');
-  check('application 1: candidate, job opening, decider and screening overrider become numbers', apps[0].c === 1 && apps[0].r === 1 && apps[0].f === 1 && apps[0].i.overriddenBy === 2, JSON.stringify(apps[0]));
-  check('application 5: skipped decider and missing overrider are emptied (key removed from the JSON)', apps[1].c === 3 && apps[1].r === 2 && apps[1].f === null && !('overriddenBy' in apps[1].i), JSON.stringify(apps[1]));
+  check('applications: only the first and the fifth are copied', same(apps.map((a) => a.id), [u(A1), u(A5)]));
+  check('application 1: candidate, job opening, decider and screening overrider become UUIDs', apps[0].c === u(C1) && apps[0].r === u(R1) && apps[0].f === u(U1) && apps[0].i.overriddenBy === u(U2), JSON.stringify(apps[0]));
+  check('application 5: skipped decider and missing overrider are emptied (key removed from the JSON)', apps[1].c === u(C3) && apps[1].r === u(R2) && apps[1].f === null && !('overriddenBy' in apps[1].i), JSON.stringify(apps[1]));
   const ivs = await q(`SELECT id, "applicationId" a, "requisitionId" r, "designatedScorerId" d, scores, "legacyId" l FROM interviews ORDER BY id`);
-  check('interview: only the first is copied, with its application, job opening and scorer as numbers', ivs.length === 1 && ivs[0].a === 1 && ivs[0].r === 1 && ivs[0].d === 2 && ivs[0].l === I1.toHexString(), JSON.stringify(ivs));
-  check('interview scores: the overrider that exists is a number, the missing one is removed', ivs[0].scores[0].overriddenBy === 1 && !('overriddenBy' in ivs[0].scores[1]), JSON.stringify(ivs[0].scores));
-  check('login tokens: only the two with a copied user', JSON.stringify((await q('SELECT id, "userId" u FROM refresh_tokens ORDER BY id'))) === '[{"id":1,"u":1},{"id":4,"u":2}]');
+  check('interview: only the first is copied, with its application, job opening and scorer as UUIDs', ivs.length === 1 && ivs[0].id === u(I1) && ivs[0].a === u(A1) && ivs[0].r === u(R1) && ivs[0].d === u(U2) && ivs[0].l === I1.toHexString(), JSON.stringify(ivs));
+  check('interview scores: the overrider that exists is a UUID, the missing one is removed', ivs[0].scores[0].overriddenBy === u(U1) && !('overriddenBy' in ivs[0].scores[1]), JSON.stringify(ivs[0].scores));
+  check('login tokens: only the two with a copied user', same(await q('SELECT id, "userId" u FROM refresh_tokens ORDER BY id'), [{ id: u(T1), u: u(U1) }, { id: u(T4), u: u(U2) }]));
   const logs = await q(`SELECT id, "userId" u, "requisitionId" r, "applicationId" a FROM audit_logs ORDER BY id`);
-  check('audit entries: 1 keeps all three links; 2, 3 and 4 have the broken link emptied; 5 was skipped; 6 is copied', JSON.stringify(logs) === JSON.stringify([{ id: 1, u: 1, r: 1, a: 1 }, { id: 2, u: null, r: null, a: null }, { id: 3, u: null, r: null, a: null }, { id: 4, u: null, r: null, a: null }, { id: 6, u: null, r: null, a: null }]), JSON.stringify(logs));
-  check('an application id inside an audit entry\'s JSON is left as text, and reported', (await one(`SELECT "newValue"->>'application' v FROM audit_logs WHERE id=6`)).v === A1.toHexString() && Object.keys(report.models.auditLog.notes).some((n) => /not translated/.test(n)));
+  const none = { u: null, r: null, a: null };
+  check('audit entries: 1 keeps all three links; 2, 3 and 4 have the broken link emptied; 5 was skipped; 6 is copied', same(logs, [{ id: u(L1), u: u(U1), r: u(R1), a: u(A1) }, { id: u(L2), ...none }, { id: u(L3), ...none }, { id: u(L4), ...none }, { id: u(L6), ...none }]), JSON.stringify(logs));
+  check('an application id inside an audit entry\'s JSON is left as text, and reported', (await one(`SELECT "newValue"->>'application' v FROM audit_logs WHERE id='${u(L6)}'`)).v === A1.toHexString() && Object.keys(report.models.auditLog.notes).some((n) => /not translated/.test(n)));
   const tokens = await q(`SELECT count(DISTINCT "publicToken")::int d, count(*)::int n FROM (SELECT "publicToken" FROM requisitions UNION ALL SELECT "publicToken" FROM interviews) t`);
   check('every job opening and interview has its own token', tokens[0].d === tokens[0].n && tokens[0].n === 3, JSON.stringify(tokens));
+  const again = run(path.join('prisma', 'migrate', 'migrate.js'), ['--reset']);
+  const firstIds = JSON.stringify(await idsOf('candidates'));
+  check('copying the same data again gives the very same ids', again.code === 2 && JSON.stringify(await idsOf('candidates')) === firstIds && same(await idsOf('users'), [u(U1), u(U2), u(U5)]));
 
   console.log('\nThe verifier, on the same copy:');
   const verify = run(path.join('prisma', 'migrate', 'verify.js'));
