@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import * as interviewRepo from '../repositories/interviewRepository.js';
+import { isValidPublicRef } from '../repositories/ids.js';
 import * as applicationRepo from '../repositories/applicationRepository.js';
 import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as scorecardRepo from '../repositories/scorecardRepository.js';
@@ -771,7 +772,8 @@ const requestAvailability = asyncHandler(async (req, res) => {
   const requisitionTitle = requisition?.title || 'Job Opening';
 
   const clientHost = process.env.CLIENT_URL || req.headers.origin || 'http://localhost:5173';
-  const availabilityUrl = `${clientHost}/interview/${interview._id}/availability`;
+  // the link carries the interview's random public token (a plain number could be guessed); on MongoDB it is the id, as before
+  const availabilityUrl = `${clientHost}/interview/${interview.publicToken || interview._id}/availability`;
 
   let emailResult = { queued: false, reason: 'No candidate email on file.' };
   if (candidateEmail) {
@@ -796,7 +798,7 @@ const requestAvailability = asyncHandler(async (req, res) => {
 });
 
 const getPublicAvailability = asyncHandler(async (req, res) => {
-  const interview = await interviewRepo.findById(req.params.id);
+  const interview = isValidPublicRef(req.params.id) ? await interviewRepo.findByPublicRef(req.params.id) : null;
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found or expired.' });
 
   const requisition = await requisitionRepo.findFields(interview.requisitionId, 'title employmentType location status');
@@ -823,7 +825,7 @@ const getPublicAvailability = asyncHandler(async (req, res) => {
 });
 
 const submitPublicAvailability = asyncHandler(async (req, res) => {
-  const interview = await interviewRepo.findById(req.params.id);
+  const interview = isValidPublicRef(req.params.id) ? await interviewRepo.findByPublicRef(req.params.id) : null;
   if (!interview) return res.status(404).json({ error: 'NOT_FOUND', message: 'Interview not found.' });
 
   const requisition = await requisitionRepo.findFields(interview.requisitionId, 'status');

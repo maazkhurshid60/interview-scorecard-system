@@ -256,9 +256,10 @@ export default function Requisitions() {
 
   const [duplicatingId, setDuplicatingId] = useState(null);
 
-  function copyApplyLink(reqId, e) {
+  function copyApplyLink(requisition, e) {
     if (e) e.stopPropagation();
-    const url = `${window.location.origin}/apply/${reqId}`;
+    // the link carries the job's random public token (a plain number could be guessed); without one (MongoDB) it is the id
+    const url = `${window.location.origin}/apply/${requisition.publicToken || requisition._id}`;
     navigator.clipboard.writeText(url);
     toast.success('Candidate application link copied to clipboard!');
   }
@@ -802,7 +803,7 @@ export default function Requisitions() {
                                 size="icon"
                                 className="h-8 w-8 text-slate-500 hover:text-brand hover:bg-slate-100"
                                 title="Copy Candidate Apply Link"
-                                onClick={(e) => copyApplyLink(r._id, e)}
+                                onClick={(e) => copyApplyLink(r, e)}
                               >
                                 <Link2 className="h-4 w-4" />
                               </Button>
@@ -832,7 +833,7 @@ export default function Requisitions() {
                                       </DropdownMenuItem>
                                     </>
                                   )}
-                                  <DropdownMenuItem onClick={(e) => copyApplyLink(r._id, e)}>
+                                  <DropdownMenuItem onClick={(e) => copyApplyLink(r, e)}>
                                     <Link2 className="h-4 w-4 mr-2" />
                                     Copy Apply Link
                                   </DropdownMenuItem>

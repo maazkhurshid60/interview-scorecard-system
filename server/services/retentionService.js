@@ -3,6 +3,7 @@ import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as interviewRepo from '../repositories/interviewRepository.js';
 import * as settingRepo from '../repositories/settingRepository.js';
 import * as auditLog from '../repositories/auditLogRepository.js';
+import * as refreshTokens from '../repositories/refreshTokenRepository.js';
 import { deleteFile } from './fileStorage.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -109,14 +110,34 @@ async function runRetentionSweep() {
 }
 
 /**
+ * Deletes login tokens that have expired, so the table does not grow forever. (MongoDB did this by itself; PostgreSQL does
+ * not.) Never throws — a failed cleanup is logged and retried on the next tick.
+ * @returns {Promise<void>}
+ */
+async function removeExpiredLoginTokens() {
+  try {
+    const removed = await refreshTokens.removeExpired();
+    if (removed > 0) logger.info(`[RetentionService] Removed ${removed} expired login token(s).`);
+  } catch (err) {
+    logger.error(`[RetentionService] Login token cleanup failed: ${err.message}`);
+  }
+}
+
+/** The daily work: expired login tokens, then the transcript retention sweep. */
+async function runDailySweeps() {
+  await removeExpiredLoginTokens();
+  await runRetentionSweep();
+}
+
+/**
  * Starts the retention schedule: runs one sweep immediately (server start),
  * then once every 24h. Simple setInterval, per spec — no cron UI in Phase 1.
  * @returns {NodeJS.Timeout}
  */
 function startRetentionSchedule() {
-  runRetentionSweep();
+  runDailySweeps();
   if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(runRetentionSweep, DAY_MS);
+  intervalHandle = setInterval(runDailySweeps, DAY_MS);
   logger.info('[RetentionService] Scheduled daily retention sweep.');
   return intervalHandle;
 }

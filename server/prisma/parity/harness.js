@@ -1,0 +1,286 @@
+/**
+ * Parity harness: proves a PostgreSQL repository behaves exactly like its MongoDB twin.
+ *
+ * It runs the same list of repository calls on both versions, each against its own freshly seeded copy of the same data,
+ * and compares every result, every error and the data left behind. It only ever touches two scratch databases (both
+ * named "ownerstalent_parity", never your real ones): a MongoDB database on the same server as MONGODB_URI, and a
+ * PostgreSQL database next to the one in DATABASE_URL (created and migrated automatically). A local Postgres is required.
+ *
+ * The two databases name records differently: MongoDB by a 24-character id, PostgreSQL by a UUID. The scenarios are written
+ * with the 24-character ids (`hex(n)`); this file translates for the PostgreSQL side so that both can be compared:
+ *   - seeding: a record is stored under the UUID its 24-character id maps to (prisma/migrate/uuid.js), links too, as the data copy does it;
+ *   - calls: every 24-character id handed to a PostgreSQL repository is turned into its UUID;
+ *   - answers: every id coming back (a field named _id, ...Id, ...Ids, createdBy ...) that belongs to a seeded record is turned back
+ *     into its 24-character id; the id of a record made during the scenario stays a UUID and is labelled "new id" on both sides;
+ *   - the `publicToken` and `legacyId` that only PostgreSQL records have are left out of the comparison.
+ */
+import '../../config/env.js';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import mongoose from 'mongoose';
+import { randomUUID } from 'node:crypto';
+import { MODELS, PrismaClient, transform, translateLinks } from '../migrate/shared.js';
+import { uuidFromObjectId } from '../migrate/uuid.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const serverDir = path.join(here, '..', '..');
+const PARITY_DB = 'ownerstalent_parity';
+const ID_PATTERN = /^[0-9a-f]{24}$/;
+
+export const oid = (hex) => new mongoose.Types.ObjectId(hex);
+
+// ------------------------------------------------------------------------------------------ ids: hex on one side, UUIDs on the other
+
+const HEX24 = /^[0-9a-fA-F]{24}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The UUID that stands for a 24-character id (the same one the data copy gives it). */
+export const uuidOf = (hex) => uuidFromObjectId(hex);
+const hexByUuid = new Map(); // UUID -> the 24-character id of every record seeded for the scenario now running
+/** The 24-character id of a seeded record, from its UUID; the UUID itself for a record made during the scenario. */
+export const hexOf = (uuid) => hexByUuid.get(uuid) ?? uuid;
+/** Keys whose value is the id of a record (a UUID on the PostgreSQL side). */
+const isIdKey = (key) => key === 'id' || key === '_id' || key === 'ids' || /(Id|Ids|By)$/.test(String(key)) && key !== 'attributeId' && key !== 'targetId' && key !== 'conferenceId' && key !== 'calendarEventId' && key !== 'familyId';
+
+/** PostgreSQL answer -> the form the scenarios compare: ids of seeded records as 24-character text, the public token left out. A copy. */
+export function toHexForm(value, key) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return isIdKey(key) && UUID.test(value) ? hexOf(value) : value;
+  if (typeof value !== 'object' || value instanceof Date || Buffer.isBuffer(value)) return value;
+  if (Array.isArray(value)) return value.map((item) => toHexForm(item, key));
+  return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'publicToken' && k !== 'legacyId').map(([k, v]) => [k, toHexForm(v, k)]));
+}
+
+const ORIGINAL = Symbol('original');
+/**
+ * A live view of a PostgreSQL answer that shows ids as 24-character text and writes them back as UUIDs. It must be a view, not a
+ * copy: a record handed back by `findById` is changed by the scenario and given to `save`, which needs the very same object.
+ */
+function viewOf(value, key) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return isIdKey(key) && UUID.test(value) ? hexOf(value) : value;
+  if (typeof value !== 'object' || value instanceof Date || Buffer.isBuffer(value)) return value;
+  return new Proxy(value, {
+    get(target, prop) {
+      if (prop === ORIGINAL) return target;
+      const found = Reflect.get(target, prop, target);
+      if (typeof prop === 'symbol' || typeof found === 'function') return found; // a method runs on the view, so what it hands out is a view too
+      if (prop === 'publicToken' || prop === 'legacyId') return undefined;
+      return viewOf(found, Array.isArray(target) ? key : prop);
+    },
+    ownKeys: (target) => Reflect.ownKeys(target).filter((k) => k !== 'publicToken' && k !== 'legacyId'),
+    set(target, prop, newValue) { Reflect.set(target, prop, toArg(newValue, prop, 1)); return true; },
+  });
+}
+
+/** What a scenario hands to a PostgreSQL repository: 24-character ids become UUIDs (a view of an answer becomes the real answer). */
+export function toArg(value, key, depth = 0) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return HEX24.test(value) && (depth === 0 || (isIdKey(key) && !(key === '_id' && depth > 1))) ? uuidOf(value) : value;
+  if (typeof value !== 'object') return value;
+  if (value[ORIGINAL]) return value[ORIGINAL];
+  if (value instanceof Date || Buffer.isBuffer(value)) return value;
+  if (value._bsontype === 'ObjectId') return uuidOf(value.toHexString());
+  if (Array.isArray(value)) return value.map((item) => toArg(item, key, depth === 0 ? 0 : depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toArg(v, k, depth + 1)]));
+}
+
+/** The PostgreSQL repository as the scenarios see it: arguments translated on the way in, answers viewed with 24-character ids. */
+function wrapPostgres(repo) {
+  const PUBLIC_LINK = new Set(['findPublicView', 'findByPublicRef']);
+  const ID_LISTS = new Set(['listCandidateIdsForRequisition', 'listRequisitionIdsWithApplications', 'listAttachedCandidateIds', 'findIdsBySearch', 'listPendingScreeningIds']);
+  return new Proxy(repo, {
+    get(target, name) {
+      const found = target[name];
+      if (typeof found !== 'function') return found;
+      // a public link is not an id: it is handed over as it is (the old 24-character id of a seeded record is its `legacyId`)
+      const translate = PUBLIC_LINK.has(name) ? (a) => a : (a) => toArg(a, undefined, 0);
+      return async (...args) => viewOf(await found(...args.map(translate)), ID_LISTS.has(name) ? 'ids' : undefined);
+    },
+  });
+}
+
+// ------------------------------------------------------------------------------------------------------------ setup
+
+let adminPrisma; let prisma;
+
+/** Creates and migrates the scratch Postgres database, connects the scratch MongoDB, and points the app at them. */
+export async function setup() {
+  if (!process.env.DATABASE_URL || !process.env.MONGODB_URI) throw new Error('DATABASE_URL and MONGODB_URI must both be set.');
+  const devUrl = new URL(process.env.DATABASE_URL);
+  if (!['localhost', '127.0.0.1', '::1'].includes(devUrl.hostname)) throw new Error('The parity tests only run against a local Postgres.');
+  // they create (and drop) a scratch database on the MongoDB server, so they must never be pointed at a live one
+  if (!['localhost', '127.0.0.1', '::1'].includes(new URL(process.env.MONGODB_URI).hostname)) throw new Error('The parity tests create a scratch database on the MongoDB server: they only run against a local MongoDB (check MONGODB_URI in .env).');
+  const parityUrl = new URL(devUrl.toString()); parityUrl.pathname = `/${PARITY_DB}`;
+
+  adminPrisma = new PrismaClient({ datasourceUrl: devUrl.toString() });
+  // a fresh scratch database every time, so the tables are always the ones the current migration builds
+  await adminPrisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${PARITY_DB}" WITH (FORCE)`);
+  await adminPrisma.$executeRawUnsafe(`CREATE DATABASE "${PARITY_DB}"`);
+  execFileSync(process.execPath, [path.join(serverDir, 'node_modules', 'prisma', 'build', 'index.js'), 'migrate', 'deploy'], {
+    cwd: serverDir, env: { ...process.env, DATABASE_URL: parityUrl.toString() }, stdio: 'pipe',
+  });
+  process.env.DATABASE_URL = parityUrl.toString(); // must happen before any Postgres repository is imported
+  prisma = new PrismaClient({ datasourceUrl: parityUrl.toString() });
+
+  const mongoUrl = new URL(process.env.MONGODB_URI); mongoUrl.pathname = `/${PARITY_DB}`;
+  await mongoose.connect(mongoUrl.toString());
+  if (mongoose.connection.name !== PARITY_DB) throw new Error('Refusing to run: the MongoDB database is not the scratch one.');
+  return { prisma, mongo: mongoose.connection.db };
+}
+
+export async function teardown() {
+  await mongoose.disconnect();
+  if (prisma) await prisma.$disconnect();
+  if (adminPrisma) await adminPrisma.$disconnect();
+}
+
+/** Loads one repository from both folders. */
+export async function loadRepositories(name) {
+  const load = (folder) => import(pathToFileURL(path.join(serverDir, 'repositories', folder, `${name}.js`)).href);
+  return { mongo: await load('mongo'), postgres: await load('postgres') };
+}
+
+// ------------------------------------------------------------------------------------------------------- seeding
+
+async function resetBoth() {
+  hexByUuid.clear();
+  if (mongoose.connection.name !== PARITY_DB) throw new Error('Refusing to reset a database that is not the scratch one.');
+  await mongoose.connection.dropDatabase();
+  for (const spec of MODELS) { // the unique indexes the models declare must exist again after the drop
+    const model = (await import(pathToFileURL(path.join(serverDir, 'models', `${spec.delegate[0].toUpperCase()}${spec.delegate.slice(1)}.js`)).href)).default;
+    try { await model.createIndexes(); } catch (error) {
+      if (error.code !== 86) throw error; // Department declares two indexes on `name` with the same name; the unique one is created first
+    }
+  }
+  const tables = (await prisma.$queryRawUnsafe(`select tablename from pg_tables where schemaname='public' and tablename <> '_prisma_migrations'`)).map((r) => `"${r.tablename}"`);
+  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables.join(', ')} RESTART IDENTITY CASCADE`);
+}
+
+/** Empties both scratch databases and fills them with the same documents (used by the hands-on try scripts). */
+export async function resetAndSeed(documents) {
+  await resetBoth();
+  return seedBoth(documents);
+}
+
+/** Writes the same documents (in MongoDB shape) into both scratch databases. Returns the ids seeded, to tell them from new ones. */
+async function seedBoth(documents) {
+  const seededIds = new Set();
+  const seededByDelegate = {}; // delegate -> the 24-character ids that exist, so a link to a record that does not exist is dropped as the data copy drops it
+  for (const spec of MODELS) seededByDelegate[spec.delegate] = new Set((documents[spec.collection] || []).map((d) => String(d._id)));
+  for (const spec of MODELS) {
+    const docs = documents[spec.collection] || [];
+    if (!docs.length) continue;
+    await mongoose.connection.db.collection(spec.collection).insertMany(docs.map((d) => ({ ...d })));
+    const rows = docs.map((doc) => {
+      const { row, notes, blocking } = transform(spec, doc);
+      if (blocking.length) throw new Error(`Seed document ${String(doc._id)} in ${spec.collection} cannot be stored: ${blocking.join('; ')}`);
+      seededIds.add(row.id);
+      // a link the database does not enforce (an audit entry's job opening) may name a record that no longer exists, as in MongoDB:
+      // the data copy has to empty such a link, but here it keeps a number that belongs to no record, so the scenarios can still use it
+      const loose = spec.fields.filter((f) => f.ref && !f.parent && !f.softParent && row[f.name] !== undefined && row[f.name] !== null).map((f) => [f.name, String(row[f.name])]);
+      // (an id inside a JSON value, such as the user who overrode a score, may also name a user that no longer exists)
+      translateLinks(spec, row, (target, old, inJson) => (inJson || (seededByDelegate[target] && seededByDelegate[target].has(old)) ? uuidOf(old) : undefined), notes);
+      for (const [name, old] of loose) if (row[name] === undefined) row[name] = uuidOf(old);
+      if (spec.legacyId) row.legacyId = row.id;
+      if (spec.publicToken) row.publicToken = randomUUID();
+      hexByUuid.set(uuidOf(row.id), row.id);
+      row.id = uuidOf(row.id);
+      return row;
+    });
+    await prisma.$executeRawUnsafe(`INSERT INTO "${spec.table}" SELECT * FROM jsonb_populate_recordset(null::"${spec.table}", $1::jsonb)`, JSON.stringify(rows));
+  }
+  return seededIds;
+}
+
+// ------------------------------------------------------------------------------------------------ what is left behind
+
+/**
+ * The data a table holds after a scenario, in a form that can be compared between the two databases without using the
+ * repositories: the MongoDB documents go through the same conversion the data copy uses, the PostgreSQL rows are read
+ * as they are. Empty values are left out on both sides.
+ */
+export function tableState(delegate) {
+  const spec = MODELS.find((m) => m.delegate === delegate);
+  const dateFields = new Set([...spec.fields.filter((f) => f.type === 'd').map((f) => f.name), 'createdAt', 'updatedAt']);
+  const clean = (row) => Object.fromEntries(Object.entries(row).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => [k, v]));
+  const byId = (a, b) => String(a.id).localeCompare(String(b.id));
+  return {
+    mongo: async ({ mongo }) => (await mongo.collection(spec.collection).find().toArray()).map((doc) => clean(transform(spec, doc).row)).sort(byId),
+    postgres: async ({ prisma }) => (await prisma.$queryRawUnsafe(`SELECT to_jsonb(t)::text AS j FROM "${spec.table}" t`)).map((r) => {
+      const row = JSON.parse(r.j);
+      for (const name of dateFields) if (typeof row[name] === 'string') row[name] = new Date(`${row[name]}Z`);
+      return clean(toHexForm(row));
+    }).sort(byId),
+  };
+}
+
+// --------------------------------------------------------------------------------------------------- comparing
+
+const isoRecent = (date) => Math.abs(Date.now() - date.getTime()) < 30 * 60 * 1000;
+
+/** A form of any value that can be compared between the two runs: ids that were not seeded are numbered in order of appearance. */
+function makeCanon(seededIds) {
+  const labels = new Map();
+  const canon = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (value instanceof Date) return isoRecent(value) ? '<now>' : value.toISOString();
+    if (typeof value === 'string') {
+      return value.replace(/\b[0-9a-f]{24}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, (m) => (seededIds.has(m) ? m : (labels.has(m) ? labels.get(m) : (labels.set(m, `<new id ${labels.size + 1}>`), labels.get(m)))));
+    }
+    if (Array.isArray(value)) return value.map(canon);
+    if (typeof value === 'object') {
+      if (value._bsontype === 'ObjectId') return canon(value.toHexString());
+      return Object.fromEntries(Object.keys(value).sort().map((k) => [k, canon(value[k])]).filter(([, v]) => v !== undefined));
+    }
+    return value;
+  };
+  return canon;
+}
+
+/** What matters about an error: the parts the app reads (middleware/errorHandler.js), not the wording of the driver. */
+/** The wording of an error with what differs by design taken out: how a bad id is described, and the number of a record in a message. */
+const plainMessage = (message) => String(message)
+  .replace(/Cast to (ObjectId|UUID) failed for value (.*?) \(type (\w+)\) at path "(\w+)"( because of "BSONError")?/g, 'Cast to <id> failed for value $2 (type $3) at path "$4"')
+  .replace(/input must be a 24 character hex string, 12 byte Uint8Array, or an integer|An id must be a UUID/g, '<not an id>')
+  .replace(/^(\w+) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) no longer exists/, (m, name, id) => `${name} ${hexOf(id)} no longer exists`)
+  .replace(/\{_id: ObjectId\('([0-9a-f]{24})'\)\}/g, '{_id: $1}')
+  .replace(/\{_id: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}/g, (m, id) => `{_id: ${hexOf(id)}}`);
+function describeError(error) {
+  const base = { name: error.name };
+  if (error.name === 'CastError') return { ...base, path: error.path };
+  if (error.code === 11000) return { ...base, code: 11000, fields: Object.keys(error.keyPattern || {}) };
+  if (error.name === 'ValidationError') return { ...base, fields: Object.keys(error.errors || {}), message: plainMessage(error.message) };
+  return { ...base, code: error.code, message: plainMessage(error.message).slice(0, 200) };
+}
+
+async function runSide(side, repo, scenario, handles) {
+  await resetBoth();
+  const seededIds = await seedBoth(scenario.seed());
+  const canon = makeCanon(seededIds);
+  const results = [];
+  for (const step of scenario.steps) {
+    try { results.push({ step: step.name, ok: true, value: canon(await step.run(repo)) }); }
+    catch (error) { results.push({ step: step.name, ok: false, error: canon(describeError(error)) }); }
+  }
+  const state = canon(await scenario.state[side](handles));
+  return { results, state };
+}
+
+/** Runs one scenario on both versions and compares everything. Returns the list of differences. */
+export async function runScenario(scenario, handles) {
+  const repos = await loadRepositories(scenario.repository);
+  const mongoRun = await runSide('mongo', repos.mongo, scenario, handles);
+  const postgresRun = await runSide('postgres', wrapPostgres(repos.postgres), scenario, handles);
+  const differences = []; const lines = [];
+  scenario.steps.forEach((step, i) => {
+    const a = mongoRun.results[i]; const b = postgresRun.results[i];
+    const same = JSON.stringify(a) === JSON.stringify(b);
+    lines.push({ name: step.name, same, error: !a.ok });
+    if (!same) differences.push({ where: `step ${i + 1}: ${step.name}`, mongo: a.ok ? a.value : { ERROR: a.error }, postgres: b.ok ? b.value : { ERROR: b.error } });
+  });
+  const stateSame = JSON.stringify(mongoRun.state) === JSON.stringify(postgresRun.state);
+  if (!stateSame) differences.push({ where: 'the data left behind', mongo: mongoRun.state, postgres: postgresRun.state });
+  return { lines, differences, stateSame };
+}
