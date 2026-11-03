@@ -1,23 +1,27 @@
 # Going live: PostgreSQL and Redis
 
-## Redis
+## Environment variables to add
 
-Redis needs to be set up (the email and AI-screening queues run on it), and its address added to the environment:
+Redis needs to be set up first (the email and AI-screening queues run on it), then its address added:
 
 ```
+BULLMQ_PREFIX=ownerstalent
 REDIS_URL=redis://:PASSWORD@HOST:6379
 ```
 
-## PostgreSQL migration
-
-Add the PostgreSQL address to the environment, and keep the app on MongoDB until the switch:
+Database and migration:
 
 ```
+MONGODB_URI=<the live MongoDB address, already set>
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
 DB_PROVIDER=mongo
 ```
 
-Then, from the `server/` folder:
+`DB_PROVIDER` stays `mongo` until the switch (the last step below), then becomes `postgres`.
+
+## PostgreSQL migration
+
+From the `server/` folder:
 
 1. Install the packages and build the Prisma client:
    ```
