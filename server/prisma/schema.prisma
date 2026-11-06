@@ -51,6 +51,7 @@ enum AuditAction {
   requisition_duplicated
   offer_letter_sent
   requisition_deleted
+  screening_review
 }
 
 enum EmploymentType {
@@ -97,6 +98,17 @@ enum FinalDecision {
   hired
   rejected
   withdrawn
+}
+
+enum ReviewStatus {
+  requirements_not_met
+  needs_review
+  reviewed
+}
+
+enum ReviewDecision {
+  advance
+  reject
 }
 
 enum DeliveryStatus {
@@ -342,7 +354,8 @@ model Scorecard {
 }
 
 // One candidate applying to one job opening.
-// In the repository, the screening* columns appear as the nested `screeningJob` object, exactly as the app has it today.
+// In the repository, the screening* columns appear as the nested `screeningJob` object, exactly as the app has it today, and the
+// review* columns as the nested `screeningReview` object.
 model Application {
   id                    String            @id @default(uuid(7)) @db.Uuid
   candidateId           String @db.Uuid
@@ -363,6 +376,17 @@ model Application {
 
   stageProgress    Json  @default("[]") // [{ stageKey, status, stageAverage, passed }]
   initialScreening Json? // { aiScore, aiJustification, passed, overridden, overriddenBy, overrideReason }
+
+  requirements Json? // { answers: { education, experienceYears }, checks: [{ criteria, required, answered, met }] }
+
+  // a person's review of a public application: the AI only recommends (see services/screeningReview.js)
+  reviewStatus           ReviewStatus?
+  reviewAiScore          Float?
+  reviewAiRecommendation ReviewDecision?
+  reviewDecision         ReviewDecision?
+  reviewReason           String?
+  reviewedBy             String?         @db.Uuid
+  reviewedAt             DateTime?
 
   // results computed by the scoring engine
   weightedTotal   Float?
@@ -399,6 +423,7 @@ model Application {
   @@index([candidateId])
   @@index([requisitionId])
   @@index([requisitionId, weightedTotal(sort: Desc)])
+  @@index([requisitionId, reviewStatus])
   @@map("applications")
 }
 

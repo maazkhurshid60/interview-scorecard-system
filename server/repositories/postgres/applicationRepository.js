@@ -1,3 +1,4 @@
+import { REVIEW_WAITING } from '../../utils/constants.js';
 import { prisma } from './client.js';
 import { castDate, castId, castNumber, idOut, parseId } from './helpers.js';
 import { assign, buildDoc, findDoc, insertDoc, nullsExpr, pick, selectDocs, selectNames, writeChanges } from './records.js';
@@ -107,21 +108,29 @@ export async function countByDisposition(requisitionId) {
   return rows.map((row) => ({ disposition: row.disposition, count: row.count }));
 }
 
+/** How many applications of one job opening are waiting for a person, by review status: `[{ status, count }]`. One with a final decision is not waiting. */
+export async function countAwaitingReview(requisitionId) {
+  const rows = await prisma.$queryRawUnsafe(
+    'SELECT "reviewStatus"::text AS status, count(*)::int AS count FROM applications WHERE "requisitionId" = $1::uuid AND "reviewStatus"::text = ANY($2::text[]) AND "finalDecision" IS NULL GROUP BY "reviewStatus" ORDER BY "reviewStatus"', objectId(requisitionId), REVIEW_WAITING);
+  return rows.map((row) => ({ status: row.status, count: row.count }));
+}
+
 /**
- * One page of a job opening's applications, ranked ones first (by rank, then score, then newest), each with the
- * candidate's name, email and phone filled in on `candidateId`.
+ * One page of a job opening's applications, ranked ones first (by rank, then score, then the AI's screening score, then
+ * newest), each with the candidate's name, email and phone filled in on `candidateId`.
  *
  * All filters are optional:
  * - `candidateIds`: only applications of these candidates (an empty list matches nothing);
  * - `stageKey`: only applications currently at this stage;
  * - `disposition` / `finalDecision`: `{ values, includeUnset }`, meaning "one of these values", plus "none set yet"
  *   when `includeUnset` is true;
+ * - `reviewStatus`: only applications waiting for a person at this review status (one with a final decision is not waiting);
  * - `matchNothing`: return nothing at all.
  *
  * The requested `page` is brought back into range, so asking for page 99 of 3 returns page 3.
  * @returns {Promise<{applications: object[], total: number, page: number, totalPages: number}>}
  */
-export async function pageForRequisition({ requisitionId, candidateIds, stageKey, disposition, finalDecision, matchNothing, page: requestedPage, limit }) {
+export async function pageForRequisition({ requisitionId, candidateIds, stageKey, disposition, finalDecision, reviewStatus, matchNothing, page: requestedPage, limit }) {
   const params = [objectId(requisitionId)];
   const conditions = ['"requisitionId" = $1::uuid'];
   const add = (value) => { params.push(value); return `$${params.length}`; };
@@ -136,13 +145,14 @@ export async function pageForRequisition({ requisitionId, candidateIds, stageKey
   }
   if (candidateIds) conditions.push(`"candidateId" = ANY(${add(candidateIds.map(objectId))}::uuid[])`);
   if (stageKey) conditions.push(`"currentStageKey" = ${add(stageKey)}`);
+  if (reviewStatus) conditions.push(`"reviewStatus"::text = ${add(reviewStatus)}`, '"finalDecision" IS NULL');
   const where = `WHERE ${conditions.join(' AND ')}`;
 
   const [{ total }] = await prisma.$queryRawUnsafe(`SELECT count(*)::int AS total FROM applications ${where}`, ...params);
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const page = Math.min(requestedPage, totalPages);
-  // ranked applications first; then by rank, by score (best first, none last) and newest
-  const applications = await selectDocs(Application, `${where} ORDER BY (rank IS NULL), rank ASC, "weightedTotal" DESC NULLS LAST, "createdAt" DESC, id DESC LIMIT ${Math.floor(limit)} OFFSET ${Math.floor((page - 1) * limit)}`, params);
+  // ranked applications first; then by rank, by score and by the AI's screening score (best first, none last) and newest
+  const applications = await selectDocs(Application, `${where} ORDER BY (rank IS NULL), rank ASC, "weightedTotal" DESC NULLS LAST, "reviewAiScore" DESC NULLS LAST, "createdAt" DESC, id DESC LIMIT ${Math.floor(limit)} OFFSET ${Math.floor((page - 1) * limit)}`, params);
   await fillInCandidates(applications, 'name email phone');
   return { applications, total, page, totalPages };
 }
@@ -293,6 +303,12 @@ export async function releaseStaleScreenings({ staleBefore, maxAttempts }) {
          "nullFields" = ${nullsExpr({ remove: ['screeningJob.status', 'screeningJob.lockedAt'] })}
        WHERE "screeningStatus" = 'processing' AND "screeningLockedAt" < $1::text::timestamp AND "screeningAttempts" < $2`, before, maxAttempts, now),
   ]);
+}
+
+/** Sends an application to the AI screening from the start: its review goes back to "not ready yet". */
+export async function requeueScreening(id) {
+  await updateOne(id, `"screeningStatus" = 'pending', "screeningAttempts" = 0, "screeningLockedAt" = NULL, "screeningCompletedAt" = NULL, "screeningLastError" = NULL, "reviewStatus" = NULL,
+    "nullFields" = ${nullsExpr({ remove: ['screeningJob.status', 'screeningJob.lockedAt', 'screeningJob.completedAt', 'screeningJob.lastError', 'screeningReview.status'] })}`, []);
 }
 
 /** The ids of the oldest applications whose screening is waiting, up to `limit`. */

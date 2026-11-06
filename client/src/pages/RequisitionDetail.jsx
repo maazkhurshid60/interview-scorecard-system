@@ -2,12 +2,13 @@ import RichTextViewer from '../components/RichTextViewer';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Search, X, Users, Link2, ChevronDown, Play, Trash2, UserRoundPlus, ClipboardList, FileText, Pencil, Building2 } from 'lucide-react';
+import { ArrowLeft, Search, X, Users, Link2, ChevronDown, Play, Trash2, UserRoundPlus, ClipboardList, ClipboardCheck, FileText, Pencil, Building2 } from 'lucide-react';
 import api from '../hooks/useApi';
 import { openStoredFile } from '../lib/fileAccess';
 import ScreeningBadge from '../components/ScreeningBadge';
+import ScreeningReviewDialog from '../components/ScreeningReviewDialog';
 import useRefreshWhile from '../hooks/useRefreshWhile';
-import { isScreeningActive, isScreeningFailed } from '../lib/screening';
+import { isScreeningActive, isScreeningFailed, isWaitingForReview, reviewLabel } from '../lib/screening';
 import PipelineStepper from '../components/PipelineStepper';
 import ScorecardEditor from '../components/ScorecardEditor';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -101,6 +102,8 @@ export default function RequisitionDetail() {
   const [debouncedCandidateSearch, setDebouncedCandidateSearch] = useState('');
   const [dispositionFilters, setDispositionFilters] = useState(['in_progress', 'HIRE', 'MAYBE']);
   const [finalDecisionFilters, setFinalDecisionFilters] = useState(['undecided', 'hired', 'rejected', 'withdrawn']);
+  const [reviewFilter, setReviewFilter] = useState('all');
+  const [reviewingApplicationId, setReviewingApplicationId] = useState(null);
   const [fetchingCandidates, setFetchingCandidates] = useState(false);
   const [pendingClose, setPendingClose] = useState(false);
   const [removeCandidateApp, setRemoveCandidateApp] = useState(null);
@@ -271,6 +274,7 @@ export default function RequisitionDetail() {
         search: debouncedCandidateSearch.trim() || undefined,
         disposition: dispositionFilters.length ? dispositionFilters.join(',') : 'none',
         finalDecision: finalDecisionFilters.length ? finalDecisionFilters.join(',') : 'none',
+        review: reviewFilter !== 'all' ? reviewFilter : undefined,
         candidateId: candidateIdFromUrl || undefined,
       };
 
@@ -321,7 +325,7 @@ export default function RequisitionDetail() {
 
   useEffect(() => {
     load(1);
-  }, [id, debouncedCandidateSearch, dispositionFilters, finalDecisionFilters, candidateIdFromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, debouncedCandidateSearch, dispositionFilters, finalDecisionFilters, reviewFilter, candidateIdFromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While the AI is still scoring a visible application, refresh quietly until it finishes.
   useRefreshWhile((data?.applications || []).some(isScreeningActive), () => load(page, pageSize, true));
@@ -466,6 +470,7 @@ export default function RequisitionDetail() {
   const hasActiveCandidateFilter = Boolean(candidateSearch.trim())
     || dispositionFilters.length !== 4
     || finalDecisionFilters.length !== 4
+    || reviewFilter !== 'all'
     || Boolean(candidateIdFromUrl);
   const enabledStages = requisition.stages.filter((s) => s.enabled).length;
   const employmentDetails = {
@@ -666,6 +671,8 @@ export default function RequisitionDetail() {
       </Card>
       )}
 
+      <ScreeningReviewDialog applicationId={reviewingApplicationId} onClose={() => setReviewingApplicationId(null)} onDecided={() => load()} />
+
       {/* ---------- candidates ---------- */}
       {activeTab === 'candidates' && (
       <Card className="mt-6">
@@ -676,13 +683,13 @@ export default function RequisitionDetail() {
               {pagination.total} candidate{pagination.total === 1 ? '' : 's'} {hasActiveCandidateFilter ? 'match the current filters' : 'attached to this job opening'}
             </p>
           </div>
-          {/* Phone: the search box has the first row; the AI Decision filter and the two icon buttons share the second.
+          {/* Phone: the search box has the first row; the filters and the two icon buttons share the second.
               From sm up: one row in the order filter, search, icons. */}
           <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button type="button" variant="outline" size="sm" className="order-2 h-9 min-w-0 flex-1 justify-between text-xs sm:order-1 sm:h-8 sm:w-44 sm:flex-none">
-                    AI Decision ({dispositionFilters.length}/4)
+                    Recommendation ({dispositionFilters.length}/4)
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -700,6 +707,14 @@ export default function RequisitionDetail() {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+              <Select value={reviewFilter} onValueChange={(value) => { setReviewFilter(value); setPage(1); }}>
+                <SelectTrigger className="order-2 h-9 min-w-0 flex-1 text-xs sm:order-1 sm:h-8 sm:w-52 sm:flex-none"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All candidates</SelectItem>
+                  <SelectItem value="needs_review">Needs review ({data.applicationStats?.NEEDS_REVIEW ?? 0})</SelectItem>
+                  <SelectItem value="requirements_not_met">Requirements not met ({data.applicationStats?.REQUIREMENTS_NOT_MET ?? 0})</SelectItem>
+                </SelectContent>
+              </Select>
               {/* Final Decision filter is temporarily hidden.
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -793,7 +808,7 @@ export default function RequisitionDetail() {
                       <TableHead className="w-32 font-semibold text-center">Availability</TableHead>
                       <TableHead className="min-w-[260px] font-semibold text-center">Hiring Stages</TableHead>
                       <TableHead className="w-28 text-center font-semibold">Weighted Total</TableHead>
-                      <TableHead className="min-w-[135px] w-36 text-center font-semibold whitespace-nowrap">AI Decision</TableHead>
+                      <TableHead className="min-w-[135px] w-36 text-center font-semibold whitespace-nowrap">Recommendation</TableHead>
                       <TableHead className="min-w-[150px] font-semibold text-center">Final Decision</TableHead>
                       <TableHead className="w-24 text-center font-semibold">Actions</TableHead>
                     </TableRow>
@@ -880,6 +895,12 @@ export default function RequisitionDetail() {
                               </Badge>
                             ) : (isScreeningActive(app) || isScreeningFailed(app)) ? (
                               <ScreeningBadge application={app} />
+                            ) : isWaitingForReview(app) && canDecide ? (
+                              <Button type="button" variant="outline" size="sm" className="h-7 border-amber-300 bg-amber-50 text-xs text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={() => setReviewingApplicationId(app._id)}>
+                                {reviewLabel(app)}
+                              </Button>
+                            ) : isWaitingForReview(app) ? (
+                              <span className="text-xs text-amber-800">{reviewLabel(app)}</span>
                             ) : (
                               <span className="text-xs text-muted-foreground">In progress</span>
                             )}
@@ -1033,6 +1054,19 @@ export default function RequisitionDetail() {
                                   </span>
                                 </div>
                               </>
+                              )}
+                              {canDecide && app.screeningReview?.status && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  title="Open review card"
+                                  aria-label="Open review card"
+                                  className="h-8 w-8"
+                                  onClick={() => setReviewingApplicationId(app._id)}
+                                >
+                                  <ClipboardCheck className="h-4 w-4" />
+                                </Button>
                               )}
                               <Button
                                 type="button"

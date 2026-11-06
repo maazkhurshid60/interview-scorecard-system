@@ -48,8 +48,8 @@ all caught. That script is not kept in the repository, and it predates the UUID 
 - **Why UUIDs, and why version 7?** Ids that cannot be guessed and do not depend on a counter. Version 4 (random) ids would not
   sort in creation order, and 30 queries order by id to mean "oldest first"; version 7 keeps that. The data copy must give every
   record a new id and rewrite every link (see below), and switching back to MongoDB after new records exist would not be clean.
-- **One migration.** `migrations/` holds a single first migration (`..._init`) with the final tables, the CHECK constraints and
-  the case-insensitive department-name index, because nothing was deployed before the ids were changed.
+- **The first migration.** `..._init` holds the final tables, the CHECK constraints and the case-insensitive department-name
+  index, because nothing was deployed before the ids were changed. Later changes are new folders next to it.
 - **Field names stay as they are** (camelCase). The API keeps returning `_id`.
 - **Every MongoDB `Number` is a `Float`** (double precision), the lossless choice: it holds anything a Mongoose Number
   could, so the migration cannot fail on a decimal. Fields that are always whole numbers can be tightened later.

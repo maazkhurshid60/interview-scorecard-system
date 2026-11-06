@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { STAGE_PROGRESS_STATUS, DISPOSITIONS, FINAL_DECISIONS } from '../utils/constants.js';
+import { STAGE_PROGRESS_STATUS, DISPOSITIONS, FINAL_DECISIONS, REVIEW_STATUS, REVIEW_DECISIONS } from '../utils/constants.js';
 
 const applicationSchema = new mongoose.Schema({
   candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate', required: true, index: true },
@@ -41,6 +41,22 @@ const applicationSchema = new mongoose.Schema({
     overridden: { type: Boolean, default: false },
     overriddenBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     overrideReason: String,
+  },
+
+  // What the candidate stated on the public form about the job's minimum requirements, and how code compared it
+  // (no AI): { answers: { education, experienceYears }, checks: [{ criteria, required, answered, met }] }
+  requirements: mongoose.Schema.Types.Mixed,
+
+  // A person's review of a public application. The AI only recommends: nothing moves a candidate on or rejects
+  // them until a reviewer decides here (see services/screeningReview.js).
+  screeningReview: {
+    status: { type: String, enum: REVIEW_STATUS },
+    aiScore: Number,             // average of the screening stages' AI scores: reviewers work from the highest down
+    aiRecommendation: { type: String, enum: REVIEW_DECISIONS },
+    decision: { type: String, enum: REVIEW_DECISIONS }, // the reviewer's decision: it counts over the stages' score gates
+    reason: String,
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: Date,
   },
 
   // Final results (computed by scoringEngine)

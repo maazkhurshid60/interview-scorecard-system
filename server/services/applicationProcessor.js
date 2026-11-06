@@ -7,7 +7,8 @@ import logger from '../utils/logger.js';
 import { ApiKeyError, SpendCapError } from '../utils/errors.js';
 import { generateScorecard } from './questionGenerator.js';
 import { scoreInterview } from './aiScorer.js';
-import { computeStageAverage, isStagePassed, rankApplications } from './scoringEngine.js';
+import { computeScreeningRecommendation, rankApplications } from './scoringEngine.js';
+import { getScreeningStages } from './screeningReview.js';
 import { enqueueEmail } from './emailQueue.js';
 import { Queue, Worker, UnrecoverableError } from 'bullmq';
 import { redisConfigured, queuePrefix, createRedisConnection, closeRedisConnection, safeJobId, whenReady } from '../queues/redis.js';
@@ -19,7 +20,10 @@ import { syncHrQuestionnaireRubric, assignMissingAttributeIds } from '../utils/s
  * The apply request only saves the application (and its files) and answers the
  * candidate straight away. Everything slow happens here instead: creating the
  * scorecard if the job has none, AI-scoring the résumé and the questionnaire,
- * approving those scores, ranking, and the confirmation email.
+ * ranking, and the confirmation email.
+ *
+ * The AI's scores are proposals. This file never approves them, moves a candidate on or rejects one: it leaves the
+ * application waiting for a person (see services/screeningReview.js).
  *
  * The work is queued with BullMQ (on Redis), which runs it, waits between retries and recovers a job whose
  * worker died. The job's state is also kept on the application itself (`screeningJob.status`:
@@ -70,24 +74,11 @@ function ensureScorecard(requisition) {
 
 // ---------------------------------------------------------------- one application
 
-/** Approves an interview's AI scores as they are and records the stage result. Returns { stageAverage, stagePassed }. */
-async function approveAutoScores(interview, stage, application) {
-  interview.scores.forEach((score) => {
-    if (score.approvedScore === undefined || score.approvedScore === null) score.approvedScore = score.aiScore;
-  });
-  interview.status = 'approved';
-  const stageAverage = computeStageAverage(interview);
-  const stagePassed = isStagePassed(stageAverage, stage.passThreshold);
-  interview.stageAverage = stageAverage;
-  await interviewRepo.save(interview);
-
+/** Marks a stage as scored by the AI on the application's progress. */
+async function markStageScored(application, stage) {
   const progress = application.stageProgress.find((p) => p.stageKey === stage.key);
-  if (progress) {
-    progress.stageAverage = stageAverage;
-    progress.passed = stagePassed;
-    progress.status = stagePassed ? 'passed' : 'failed';
-  }
-  return { stageAverage, stagePassed };
+  if (progress) progress.status = 'scored';
+  await applicationRepo.save(application);
 }
 
 /** Runs every step for one application. Problems are collected in `failures`; a failed step does not stop the others. */
@@ -99,10 +90,6 @@ async function runSteps(application, failures) {
     logger.warn(`[AppProcessor] Skipping application ${application._id}: its job or candidate no longer exists.`);
     return;
   }
-  // scoringController is loaded here, not at the top, because it is a large module that depends on a lot
-  // (and would otherwise import this file in a circle).
-  const { getOrCreateNextInterview, recomputeAndPersist } = await import('../controllers/scoringController.js');
-
   // 1. Confirmation email — handed to the email queue (one per application, however many times this job
   //    runs), so a mail problem is retried there and never blocks the scoring.
   if (!application.screeningJob.confirmationEmailSentAt) {
@@ -116,6 +103,12 @@ async function runSteps(application, failures) {
     if (!queuedEmail.queued) {
       logger.warn(`[AppProcessor] Confirmation email not queued for application ${application._id}: ${queuedEmail.reason}`);
     }
+  }
+
+  // A candidate who did not meet the job's fixed requirements goes straight to a person: the AI is not used.
+  if (application.screeningReview?.status === 'requirements_not_met') {
+    logger.info(`[AppProcessor] Application ${application._id} did not meet the fixed requirements; waiting for a person.`);
+    return;
   }
 
   // 2. The scorecard (generated once per job when missing).
@@ -145,11 +138,7 @@ async function runSteps(application, failures) {
         const { interview: scored } = await scoreInterview({
           interview: firstInterview, stageType: firstStage.stageType, attributes: stageRubric.attributes, requisition, application,
         });
-        if (scored) {
-          const progress = application.stageProgress.find((p) => p.stageKey === firstStage.key);
-          if (progress) progress.status = 'scored';
-          await applicationRepo.save(application);
-        }
+        if (scored?.status === 'scored') await markStageScored(application, firstStage);
       } catch (err) {
         failures.push(err);
         logger.warn(`[AppProcessor] Résumé scoring problem for application ${application._id}: ${err.message}`);
@@ -157,64 +146,35 @@ async function runSteps(application, failures) {
     }
   }
 
-  // 4. Auto-approve the résumé scores and compute the first-stage result.
-  //    Also finishes the job after an interrupted attempt: an already-approved stage
-  //    still gets its next interview created and the results recomputed (both are repeatable).
-  let resumePassed = null;
-  if (firstInterview && firstStage) {
-    try {
-      if (firstInterview.status === 'approved') {
-        resumePassed = isStagePassed(firstInterview.stageAverage, firstStage.passThreshold);
-      } else if (firstInterview.status === 'scored' || firstInterview.scores?.length > 0) {
-        const { stageAverage, stagePassed } = await approveAutoScores(firstInterview, firstStage, application);
-        resumePassed = stagePassed;
-        application.initialScreening = {
-          aiScore: stageAverage,
-          aiJustification: firstInterview.scores.map((score) => score.aiJustification).filter(Boolean).join(' '),
-          passed: stagePassed,
-          overridden: false,
-        };
-        logger.info(`[AppProcessor] Auto-approved ${firstStage.key} for application ${application._id}: average=${stageAverage}, passed=${stagePassed}`);
-      }
-      if (resumePassed !== null) {
-        if (resumePassed) await getOrCreateNextInterview(application, requisition, firstStage.key, null);
-        await recomputeAndPersist(application, requisition, null, resumePassed
-          ? 'Auto-approved Stage 1 AI scoring upon public application submission.'
-          : 'Auto-computed results after Stage 1 failure.');
-      }
-    } catch (err) {
-      failures.push(err);
-      logger.error(`[AppProcessor] Résumé auto-approval error for application ${application._id}: ${err.message}`);
-    }
-  }
-
-  // 5. Score and approve the HR screen from the questionnaire answers only (never the CV).
+  // 4. Score the HR screen from the questionnaire answers only (never the CV).
   if (hrInterview && scorecard && hrStage) {
     const hrRubric = scorecard.stages.find((stage) => stage.stageKey === hrStage.key);
     try {
       if (hrInterview.status === 'pending' && hrRubric?.attributes?.length > 0) {
-        await scoreInterview({
+        const { interview: scored } = await scoreInterview({
           interview: hrInterview, stageType: hrStage.stageType, attributes: hrRubric.attributes, requisition, application,
         });
-      }
-      let hrPassed = null;
-      if (hrInterview.status === 'scored') {
-        ({ stagePassed: hrPassed } = await approveAutoScores(hrInterview, hrStage, application));
-      } else if (hrInterview.status === 'approved') {
-        hrPassed = isStagePassed(hrInterview.stageAverage, hrStage.passThreshold);
-      }
-      if (hrPassed !== null) {
-        // Continue to later stages only when both required public screens pass.
-        // HR is still scored when the résumé fails.
-        if (hrPassed && resumePassed) {
-          await getOrCreateNextInterview(application, requisition, hrStage.key, null);
-        }
-        await recomputeAndPersist(application, requisition, null, 'Auto-approved HR questionnaire scoring upon public application submission.');
+        if (scored?.status === 'scored') await markStageScored(application, hrStage);
       }
     } catch (err) {
       failures.push(err);
       logger.warn(`[AppProcessor] HR questionnaire scoring problem for application ${application._id}: ${err.message}`);
     }
+  }
+
+  // 5. Every screening stage has its AI scores: the application now waits for a person. Until a reviewer decides, no
+  //    score counts, no stage passes or fails, and the candidate stays where they are. A stage the AI could not score
+  //    fails the job, so staff see it needs scoring by hand.
+  const screened = getScreeningStages(requisition).map((stage) => ({
+    interview: stage.key === firstStage?.key ? firstInterview : hrInterview,
+    passThreshold: stage.passThreshold,
+  }));
+  if (screened.length > 0 && screened.every(({ interview }) => interview?.status === 'scored')) {
+    application.screeningReview = { status: 'needs_review', ...computeScreeningRecommendation(screened) };
+    await applicationRepo.save(application);
+    logger.info(`[AppProcessor] Application ${application._id} scored; waiting for a person's review.`);
+  } else if (screened.some(({ interview }) => interview?.status === 'pending') && failures.length === 0) {
+    failures.push(new Error('A screening stage could not be scored automatically (for example a résumé with no readable text).'));
   }
 
   // 6. Re-rank every applicant of this job.

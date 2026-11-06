@@ -4,8 +4,11 @@ import { ArrowLeft, Search, Users, X, ChevronDown } from 'lucide-react';
 import api from '../hooks/useApi';
 import { Button } from '@/components/ui/button';
 import ScreeningBadge from '../components/ScreeningBadge';
+import ScreeningReviewDialog from '../components/ScreeningReviewDialog';
 import useRefreshWhile from '../hooks/useRefreshWhile';
-import { isScreeningActive, isScreeningFailed } from '../lib/screening';
+import { isScreeningActive, isScreeningFailed, isWaitingForReview, reviewLabel } from '../lib/screening';
+import { useAuth } from '../context/AuthContext';
+import { canMakeDecisions } from '../lib/permissions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +55,8 @@ function setStoredPageSize(size) {
 export default function RequisitionCandidates() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canDecide = canMakeDecisions(user);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchingCandidates, setFetchingCandidates] = useState(false);
@@ -60,6 +65,8 @@ export default function RequisitionCandidates() {
   const ALL_DISPOSITIONS = ['in_progress', 'HIRE', 'MAYBE', 'NO_HIRE'];
   const [dispositionFilters, setDispositionFilters] = useState(ALL_DISPOSITIONS);
   const [stageFilter, setStageFilter] = useState('all');
+  const [reviewFilter, setReviewFilter] = useState('all');
+  const [reviewingApplicationId, setReviewingApplicationId] = useState(null);
   const [pageSize, setPageSize] = useState(() => getStoredPageSize());
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(() => ({ total: 0, page: 1, limit: getStoredPageSize(), totalPages: 1 }));
@@ -86,6 +93,7 @@ export default function RequisitionCandidates() {
           search: debouncedSearch.trim() || undefined,
           disposition: dispositionFilters.length === 0 ? 'none' : dispositionFilters.length === 4 ? undefined : dispositionFilters.join(','),
           stageKey: stageFilter !== 'all' ? stageFilter : undefined,
+          review: reviewFilter !== 'all' ? reviewFilter : undefined,
         },
       });
       if (requestId !== latestLoadRef.current) return;
@@ -116,7 +124,7 @@ export default function RequisitionCandidates() {
 
   useEffect(() => {
     load(1);
-  }, [id, debouncedSearch, dispositionFilters, stageFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, debouncedSearch, dispositionFilters, stageFilter, reviewFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applications = data?.applications || [];
 
@@ -125,7 +133,15 @@ export default function RequisitionCandidates() {
   const stageLabels = useMemo(() => Object.fromEntries((data?.requisition?.stages || []).map((stage) => [stage.key, stage.label])), [data]);
   const statusCounts = data?.applicationStats || { total: 0, IN_PROGRESS: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0 };
 
-  const hasActiveFilters = Boolean(search || dispositionFilters.length < 4 || stageFilter !== 'all');
+  const hasActiveFilters = Boolean(search || dispositionFilters.length < 4 || stageFilter !== 'all' || reviewFilter !== 'all');
+
+  function resetFilters() {
+    setSearch('');
+    setDispositionFilters(ALL_DISPOSITIONS);
+    setStageFilter('all');
+    setReviewFilter('all');
+    setPage(1);
+  }
 
   if (loading) return <div className="space-y-3"><Skeleton className="h-9 w-64" /><Skeleton className="h-64 w-full" /></div>;
   if (!data) return <div className="text-sm text-muted-foreground">Job opening not found.</div>;
@@ -168,7 +184,7 @@ export default function RequisitionCandidates() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="outline" size="sm" className="h-9 w-full justify-between text-xs sm:w-44 border-input bg-background font-normal">
-              AI Decision ({dispositionFilters.length}/4)
+              Recommendation ({dispositionFilters.length}/4)
               <ChevronDown className="h-3.5 w-3.5 opacity-50" />
             </Button>
           </DropdownMenuTrigger>
@@ -186,6 +202,15 @@ export default function RequisitionCandidates() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <Select value={reviewFilter} onValueChange={(value) => { setReviewFilter(value); setPage(1); }}>
+          <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All candidates</SelectItem>
+            <SelectItem value="needs_review">Needs review ({statusCounts.NEEDS_REVIEW ?? 0})</SelectItem>
+            <SelectItem value="requirements_not_met">Requirements not met ({statusCounts.REQUIREMENTS_NOT_MET ?? 0})</SelectItem>
+          </SelectContent>
+        </Select>
 
         {(data?.requisition?.stages || []).length > 0 && (
           <Select value={stageFilter} onValueChange={(value) => { setStageFilter(value); setPage(1); }}>
@@ -207,7 +232,7 @@ export default function RequisitionCandidates() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setSearch(''); setStatusFilter('all'); setStageFilter('all'); setPage(1); }}
+            onClick={resetFilters}
             className="text-xs text-muted-foreground hover:text-foreground h-9 px-2"
           >
             <X className="mr-1 h-3.5 w-3.5" />
@@ -215,6 +240,8 @@ export default function RequisitionCandidates() {
           </Button>
         )}
       </div>
+
+      <ScreeningReviewDialog applicationId={reviewingApplicationId} onClose={() => setReviewingApplicationId(null)} onDecided={() => load(page, pageSize, true)} />
 
       <Card className="mt-4">
         <CardContent className="p-0">
@@ -231,7 +258,7 @@ export default function RequisitionCandidates() {
                   variant="outline"
                   size="sm"
                   className="mt-2"
-                  onClick={() => { setSearch(''); setStatusFilter('all'); setStageFilter('all'); setPage(1); }}
+                  onClick={resetFilters}
                 >
                   Clear filters
                 </Button>
@@ -262,6 +289,10 @@ export default function RequisitionCandidates() {
                       <TableCell>
                         {!disp && (isScreeningActive(application) || isScreeningFailed(application)) ? (
                           <ScreeningBadge application={application} />
+                        ) : !disp && isWaitingForReview(application) && canDecide ? (
+                          <Button type="button" variant="outline" size="sm" className="h-7 border-amber-300 bg-amber-50 text-xs text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={() => setReviewingApplicationId(application._id)}>
+                            {reviewLabel(application)}
+                          </Button>
                         ) : (
                           <Badge variant="outline" className={`font-medium ${badgeClass}`}>
                             {badgeText}

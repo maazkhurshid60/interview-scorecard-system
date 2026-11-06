@@ -22,7 +22,8 @@
     "smoke:postgres": "node prisma/parity/smoke-server.js",
     "test:migrate": "node prisma/migrate/awkward-test.js",
     "test:ids": "node prisma/parity/ids.check.js",
-    "journey:postgres": "node prisma/parity/journey-server.js"
+    "journey:postgres": "node prisma/parity/journey-server.js",
+    "test:screening": "node prisma/parity/screening-review.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",

@@ -21,6 +21,7 @@ import { renderEmail } from '../utils/renderEmail.js';
 import { getSecrets } from '../utils/secrets.js';
 import { extractArtifactText } from '../utils/textExtractor.js';
 import { getCaptchaConfig, verifyCaptcha } from '../services/captchaService.js';
+import { assertNotWaitingForReview } from '../services/screeningReview.js';
 import { recomputeAndPersist, getOrCreateNextInterview } from './scoringController.js';
 
 /** Temporary diagnostic: remove after transcript parsing is verified. */
@@ -585,6 +586,7 @@ const score = asyncHandler(async (req, res) => {
     throw new ValidationError(['transcriptText'], message);
   }
 
+  await assertNotWaitingForReview(interview, requisition);
   await assertPriorStagesApproved(requisition, interview.applicationId, interview.stageKey);
 
   const scorecard = await scorecardRepo.findByRequisition(interview.requisitionId);

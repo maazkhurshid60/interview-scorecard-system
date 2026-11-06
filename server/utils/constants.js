@@ -37,6 +37,21 @@ const DISPOSITIONS = ['HIRE', 'MAYBE', 'NO_HIRE'];
 /** Human decision recorded on an application (always a manual, audited action). */
 const FINAL_DECISIONS = ['hired', 'rejected', 'withdrawn'];
 
+/** The structured screening criteria of a job. Server-side validation mirror: the editable UI definition lives in client/src/constants. */
+const SCREENING_CRITERIA = {
+  education: { label: 'Education', options: ['Undergraduate (currently studying)', "Bachelor's degree", "Master's degree", 'PhD'] },
+  experience: { label: 'Experience', options: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10+'] },
+};
+
+/** Where a public application stands in a person's review of it (see services/screeningReview.js). */
+const REVIEW_STATUS = ['requirements_not_met', 'needs_review', 'reviewed'];
+
+/** The review statuses that are waiting for a person. */
+const REVIEW_WAITING = ['requirements_not_met', 'needs_review'];
+
+/** What the AI can recommend, and what a reviewer can decide, for a screened application. */
+const REVIEW_DECISIONS = ['advance', 'reject'];
+
 /**
  * Every auditable action — one row per meaningful change, immutable.
  * NOTE: 'retention_purge' is not in INSTRUCTIONS.md's original AuditLog enum,
@@ -51,6 +66,7 @@ const AUDIT_ACTIONS = [
   'provider_change', 'key_change', 'transcript_upload', 'consent_capture',
   'retention_purge', 'requisition_status_change', 'candidate_update',
   'requisition_duplicated', 'offer_letter_sent', 'requisition_deleted',
+  'screening_review',
 ];
 
 /**
@@ -220,4 +236,4 @@ const DEFAULT_SETTINGS = {
   stageModelTiers: STAGE_MODEL_TIER,
 };
 
-export { STAGE_TYPES, INPUT_TYPES, EMPLOYMENT_TYPES, USER_ROLES, STAGE_PROGRESS_STATUS, INTERVIEW_STATUS, TRANSCRIPT_STATUS, MEETING_MODES, TRANSCRIPT_PROVIDERS, DISPOSITIONS, FINAL_DECISIONS, AUDIT_ACTIONS, STAGE_MODEL_TIER, DEFAULT_COST_RATE_TABLE, DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS };
+export { STAGE_TYPES, INPUT_TYPES, EMPLOYMENT_TYPES, USER_ROLES, STAGE_PROGRESS_STATUS, INTERVIEW_STATUS, TRANSCRIPT_STATUS, MEETING_MODES, TRANSCRIPT_PROVIDERS, DISPOSITIONS, FINAL_DECISIONS, SCREENING_CRITERIA, REVIEW_STATUS, REVIEW_WAITING, REVIEW_DECISIONS, AUDIT_ACTIONS, STAGE_MODEL_TIER, DEFAULT_COST_RATE_TABLE, DEFAULT_PIPELINE_STAGES, DEFAULT_SETTINGS };

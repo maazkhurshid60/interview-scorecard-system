@@ -1,5 +1,5 @@
 import { F, defineModel } from './records.js';
-import { STAGE_PROGRESS_STATUS, DISPOSITIONS, FINAL_DECISIONS } from '../../utils/constants.js';
+import { STAGE_PROGRESS_STATUS, DISPOSITIONS, FINAL_DECISIONS, REVIEW_STATUS, REVIEW_DECISIONS } from '../../utils/constants.js';
 
 /**
  * What the PostgreSQL repositories need to know about each model that holds whole records: its fields, their types, defaults
@@ -51,6 +51,16 @@ export const Application = defineModel({
       aiScore: F.number(), aiJustification: F.string(), passed: F.boolean(), overridden: F.boolean({ default: false }),
       overriddenBy: F.id(), overrideReason: F.string(),
     }, { json: true }),
+    requirements: F.mixed(),
+    screeningReview: F.nested({
+      status: F.string({ enum: REVIEW_STATUS, col: 'reviewStatus' }),
+      aiScore: F.number({ col: 'reviewAiScore' }),
+      aiRecommendation: F.string({ enum: REVIEW_DECISIONS, col: 'reviewAiRecommendation' }),
+      decision: F.string({ enum: REVIEW_DECISIONS, col: 'reviewDecision' }),
+      reason: F.string({ col: 'reviewReason' }),
+      reviewedBy: F.id({ col: 'reviewedBy' }),
+      reviewedAt: F.date({ col: 'reviewedAt' }),
+    }),
     weightedTotal: F.number(),
     allGatesPassed: F.boolean(),
     disposition: F.string({ enum: DISPOSITIONS, default: null }),

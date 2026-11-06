@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '@/hooks/useApi';
 import {
-  Briefcase, Calendar as CalendarIcon, FileText, Upload, AlertCircle, Sparkles, ArrowRight, MapPin, MessageCircle, Globe, ExternalLink, Users, Clock, CheckCircle2,
+  Briefcase, Calendar as CalendarIcon, FileText, Upload, AlertCircle, Sparkles, ArrowRight, MapPin, MessageCircle, Globe, ExternalLink, Users, Clock, CheckCircle2, Info,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { TimePicker } from '@/components/ui/time-picker';
@@ -17,6 +17,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { NO_LISTED_EDUCATION, requirementsToAsk } from '../lib/screening';
+import screeningCriteriaConfig from '../constants/screeningCriteria.json';
 import logo from '../assets/logo.svg';
 import communityQrCode from '../assets/community-qr-code.png';
 
@@ -146,6 +148,8 @@ export default function CandidateApply() {
   const [phone, setPhone] = useState('');
   const [opportunityOption, setOpportunityOption] = useState('30_days');
   const [opportunityCustom, setOpportunityCustom] = useState('');
+  const [educationLevel, setEducationLevel] = useState('');
+  const [experienceYears, setExperienceYears] = useState('');
   const [answers, setAnswers] = useState({});
   const [resumeFile, setResumeFile] = useState(null);
   const [candidateDate, setCandidateDate] = useState('');
@@ -158,6 +162,7 @@ export default function CandidateApply() {
   const [captcha, setCaptcha] = useState({ enabled: false, siteKey: '' });
   const [captchaToken, setCaptchaToken] = useState('');
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const askedRequirements = requirementsToAsk(requisition);
 
   useEffect(() => {
     if (formPart !== 2) setCaptchaToken('');
@@ -215,6 +220,8 @@ export default function CandidateApply() {
     setName('');
     setEmail('');
     setPhone('');
+    setEducationLevel('');
+    setExperienceYears('');
     setAnswers({});
     setResumeFile(null);
     setCandidateDate('');
@@ -237,6 +244,14 @@ export default function CandidateApply() {
     }
     if (opportunityOption === 'custom' && !opportunityCustom.trim()) {
       toast.error('Please enter your custom opportunity availability duration.');
+      return;
+    }
+    if (askedRequirements.education && !educationLevel) {
+      toast.error('Please select your highest level of education.');
+      return;
+    }
+    if (askedRequirements.experience && !experienceYears) {
+      toast.error('Please select your years of experience.');
       return;
     }
 
@@ -342,6 +357,7 @@ export default function CandidateApply() {
       formData.append('phone', phone.trim());
       formData.append('opportunityDuration', durationText);
       formData.append('questionnaireAnswers', JSON.stringify(answers));
+      formData.append('requirementAnswers', JSON.stringify({ education: educationLevel, experienceYears }));
       formData.append('resume', resumeFile);
       if (candidateDate) {
         formData.append('candidateAvailability', JSON.stringify({
@@ -527,6 +543,14 @@ export default function CandidateApply() {
             </CardHeader>
 
             <CardContent className="pt-6">
+              <div className="mb-6 flex gap-2.5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                <p>
+                  <span className="font-semibold">How we use AI: </span>
+                  We use AI to help review applications, including your CV, your answers and, if you are interviewed, your interview
+                  transcript. AI only gives a score and a recommendation. A member of our hiring team reviews it and makes every decision.
+                </p>
+              </div>
               <form onSubmit={formPart === 1 ? handlePersonalContinue : handleSubmit} className="space-y-6">
                 {/* Contact Information */}
                 {formPart === 1 && <div className="space-y-4">
@@ -610,6 +634,45 @@ export default function CandidateApply() {
                       />
                     )}
                   </div>
+
+                  {(askedRequirements.education || askedRequirements.experience) && (
+                    <div className="grid gap-4 pt-1 sm:grid-cols-2">
+                      {askedRequirements.education && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="candidate-education" className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                            Highest Education <span className="text-red-500">*</span>
+                          </Label>
+                          <select
+                            id="candidate-education"
+                            value={educationLevel}
+                            onChange={(e) => setEducationLevel(e.target.value)}
+                            required
+                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          >
+                            <option value="">Select...</option>
+                            {[...screeningCriteriaConfig.education.options, NO_LISTED_EDUCATION].map((level) => <option key={level} value={level}>{level}</option>)}
+                          </select>
+                        </div>
+                      )}
+                      {askedRequirements.experience && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="candidate-experience" className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                            Years of Relevant Experience <span className="text-red-500">*</span>
+                          </Label>
+                          <select
+                            id="candidate-experience"
+                            value={experienceYears}
+                            onChange={(e) => setExperienceYears(e.target.value)}
+                            required
+                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          >
+                            <option value="">Select...</option>
+                            {screeningCriteriaConfig.experience.options.map((years) => <option key={years} value={years}>{years}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Candidate Interview Availability Selection */}
                   {requisition?.interviewAvailability?.startDate && requisition?.interviewAvailability?.endDate && (

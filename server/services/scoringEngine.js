@@ -35,6 +35,24 @@ function isStagePassed(stageAverage, passThreshold) {
 }
 
 /**
+ * What the AI's own scores say about a public application's screening stages. It only ever reads aiScore, and it is only a
+ * recommendation for the person who reviews the application: nothing is decided from it.
+ * @param {Array<{interview: object, passThreshold: number}>} screened one entry per screening stage
+ * @returns {{aiScore: number|null, aiRecommendation: 'advance'|'reject'|null}} null when a stage has no AI scores
+ */
+function computeScreeningRecommendation(screened) {
+  const stages = screened.map(({ interview, passThreshold }) => {
+    const proposed = (interview?.scores || []).map((s) => s.aiScore).filter((v) => typeof v === 'number' && !Number.isNaN(v));
+    return { average: proposed.length ? proposed.reduce((sum, v) => sum + v, 0) / proposed.length : null, passThreshold };
+  });
+  if (stages.length === 0 || stages.some((stage) => stage.average === null)) return { aiScore: null, aiRecommendation: null };
+  return {
+    aiScore: round(stages.reduce((sum, stage) => sum + stage.average, 0) / stages.length, 4),
+    aiRecommendation: stages.every((stage) => stage.average >= stage.passThreshold) ? 'advance' : 'reject',
+  };
+}
+
+/**
  * Computes one application's full result: per-stage average/gate, weighted
  * total, allGatesPassed, and disposition.
  *
@@ -44,6 +62,8 @@ function isStagePassed(stageAverage, passThreshold) {
  * - status_only stages (e.g. offer) have no gate and no weight — skipped entirely.
  * - weightedTotal always uses approvedScore, never aiScore (computeStageAverage
  *   only ever reads approvedScore).
+ * - A reviewer's decision on a screening stage (stageGates) is that stage's gate
+ *   result, whatever its score: the score is a recommendation, the person decides.
  * - If any enabled, gate-or-scored stage is incomplete, the WHOLE application's
  *   weightedTotal/allGatesPassed/disposition are null (incomplete), never a
  *   premature verdict — this extends the spec's per-stage divide-by-zero
@@ -56,6 +76,7 @@ function isStagePassed(stageAverage, passThreshold) {
  * @param {Map<string, object>} params.interviewsByStageKey - stageKey -> most relevant Interview doc.
  * @param {number} params.hireThreshold
  * @param {number} params.maybeThreshold
+ * @param {Record<string, boolean>} [params.stageGates] - stageKey -> a reviewer's decision (see services/screeningReview.js).
  * @returns {{
  *   stageResults: Array<{stageKey:string, label:string, inputType:string, weight:number, passThreshold:number, stageAverage:number|null, passed:boolean|null, complete:boolean}>,
  *   weightedTotal: number|null,
@@ -64,7 +85,7 @@ function isStagePassed(stageAverage, passThreshold) {
  *   complete: boolean
  * }}
  */
-function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold, maybeThreshold }) {
+function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold, maybeThreshold, stageGates = {} }) {
   const relevantStages = (stages || []).filter((s) => s.enabled && s.inputType !== 'status_only');
 
   const stageResults = relevantStages.map((stage) => {
@@ -101,7 +122,7 @@ function computeApplicationResult({ stages, interviewsByStageKey, hireThreshold,
       ? computeStageAverage(interview)
       : null;
 
-    const passed = isStagePassed(
+    const passed = stageGates[stage.key] ?? isStagePassed(
       stageAverage,
       stage.passThreshold
     );
@@ -191,4 +212,4 @@ function rankApplications(applications) {
   return [...withTotal, ...withoutTotal];
 }
 
-export { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications };
+export { computeStageAverage, isStagePassed, computeScreeningRecommendation, computeApplicationResult, rankApplications };

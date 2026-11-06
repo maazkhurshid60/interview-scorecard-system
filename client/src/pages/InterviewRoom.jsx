@@ -10,8 +10,9 @@ import { validatePdfFile } from '../lib/fileRules';
 import { resolveZone, wallClockToInstant, pickedDay, formatInZone, defaultMeetingSlot } from '../lib/calendarTime';
 import AlertBanner from '../components/AlertBanner';
 import useRefreshWhile from '../hooks/useRefreshWhile';
-import { isScreeningActive, isScreeningFailed } from '../lib/screening';
+import { isScreeningActive, isScreeningFailed, isScreeningStage, isWaitingForReview } from '../lib/screening';
 import PipelineStepper from '../components/PipelineStepper';
+import ScreeningReviewDialog from '../components/ScreeningReviewDialog';
 import { goBackToJob, openInterviewReplacing } from '../lib/interviewNavigation';
 import ScoreReviewTable from '../components/ScoreReviewTable';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -84,6 +85,8 @@ export default function InterviewRoom() {
   const [passFailResult, setPassFailResult] = useState('');
   const [passFailSaving, setPassFailSaving] = useState(false);
   const [requestingAvailability, setRequestingAvailability] = useState(false);
+
+  const [reviewCardOpen, setReviewCardOpen] = useState(false);
 
   const [editCandidateOpen, setEditCandidateOpen] = useState(false);
   const [editCandidateForm, setEditCandidateForm] = useState({ name: '', email: '', phone: '', notes: '' });
@@ -193,6 +196,9 @@ export default function InterviewRoom() {
   const isFinalStage = enabledStages.length > 0 && enabledStages[enabledStages.length - 1].key === interview?.stageKey;
   const currentStageProgress = application?.stageProgress?.find((p) => p.stageKey === interview?.stageKey);
   const isFailedStage = currentStageProgress?.status === 'failed' || currentStageProgress?.passed === false;
+  const screeningStage = isScreeningStage(requisition, interview?.stageKey);
+  const waitingForReview = screeningStage && isWaitingForReview(application);
+  const reviewDecision = screeningStage ? application?.screeningReview?.decision : undefined;
 
   useEffect(() => {
     setOpenAttrs(new Set(stageAttributes.length > 0 ? stageAttributes.map((a) => a.attributeId) : []));
@@ -675,7 +681,8 @@ export default function InterviewRoom() {
 
   const canScore = (showConsentCard ? interview?.consentObtained : true)
     && (stageConfig?.inputType === 'artifact' ? !!interview.artifactFileUrl : interview?.transcriptStatus === 'ready')
-    && interview?.status !== 'approved';
+    && interview?.status !== 'approved'
+    && !waitingForReview;
 
   if (loading) return <div className="text-muted-foreground">Loading...</div>;
   if (!interview || !requisition) return <div className="text-muted-foreground">Interview not found.</div>;
@@ -738,6 +745,12 @@ export default function InterviewRoom() {
           <AlertBanner type="warning" message="Automatic AI scoring could not finish for this application. You can score it by hand below." />
         </div>
       )}
+      {waitingForReview && (
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-amber-900">This candidate is waiting for a person to review them. The AI's scores are only a recommendation: nothing happens to the candidate until a reviewer decides.</p>
+          <Button type="button" variant="outline" className="shrink-0" onClick={() => setReviewCardOpen(true)}>Open review card</Button>
+        </div>
+      )}
 
       <Card className="mt-4">
         <CardContent className="pt-6">
@@ -751,11 +764,12 @@ export default function InterviewRoom() {
                 const interviewId = stageLinks[stage.key];
                 const threshold = stage.passThreshold ?? 3;
 
+                // A reviewer's decision counts over the score, so the score only says "failed" when no passed result is recorded.
                 const isFailed =
                   p?.passed === false ||
                   p?.status === 'failed' ||
-                  (sibIv?.stageAverage != null && sibIv.stageAverage < threshold) ||
-                  (interview?.stageKey === stage.key && interview?.stageAverage != null && interview.stageAverage < threshold);
+                  (p?.passed !== true && sibIv?.stageAverage != null && sibIv.stageAverage < threshold) ||
+                  (p?.passed !== true && interview?.stageKey === stage.key && interview?.stageAverage != null && interview.stageAverage < threshold);
 
                 const isPassed =
                   !isFailed &&
@@ -1415,7 +1429,7 @@ export default function InterviewRoom() {
           >
             {scoring ? 'Scoring...' : interview.scores?.length ? 'Re-run AI Scoring' : 'Run AI Scoring'}
           </button>
-          {!canScore && interview.status !== 'approved' && (isTranscriptStage || stageConfig?.inputType === 'artifact') && (
+          {!canScore && !waitingForReview && interview.status !== 'approved' && (isTranscriptStage || stageConfig?.inputType === 'artifact') && (
             <p className="mt-1 text-xs text-muted-foreground">
               {stageConfig?.inputType === 'artifact'
                 ? 'Requires an uploaded artifact first.'
@@ -1433,6 +1447,8 @@ export default function InterviewRoom() {
             interview={interview}
             attributes={stageAttributes}
             passThreshold={stageConfig?.passThreshold}
+            waitingForReview={waitingForReview}
+            reviewDecision={reviewDecision}
             onUpdated={(updatedInterview, stageAverage, passed, nextInterviewId, wasAlreadyApproved, updatedApplication) => {
               setInterview(updatedInterview);
               if (updatedApplication) {
@@ -1473,6 +1489,8 @@ export default function InterviewRoom() {
           </CardContent>
         </Card>
       )}
+
+      <ScreeningReviewDialog applicationId={reviewCardOpen ? application?._id : null} onClose={() => setReviewCardOpen(false)} onDecided={() => load()} />
 
       <Dialog open={editCandidateOpen} onOpenChange={setEditCandidateOpen}>
         <DialogContent>

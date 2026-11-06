@@ -4,16 +4,29 @@ import * as requisitionRepo from '../repositories/requisitionRepository.js';
 import * as auditLog from '../repositories/auditLogRepository.js';
 import logger from '../utils/logger.js';
 import { asyncHandler, getEnabledStagesSorted } from '../utils/helpers.js';
+import * as scorecardRepo from '../repositories/scorecardRepository.js';
+import * as userRepo from '../repositories/userRepository.js';
 import { ValidationError } from '../utils/errors.js';
 import { assertRequisitionOpen, assertRequisitionNotClosed } from '../utils/requisitionStatus.js';
-import { FINAL_DECISIONS } from '../utils/constants.js';
+import { FINAL_DECISIONS, REVIEW_DECISIONS } from '../utils/constants.js';
 import { computeStageAverage, isStagePassed, computeApplicationResult, rankApplications } from '../services/scoringEngine.js';
+import { assertNotWaitingForReview, getScreeningStages, reviewedStageGates } from '../services/screeningReview.js';
+import { enqueueApplication } from '../services/applicationProcessor.js';
 import * as slackNotifier from '../services/slackNotifier.js';
 import { enqueueEmail, cancelPendingEmails } from '../services/emailQueue.js';
 import { uploadFile, deleteFile } from '../services/fileStorage.js';
 import { assertPdfUpload } from '../utils/uploadValidation.js';
 import { generateOfferLetter } from '../services/offerLetterService.js';
 import { listTemplates } from '../services/offerLetterTemplates.js';
+
+const MIN_REASON_LENGTH = 10;
+
+/** A request that cannot go ahead because of the state of the record (409). */
+function conflict(field, message) {
+  const err = new ValidationError([field], message);
+  err.statusCode = 409;
+  return err;
+}
 
 /**
  * Recomputes an application's weightedTotal / allGatesPassed / disposition
@@ -43,6 +56,7 @@ async function recomputeAndPersist(application, requisition, userId, reason) {
     interviewsByStageKey,
     hireThreshold: requisition.hireThreshold,
     maybeThreshold: requisition.maybeThreshold,
+    stageGates: reviewedStageGates(application, requisition),
   });
 
   result.stageResults.forEach((r) => {
@@ -163,6 +177,7 @@ const approve = asyncHandler(async (req, res) => {
   const requisitionForType = await requisitionRepo.findById(interview.requisitionId);
   assertRequisitionNotClosed(requisitionForType, 'approve interview scores');
   const stageConfigForType = requisitionForType.stages.find((s) => s.key === interview.stageKey);
+  await assertNotWaitingForReview(interview, requisitionForType);
 
   if (stageConfigForType.inputType === 'status_only') {
     interview.status = 'approved';
@@ -236,12 +251,13 @@ const approve = asyncHandler(async (req, res) => {
     reason: 'Stage scores approved.',
   });
 
+  const application = await applicationRepo.findById(interview.applicationId);
   const stageAverage = computeStageAverage(interview);
-  const passed = isStagePassed(stageAverage, stageConfigForType.passThreshold);
+  // Re-approving a screening stage a reviewer already decided updates its scores, not their decision.
+  const passed = reviewedStageGates(application, requisitionForType)[interview.stageKey] ?? isStagePassed(stageAverage, stageConfigForType.passThreshold);
   interview.stageAverage = stageAverage;
   await interviewRepo.save(interview);
 
-  const application = await applicationRepo.findById(interview.applicationId);
   const progress = application.stageProgress.find((p) => p.stageKey === interview.stageKey);
   if (progress) {
     progress.stageAverage = stageAverage;
@@ -386,6 +402,166 @@ const decision = asyncHandler(async (req, res) => {
 
   logger.info(`[Scoring] Final decision "${finalDecision}" recorded for application ${application._id} by user=${req.user._id}`);
   res.json({ application });
+});
+
+/** The interviews of the screening stages of one application, each with its stage: what a review works on. */
+async function loadScreening(application, requisition) {
+  const stages = getScreeningStages(requisition);
+  const interviews = await interviewRepo.listByApplicationAndStages(application._id, stages.map((stage) => stage.key));
+  return stages.map((stage) => ({ stage, interview: interviews.find((i) => i.stageKey === stage.key) || null }));
+}
+
+/** True once the candidate has really started a stage after screening: from then on the review can no longer be changed. */
+async function hasStartedLaterStage(application, screening) {
+  const screeningKeys = screening.map(({ stage }) => stage.key);
+  const interviews = await interviewRepo.listByApplication(application._id);
+  return interviews.some((i) => !screeningKeys.includes(i.stageKey) && (i.status !== 'pending' || i.meetingUri));
+}
+
+/**
+ * GET /api/scoring/application/:id/screening-review
+ * Everything a reviewer needs on one card: the candidate, what the code checked, what the AI proposed and why, the
+ * rubric it scored against, and the decision if one was made.
+ */
+const getScreeningReview = asyncHandler(async (req, res) => {
+  const application = await applicationRepo.findByIdWithCandidate(req.params.id, 'name email phone');
+  if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
+  const requisition = await requisitionRepo.findById(application.requisitionId);
+  if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
+
+  const screening = await loadScreening(application, requisition);
+  const scorecard = await scorecardRepo.findByRequisition(requisition._id);
+  const reviewer = application.screeningReview?.reviewedBy ? await userRepo.findById(application.screeningReview.reviewedBy) : null;
+
+  res.json({
+    application,
+    requisition: { _id: requisition._id, title: requisition.title, status: requisition.status, initialScreeningCriteria: requisition.initialScreeningCriteria },
+    stages: screening.map(({ stage, interview }) => ({
+      key: stage.key,
+      label: stage.label,
+      passThreshold: stage.passThreshold,
+      attributes: scorecard?.stages?.find((s) => s.stageKey === stage.key)?.attributes || [],
+      interview: interview && { _id: interview._id, status: interview.status, scores: interview.scores, stageAverage: interview.stageAverage, artifactFileName: interview.artifactFileName },
+    })),
+    reviewerName: reviewer?.name || null,
+    laterStageStarted: await hasStartedLaterStage(application, screening),
+  });
+});
+
+/**
+ * PATCH /api/scoring/application/:id/screening-review
+ * Body: { decision: 'advance'|'reject', reason?: string, changeDecision?: boolean }
+ * A person's decision on ONE candidate after the AI's screening. This is the only way a screened public application moves
+ * on or is rejected, and it takes one candidate at a time on purpose. It works whatever the scores say: advancing below a
+ * gate or rejecting above one is allowed, and any rejection or any decision against the AI's recommendation needs a reason.
+ * Changing an earlier decision needs `changeDecision`, so two people working through the same list cannot overwrite each
+ * other by accident, and is only possible until the candidate has started a later stage.
+ */
+const reviewScreening = asyncHandler(async (req, res) => {
+  const application = await applicationRepo.findByIdWithCandidate(req.params.id, 'name');
+  if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
+  const review = application.screeningReview;
+  if (!review?.status) throw conflict('screeningReview', 'This application has no screening result to review yet.');
+
+  const requisition = await requisitionRepo.findById(application.requisitionId);
+  if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
+
+  const { decision, reason, changeDecision } = req.body;
+  if (!REVIEW_DECISIONS.includes(decision)) {
+    throw new ValidationError(['decision'], `decision must be one of: ${REVIEW_DECISIONS.join(', ')}.`);
+  }
+  if (decision === 'advance') assertRequisitionOpen(requisition, 'advance a candidate');
+  else assertRequisitionNotClosed(requisition, 'reject a candidate');
+
+  const screening = await loadScreening(application, requisition);
+  if (review.status === 'reviewed') {
+    if (!changeDecision) throw conflict('screeningReview', 'This candidate has already been reviewed. Reopen their review card to change the decision.');
+    if (await hasStartedLaterStage(application, screening)) {
+      throw conflict('screeningReview', 'This candidate has already started a later stage, so this review can no longer be changed. Record a final decision instead.');
+    }
+  }
+  if (decision === 'advance' && screening.some(({ interview }) => !interview?.scores?.length)) {
+    throw conflict('screeningReview', 'Every screening stage must be scored before this candidate can advance.');
+  }
+
+  const trimmedReason = String(reason || '').trim();
+  if ((decision === 'reject' || decision !== review.aiRecommendation) && trimmedReason.length < MIN_REASON_LENGTH) {
+    throw new ValidationError(['reason'], `Please give a reason of at least ${MIN_REASON_LENGTH} characters.`);
+  }
+
+  for (const { interview } of screening) {
+    if (!interview?.scores?.length) continue; // rejected without AI scores: there is nothing to approve
+    interview.scores.forEach((s) => {
+      if (s.approvedScore === undefined || s.approvedScore === null) s.approvedScore = s.aiScore;
+    });
+    interview.status = 'approved';
+    interview.stageAverage = computeStageAverage(interview);
+    await interviewRepo.save(interview);
+  }
+
+  const previous = { status: review.status, decision: review.decision ?? null };
+  application.screeningReview = { ...review, status: 'reviewed', decision, reason: trimmedReason, reviewedBy: req.user._id, reviewedAt: new Date() };
+
+  let nextInterviewId = null;
+  if (decision === 'reject') {
+    application.finalDecision = 'rejected';
+    application.finalDecisionBy = req.user._id;
+    application.rejectionReason = trimmedReason;
+  } else {
+    if (previous.decision === 'reject' && application.finalDecision === 'rejected') {
+      application.finalDecision = null;
+      application.finalDecisionBy = null;
+      application.rejectionReason = null;
+    }
+    const lastScreeningKey = getEnabledStagesSorted(requisition).filter((s) => screening.some(({ stage }) => stage.key === s.key)).pop()?.key;
+    nextInterviewId = await getOrCreateNextInterview(application, requisition, lastScreeningKey, req.user._id);
+  }
+
+  await recomputeAndPersist(application, requisition, req.user._id, 'Recomputed after screening review.');
+
+  await auditLog.record({
+    action: 'screening_review', userId: req.user._id, requisitionId: application.requisitionId, applicationId: application._id,
+    targetType: 'application', targetId: application._id.toString(),
+    oldValue: previous,
+    newValue: { decision, aiRecommendation: review.aiRecommendation ?? null, aiScore: review.aiScore ?? null },
+    reason: trimmedReason || 'Reviewed and agreed with the AI recommendation.',
+  });
+
+  logger.info(`[Scoring] Screening review "${decision}" for application ${application._id} by user=${req.user._id}; AI recommended ${review.aiRecommendation ?? 'nothing'}. nextInterviewId=${nextInterviewId}`);
+  res.json({ application, nextInterviewId });
+});
+
+/**
+ * PATCH /api/scoring/application/:id/screening-review/continue
+ * Body: { reason: string }
+ * A reviewer sends a candidate who did not meet the job's fixed requirements on to the AI screening after all (the form
+ * answers can be wrong, or the requirement flexible). They come back as "needs review" once scored.
+ */
+const continueScreening = asyncHandler(async (req, res) => {
+  const application = await applicationRepo.findById(req.params.id);
+  if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'Application not found.' });
+  if (application.screeningReview?.status !== 'requirements_not_met') {
+    throw conflict('screeningReview', 'Only a candidate who did not meet the requirements can be sent on to screening.');
+  }
+  const requisition = await requisitionRepo.findById(application.requisitionId);
+  if (!requisition) return res.status(404).json({ error: 'NOT_FOUND', message: 'Job Opening not found.' });
+  assertRequisitionOpen(requisition, 'send a candidate on to screening');
+
+  const trimmedReason = String(req.body.reason || '').trim();
+  if (trimmedReason.length < MIN_REASON_LENGTH) {
+    throw new ValidationError(['reason'], `Please give a reason of at least ${MIN_REASON_LENGTH} characters.`);
+  }
+
+  await applicationRepo.requeueScreening(application._id);
+  await auditLog.record({
+    action: 'screening_review', userId: req.user._id, requisitionId: application.requisitionId, applicationId: application._id,
+    targetType: 'application', targetId: application._id.toString(),
+    oldValue: { status: 'requirements_not_met' }, newValue: { sentToScreening: true }, reason: trimmedReason,
+  });
+  await enqueueApplication(application._id);
+
+  logger.info(`[Scoring] Application ${application._id} sent on to AI screening by user=${req.user._id}.`);
+  res.json({ applicationId: application._id });
 });
 
 /**
@@ -734,5 +910,5 @@ const overrideInitialScreening = asyncHandler(async (req, res) => {
   res.json({ application, nextInterviewId });
 });
 
-export { approve, override, recompute, decision, sendOfferLetter, getOfferLetterTemplates, previewOfferLetter, passFail, overrideInitialScreening, recomputeAndPersist, getOrCreateNextInterview };
+export { approve, override, recompute, decision, getScreeningReview, reviewScreening, continueScreening, sendOfferLetter, getOfferLetterTemplates, previewOfferLetter, passFail, overrideInitialScreening, recomputeAndPersist, getOrCreateNextInterview };
 

@@ -26,6 +26,8 @@ Thank you for your interest in joining Red Star Technologies and for applying fo
 
 We have successfully received your application. Our recruitment team will review your profile, and if your qualifications and experience align with our requirements, we will contact you regarding the next steps in the hiring process.
 
+Please note that we use AI to help review applications, including your CV, your answers and, if you are interviewed, your interview transcript. AI only gives a score and a recommendation: a member of our hiring team reviews it and makes every decision.
+
 We appreciate your interest in becoming part of our team and thank you for considering Red Star Technologies as your next career opportunity.
 
 ${SIGN_OFF}

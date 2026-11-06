@@ -24,11 +24,8 @@ import { cleanRichText } from '../utils/sanitizeRichText.js';
 import { callClaude, getModelIds } from '../services/claudeClient.js';
 import { getCaptchaConfig, verifyCaptcha } from '../services/captchaService.js';
 import { destroyFileIfUnreferenced } from '../services/fileReferenceCleanup.js';
-// Server-side validation mirror. The editable UI definition lives in client/src/constants.
-const screeningCriteriaConfig = {
-  education: { label: 'Education', options: ['Undergraduate (currently studying)', "Bachelor's degree", "Master's degree", 'PhD'] },
-  experience: { label: 'Experience', options: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10+'] },
-};
+import { checkRequirements, hasUnmetRequirement } from '../services/screeningReview.js';
+import { REVIEW_WAITING, SCREENING_CRITERIA as screeningCriteriaConfig } from '../utils/constants.js';
 
 const PHONE_NUMBER_PATTERN = /^\d{11}$/;
 const WORKPLACE_TYPES = ['onsite', 'hybrid', 'remote'];
@@ -479,7 +476,7 @@ const list = asyncHandler(async (req, res) => {
 /**
  * GET /api/requisitions/:id
  * Returns one requisition with its scorecard and server-paginated applications.
- * Supports ?page=1&limit=10&search=john&disposition=HIRE|MAYBE|NO_HIRE|in_progress&finalDecision=hired|rejected|withdrawn|undecided&stageKey=...&candidateId=...
+ * Supports ?page=1&limit=10&search=john&disposition=HIRE|MAYBE|NO_HIRE|in_progress&finalDecision=hired|rejected|withdrawn|undecided&review=needs_review|requirements_not_met&stageKey=...&candidateId=...
  */
 const getOne = asyncHandler(async (req, res) => {
   const requisition = await requisitionRepo.findByIdWithDepartment(req.params.id);
@@ -525,6 +522,7 @@ const getOne = asyncHandler(async (req, res) => {
   }
 
   const stageKey = req.query.stageKey && req.query.stageKey !== 'all' ? req.query.stageKey : undefined;
+  const reviewStatus = REVIEW_WAITING.includes(req.query.review) ? req.query.review : undefined;
 
   if (req.query.search && req.query.search.trim()) {
     const matchingIds = await candidateRepo.findIdsBySearch(req.query.search.trim());
@@ -532,11 +530,14 @@ const getOne = asyncHandler(async (req, res) => {
   }
 
   const dispositionCounts = await applicationRepo.countByDisposition(requisition._id);
-  const applicationStats = { total: 0, IN_PROGRESS: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0 };
+  const applicationStats = { total: 0, IN_PROGRESS: 0, HIRE: 0, MAYBE: 0, NO_HIRE: 0, NEEDS_REVIEW: 0, REQUIREMENTS_NOT_MET: 0 };
   dispositionCounts.forEach(({ disposition: counted, count }) => {
     if (counted && applicationStats[counted] !== undefined) applicationStats[counted] = count;
     else applicationStats.IN_PROGRESS += count;
     applicationStats.total += count;
+  });
+  (await applicationRepo.countAwaitingReview(requisition._id)).forEach(({ status, count }) => {
+    applicationStats[status.toUpperCase()] = count;
   });
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
   const { applications, total: totalApplications, page, totalPages } = await applicationRepo.pageForRequisition({
@@ -545,6 +546,7 @@ const getOne = asyncHandler(async (req, res) => {
     stageKey,
     disposition,
     finalDecision,
+    reviewStatus,
     matchNothing,
     page: Math.max(1, parseInt(req.query.page, 10) || 1),
     limit,
@@ -1238,6 +1240,12 @@ const applyPublic = asyncHandler(async (req, res) => {
   if (unansweredQuestions.length > 0) {
     throw new ValidationError(['questionnaireAnswers'], 'Please answer every screening question before submitting your application.');
   }
+
+  let parsedRequirementAnswers = req.body.requirementAnswers;
+  if (typeof parsedRequirementAnswers === 'string') {
+    try { parsedRequirementAnswers = JSON.parse(parsedRequirementAnswers); } catch (e) { parsedRequirementAnswers = {}; }
+  }
+  const requirements = checkRequirements(requisition, parsedRequirementAnswers);
   assertPdfUpload(req.file, { field: 'resume', label: 'resume' });
 
   const cleanEmail = email.toLowerCase().trim();
@@ -1347,6 +1355,8 @@ const applyPublic = asyncHandler(async (req, res) => {
     opportunityDuration: opportunityDuration ? String(opportunityDuration).trim() : undefined,
     candidateAvailability: candidateAvailPayload,
     screeningJob: { status: 'pending' },
+    requirements: requirements || undefined,
+    screeningReview: hasUnmetRequirement(requirements) ? { status: 'requirements_not_met' } : undefined,
   });
 
   // 2. Create the stage interviews (just saves the résumé / answers; scoring happens later).
@@ -1370,9 +1380,8 @@ const applyPublic = asyncHandler(async (req, res) => {
     scheduledStageKeys.push(firstStageKey);
   }
 
-  // The HR questionnaire screen is created for every public application,
-  // even when the résumé screen later fails its gate. It is a separate
-  // automated evaluation and never includes the candidate's CV.
+  // The HR questionnaire screen is created for every public application. It is a
+  // separate AI evaluation and never includes the candidate's CV.
   if (hrStage && hrStage.key !== firstStageKey) {
     const questionnaireTranscript = (requisition.questionnaire || []).map((question, index) => {
       const questionText = typeof question === 'string' ? question : question.question;

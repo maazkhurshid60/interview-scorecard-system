@@ -23,11 +23,13 @@ const ACTIONS = [
   'provider_change', 'key_change', 'transcript_upload', 'consent_capture',
   'retention_purge', 'requisition_status_change', 'candidate_update',
   'requisition_duplicated', 'offer_letter_sent', 'requisition_deleted',
+  'screening_review',
 ];
 
 /** Actions that change a hiring outcome get visual weight; the rest stay neutral. */
 const ACTION_TONE = {
   final_decision: 'bg-brand/10 text-brand hover:bg-brand/10',
+  screening_review: 'bg-brand/10 text-brand hover:bg-brand/10',
   requisition_deleted: 'bg-red-100 text-red-800 hover:bg-red-100',
   disposition_change: 'bg-amber-100 text-amber-800 hover:bg-amber-100',
   score_override: 'bg-amber-100 text-amber-800 hover:bg-amber-100',

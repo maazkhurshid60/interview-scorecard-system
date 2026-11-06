@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Application from '../../models/Application.js';
 import '../../models/Candidate.js'; // registers the Candidate model, which the queries below fill in on each application
+import { REVIEW_WAITING } from '../../utils/constants.js';
 import { plain } from './plain.js';
 import { track, saveEntity } from './entity.js';
 
@@ -81,21 +82,31 @@ export async function countByDisposition(requisitionId) {
   return counts.map(({ _id, count }) => ({ disposition: _id, count }));
 }
 
+/** How many applications of one job opening are waiting for a person, by review status: `[{ status, count }]`. One with a final decision is not waiting. */
+export async function countAwaitingReview(requisitionId) {
+  const counts = await Application.aggregate([
+    { $match: { requisitionId: new mongoose.Types.ObjectId(String(requisitionId)), 'screeningReview.status': { $in: REVIEW_WAITING }, finalDecision: null } },
+    { $group: { _id: '$screeningReview.status', count: { $sum: 1 } } },
+  ]);
+  return counts.map(({ _id, count }) => ({ status: _id, count }));
+}
+
 /**
- * One page of a job opening's applications, ranked ones first (by rank, then score, then newest), each with the
- * candidate's name, email and phone filled in on `candidateId`.
+ * One page of a job opening's applications, ranked ones first (by rank, then score, then the AI's screening score, then
+ * newest), each with the candidate's name, email and phone filled in on `candidateId`.
  *
  * All filters are optional:
  * - `candidateIds`: only applications of these candidates (an empty list matches nothing);
  * - `stageKey`: only applications currently at this stage;
  * - `disposition` / `finalDecision`: `{ values, includeUnset }`, meaning "one of these values", plus "none set yet"
  *   when `includeUnset` is true;
+ * - `reviewStatus`: only applications waiting for a person at this review status (one with a final decision is not waiting);
  * - `matchNothing`: return nothing at all.
  *
  * The requested `page` is brought back into range, so asking for page 99 of 3 returns page 3.
  * @returns {Promise<{applications: object[], total: number, page: number, totalPages: number}>}
  */
-export async function pageForRequisition({ requisitionId, candidateIds, stageKey, disposition, finalDecision, matchNothing, page: requestedPage, limit }) {
+export async function pageForRequisition({ requisitionId, candidateIds, stageKey, disposition, finalDecision, reviewStatus, matchNothing, page: requestedPage, limit }) {
   const query = { requisitionId: new mongoose.Types.ObjectId(String(requisitionId)) };
   if (matchNothing) query._id = { $in: [] };
   for (const [field, filter] of [['disposition', disposition], ['finalDecision', finalDecision]]) {
@@ -107,6 +118,10 @@ export async function pageForRequisition({ requisitionId, candidateIds, stageKey
   // An aggregation (below) does not turn string ids into ObjectIds for us, so they are converted here.
   if (candidateIds) query.candidateId = { $in: toObjectIds(candidateIds) };
   if (stageKey) query.currentStageKey = stageKey;
+  if (reviewStatus) {
+    query['screeningReview.status'] = reviewStatus;
+    query.$and = [{ finalDecision: null }];
+  }
 
   const total = await Application.countDocuments(query);
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -117,7 +132,7 @@ export async function pageForRequisition({ requisitionId, candidateIds, stageKey
   const applications = await Application.aggregate([
     { $match: query },
     { $addFields: { _rankSort: { $cond: [{ $ne: [{ $ifNull: ['$rank', null] }, null] }, 0, 1] } } },
-    { $sort: { _rankSort: 1, rank: 1, weightedTotal: -1, createdAt: -1 } },
+    { $sort: { _rankSort: 1, rank: 1, weightedTotal: -1, 'screeningReview.aiScore': -1, createdAt: -1 } },
     { $skip: skip },
     { $limit: limit },
     { $project: { _rankSort: 0 } },
@@ -247,6 +262,14 @@ export async function releaseStaleScreenings({ staleBefore, maxAttempts }) {
   await Application.updateMany({ ...left, 'screeningJob.attempts': { $lt: maxAttempts } }, {
     $set: { 'screeningJob.status': 'pending' },
     $unset: { 'screeningJob.lockedAt': 1 },
+  });
+}
+
+/** Sends an application to the AI screening from the start: its review goes back to "not ready yet". */
+export async function requeueScreening(id) {
+  await Application.updateOne({ _id: id }, {
+    $set: { 'screeningJob.status': 'pending', 'screeningJob.attempts': 0 },
+    $unset: { 'screeningJob.lockedAt': 1, 'screeningJob.completedAt': 1, 'screeningJob.lastError': 1, 'screeningReview.status': 1 },
   });
 }
 

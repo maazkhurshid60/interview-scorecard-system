@@ -221,7 +221,7 @@ function checkValue(spec, value, path, problems, { inSubdoc }) {
   }
   if (spec.required && (!hasValue(value) || value === '')) { add(`Path \`${leaf}\` is required.`); return; }
   if (!hasValue(value)) return;
-  if (spec.enum && !spec.enum.includes(value)) add(`\`${value}\` is not a valid enum value for path \`${leaf}\`.`);
+  if (spec.enum && !spec.enum.includes(value)) add(`\`${value}\` is not a valid enum value for path \`${inSubdoc ? leaf : here}\`.`); // Mongoose names a nested field by its whole path
   else if (spec.min !== undefined && value < spec.min) add(`Path \`${leaf}\` (${value}) is less than minimum allowed value (${spec.min}).`);
   else if (spec.max !== undefined && value > spec.max) add(`Path \`${leaf}\` (${value}) is more than maximum allowed value (${spec.max}).`);
   else if (spec.minlength !== undefined && String(value).length < spec.minlength) add(`Path \`${leaf}\` (\`${value}\`, length ${String(value).length}) is shorter than the minimum allowed length (${spec.minlength}).`);

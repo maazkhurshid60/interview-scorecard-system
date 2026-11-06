@@ -35,9 +35,13 @@ function draftsFromInterview(interview, attributes) {
  * whatever the server actually saved (never show a number that wasn't
  * persisted, e.g. after Approve silently discards an unsaved edit).
  *
- * @param {{interview: object, attributes?: Array<{attributeId:string, name:string, question:string}>, passThreshold: number, onUpdated: (interview: object, stageAverage?: number, passed?: boolean) => void}} props
+ * On a screening stage of a public application the decision belongs to the review card: while the candidate waits for it
+ * (`waitingForReview`) the stage cannot be approved here, and afterwards the reviewer's decision (`reviewDecision`) is
+ * shown in place of the score gate, because it counts over it.
+ *
+ * @param {{interview: object, attributes?: Array<{attributeId:string, name:string, question:string}>, passThreshold: number, waitingForReview?: boolean, reviewDecision?: 'advance'|'reject', onUpdated: (interview: object, stageAverage?: number, passed?: boolean) => void}} props
  */
-export default function ScoreReviewTable({ interview, attributes, passThreshold, onUpdated }) {
+export default function ScoreReviewTable({ interview, attributes, passThreshold, waitingForReview = false, reviewDecision, onUpdated }) {
   const attributeById = Object.fromEntries((attributes || []).map((a) => [a.attributeId, a]));
   const [drafts, setDrafts] = useState(() => draftsFromInterview(interview, attributes));
   const [saving, setSaving] = useState(false);
@@ -271,7 +275,7 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
         <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
           Scores changed since this was last approved — the result below is stale. Live average from
           current scores would be <span className="font-semibold">{formatScore(liveAverage)}</span>{' '}
-          ({liveAverage >= passThreshold ? 'would PASS' : 'would still FAIL'}). Click <span className="font-semibold">Re-approve Stage</span> to make it official.
+          {!reviewDecision && <>({liveAverage >= passThreshold ? 'would PASS' : 'would still FAIL'})</>}. Click <span className="font-semibold">Re-approve Stage</span> to make it official.
         </div>
       )}
 
@@ -280,11 +284,19 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
           {stageAverage != null ? (
             <span>
               Stage average: <span className="font-semibold">{formatScore(stageAverage)}</span> / gate {formatScore(passThreshold)} —{' '}
-              <span className={stagePassed ? 'font-semibold text-green-700' : 'font-semibold text-red-700'}>
-                {stagePassed ? 'PASS' : 'FAIL'}
-              </span>
+              {reviewDecision ? (
+                <span className={reviewDecision === 'advance' ? 'font-semibold text-green-700' : 'font-semibold text-red-700'}>
+                  {reviewDecision === 'advance' ? 'ADVANCED BY REVIEWER' : 'REJECTED BY REVIEWER'}
+                </span>
+              ) : (
+                <span className={stagePassed ? 'font-semibold text-green-700' : 'font-semibold text-red-700'}>
+                  {stagePassed ? 'PASS' : 'FAIL'}
+                </span>
+              )}
               {isApproved && <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">approved</span>}
             </span>
+          ) : waitingForReview ? (
+            <span className="text-gray-500">These scores are the AI's proposal. They count once a reviewer decides on the review card.</span>
           ) : (
             <span className="text-gray-400">Rate all attributes and approve the stage to compute the average and gate result.</span>
           )}
@@ -305,12 +317,14 @@ export default function ScoreReviewTable({ interview, attributes, passThreshold,
               >
                 {saving ? 'Saving...' : 'Save Overrides'}
               </button>
-              <button
-                type="button" onClick={handleApprove} disabled={approving}
-                className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {approving ? 'Approving...' : isApproved ? 'Re-approve Stage' : 'Approve Stage'}
-              </button>
+              {!waitingForReview && (
+                <button
+                  type="button" onClick={handleApprove} disabled={approving}
+                  className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {approving ? 'Approving...' : isApproved ? 'Re-approve Stage' : 'Approve Stage'}
+                </button>
+              )}
             </>
           )}
         </div>
